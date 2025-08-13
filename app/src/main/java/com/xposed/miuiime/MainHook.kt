@@ -1,5 +1,6 @@
 package com.xposed.miuiime
 
+import android.content.IntentFilter
 import android.view.inputmethod.InputMethodManager
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
@@ -7,8 +8,10 @@ import com.github.kyuubiran.ezxhelper.utils.findMethod
 import com.github.kyuubiran.ezxhelper.utils.getObjectAs
 import com.github.kyuubiran.ezxhelper.utils.getStaticObject
 import com.github.kyuubiran.ezxhelper.utils.hookAfter
+import com.github.kyuubiran.ezxhelper.utils.hookBefore
 import com.github.kyuubiran.ezxhelper.utils.hookReplace
 import com.github.kyuubiran.ezxhelper.utils.hookReturnConstant
+import com.github.kyuubiran.ezxhelper.utils.invokeMethodAs
 import com.github.kyuubiran.ezxhelper.utils.invokeStaticMethodAuto
 import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
 import com.github.kyuubiran.ezxhelper.utils.putStaticObject
@@ -28,16 +31,21 @@ class MainHook : IXposedHookLoadPackage {
     private var navBarColor: Int? = null
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        //检查是否支持全面屏优化
+        // 检查是否支持全面屏优化
         if (PropertyUtils["ro.miui.support_miui_ime_bottom", "0"] != "1") return
         EzXHelperInit.initHandleLoadPackage(lpparam)
         EzXHelperInit.setLogTag(TAG)
         Log.i("miuiime is supported")
-        startHook(lpparam)
+
+        if (lpparam.packageName == "android") {
+            startPermissionHook()
+        } else {
+            startHook(lpparam)
+        }
     }
 
     private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam) {
-        //检查是否为小米定制输入法
+        // 检查是否为小米定制输入法
         val isNonCustomize = !miuiImeList.contains(lpparam.packageName)
         if (isNonCustomize) {
             val sInputMethodServiceInjector =
@@ -56,7 +64,7 @@ class MainHook : IXposedHookLoadPackage {
             lpparam.classLoader
         )
 
-        //获取常用语的ClassLoader
+        // 获取常用语的ClassLoader
         findMethod("android.inputmethodservice.InputMethodModuleManager") {
             name == "loadDex" && parameterTypes.sameAs(ClassLoader::class.java, String::class.java)
         }.hookAfter { param ->
@@ -73,8 +81,8 @@ class MainHook : IXposedHookLoadPackage {
                     hookIsXiaoAiEnable(it)
                 }
 
-                //针对A11的修复切换输入法列表
-                it.getMethod("getSupportIme").hookReplace { _ ->
+                // 针对A11的修复切换输入法列表
+                it.getDeclaredMethod("getSupportIme").hookReplace { _ ->
                     it.getStaticObject("sBottomViewHelper")
                         .getObjectAs<InputMethodManager>("mImm").enabledInputMethodList
                 }
@@ -94,7 +102,7 @@ class MainHook : IXposedHookLoadPackage {
             clazz.putStaticObject("sIsImeSupport", 1)
             Log.i("Success:Hook field sIsImeSupport")
         }.onFailure {
-            Log.i("Failed:Hook field sIsImeSupport ")
+            Log.i("Failed:Hook field sIsImeSupport")
             Log.i(it)
         }
     }
@@ -168,5 +176,53 @@ class MainHook : IXposedHookLoadPackage {
             Log.i("Failed:Hook method deleteNotSupportIme")
             Log.i(it)
         }
+    }
+
+    /**
+     * Hook 获取应用列表权限，为所有输入法强制提供获取输入法列表的权限。
+     * 用于修复部分输入法（搜狗输入法小米版等）缺少获取输入法列表权限，导致切换输入法功能不能显示其他输入法的问题。
+     * 理论等效于在输入法的AndroidManifest.xml中添加:
+     * ```xml
+     * <manifest>
+     *     <queries>
+     *         <intent>
+     *             <action android:name="android.view.InputMethod" />
+     *         </intent>
+     *     </queries>
+     * </manifest>
+     * ```
+     * 当前实现可能影响开机速度，如需此修复需手动设置系统框架作用域。
+     */
+    private fun startPermissionHook() {
+        runCatching {
+            findMethod("com.android.server.pm.AppsFilterUtils") {
+                name == "canQueryViaComponents"
+            }.hookAfter { param ->
+                if (param.result == true) return@hookAfter
+                val querying = param.args[0]
+                val potentialTarget = param.args[1]
+                if (!isIme(querying)) return@hookAfter
+                if (!isIme(potentialTarget)) return@hookAfter
+                param.result = true
+            }
+        }.onFailure {
+            Log.i("Failed: Hook method canQueryViaComponents")
+            Log.i(it)
+        }
+    }
+
+    private fun isIme(androidPackage: Any): Boolean {
+        val services = androidPackage.invokeMethodAs<List<Any>>("getServices")
+        services?.forEach { service ->
+            if (!service.invokeMethodAs<Boolean>("isExported")!!) return@forEach
+            val intents = service.invokeMethodAs<List<Any>>("getIntents")
+            intents?.forEach { intent ->
+                val intentFilter = intent.invokeMethodAs<IntentFilter>("getIntentFilter")
+                if (intentFilter?.matchAction("android.view.InputMethod") == true) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }
