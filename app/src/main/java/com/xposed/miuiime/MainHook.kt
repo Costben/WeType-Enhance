@@ -1,6 +1,8 @@
 package com.xposed.miuiime
 
+import android.content.res.AssetManager
 import android.content.IntentFilter
+import android.graphics.Typeface
 import android.view.inputmethod.InputMethodManager
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
@@ -17,11 +19,15 @@ import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
 import com.github.kyuubiran.ezxhelper.utils.putStaticObject
 import com.github.kyuubiran.ezxhelper.utils.sameAs
 import de.robv.android.xposed.IXposedHookLoadPackage
+import de.robv.android.xposed.IXposedHookZygoteInit
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 private const val TAG = "miuiime"
+private const val WETYPE_PACKAGE = "com.tencent.wetype"
+private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
+private const val MODULE_WETYPE_FONT_ASSET = "WE-Regular.ttf"
 
-class MainHook : IXposedHookLoadPackage {
+class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private val miuiImeList: List<String> = listOf(
         "com.iflytek.inputmethod.miui",
         "com.sohu.inputmethod.sogou.xiaomi",
@@ -29,6 +35,11 @@ class MainHook : IXposedHookLoadPackage {
         "com.miui.catcherpatch"
     )
     private var navBarColor: Int? = null
+    private lateinit var modulePath: String
+
+    override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam) {
+        modulePath = startupParam.modulePath
+    }
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         // 检查是否支持全面屏优化
@@ -45,6 +56,10 @@ class MainHook : IXposedHookLoadPackage {
     }
 
     private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam) {
+        if (lpparam.packageName == WETYPE_PACKAGE) {
+            hookWeTypeFont()
+        }
+
         // 检查是否为小米定制输入法
         val isNonCustomize = !miuiImeList.contains(lpparam.packageName)
         if (isNonCustomize) {
@@ -90,6 +105,29 @@ class MainHook : IXposedHookLoadPackage {
         }
 
         Log.i("Hook MIUI IME Done!")
+    }
+
+    private fun hookWeTypeFont() {
+        runCatching {
+            val moduleAssetManager = AssetManager::class.java.getDeclaredConstructor().newInstance()
+            val addAssetPath = AssetManager::class.java.getMethod("addAssetPath", String::class.java)
+            check(addAssetPath.invoke(moduleAssetManager, modulePath) as Int != 0) {
+                "Failed to add module asset path: $modulePath"
+            }
+
+            Typeface::class.java.getDeclaredMethod(
+                "createFromAsset",
+                AssetManager::class.java,
+                String::class.java
+            ).hookBefore { param ->
+                if (param.args[1] != WETYPE_FONT_ASSET) return@hookBefore
+                param.result = Typeface.createFromAsset(moduleAssetManager, MODULE_WETYPE_FONT_ASSET)
+            }
+            Log.i("Success: Hook WeType font replacement")
+        }.onFailure {
+            Log.i("Failed: Hook WeType font replacement")
+            Log.i(it)
+        }
     }
 
     /**
