@@ -8,9 +8,7 @@ import android.content.Context
 import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Outline
-import android.graphics.Path
 import android.graphics.PorterDuffColorFilter
-import android.graphics.RectF
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -24,6 +22,12 @@ import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
+import androidx.compose.foundation.shape.CornerSize
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Outline as ComposeOutline
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
 import com.github.kyuubiran.ezxhelper.utils.findMethod
@@ -38,6 +42,9 @@ import com.github.kyuubiran.ezxhelper.utils.invokeStaticMethodAuto
 import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
 import com.github.kyuubiran.ezxhelper.utils.putStaticObject
 import com.github.kyuubiran.ezxhelper.utils.sameAs
+import com.kyant.capsule.ContinuousRoundedRectangle
+import com.kyant.capsule.continuities.G2Continuity
+import com.kyant.capsule.continuities.G2ContinuityProfile
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.IXposedHookZygoteInit
 import de.robv.android.xposed.callbacks.XC_LoadPackage
@@ -49,6 +56,15 @@ private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
 private const val MODULE_WETYPE_FONT_ASSET = "WE-Regular.ttf"
 private const val WETYPE_BLUR_APPLY_MAX_RETRY = 6
 private const val WETYPE_BACKGROUND_SETTLE_RETRY = 3
+private val WETYPE_SMOOTH_CONTINUITY = G2Continuity(
+    profile = G2ContinuityProfile(
+        extendedFraction = 0.66,
+        arcFraction = 0.38,
+        bezierCurvatureScale = 1.10,
+        arcCurvatureScale = 1.10
+    ),
+    capsuleProfile = G2ContinuityProfile.Capsule
+)
 private val WETYPE_COLOR_REPLACEMENTS = mapOf(
     0xFFE1E3E8.toInt() to Color.TRANSPARENT,
     0xFFE5E6EB.toInt() to Color.TRANSPARENT,
@@ -463,25 +479,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 WeTypeSettings.getCornerRadiusXposed(decorView.context).toFloat(),
                 decorView.resources.displayMetrics
             )
-            decorView.clipToOutline = true
-            decorView.outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) {
-                    val width = view.width
-                    val height = view.height
-                    if (width <= 0 || height <= 0) return
-                    val path = RoundPath.getSmoothTopRoundPath(
-                        RectF(0f, 0f, width.toFloat(), height.toFloat()),
-                        radius
-                    )
-                    runCatching {
-                        Outline::class.java.getMethod("setPath", Path::class.java)
-                            .invoke(outline, path)
-                    }.onFailure {
-                        outline.setRoundRect(0, 0, width, height, radius)
-                    }
-                }
-            }
-            decorView.invalidateOutline()
+            applyContinuousTopCornerOutline(decorView, radius)
         }
     }
 
@@ -545,6 +543,12 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         layoutParams.topMargin = backgroundTop
         carrier.layoutParams = layoutParams
         carrier.visibility = if (backgroundHeight > 0) View.VISIBLE else View.GONE
+        val radius = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            WeTypeSettings.getCornerRadiusXposed(context).toFloat(),
+            context.resources.displayMetrics
+        )
+        applyContinuousTopCornerOutline(carrier, radius)
         carrier.background = createWeTypeBackgroundDrawable(carrier, context)
     }
 
@@ -644,6 +648,59 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             0f, 0f
         )
         setColor(color)
+    }
+
+    private fun createContinuousTopRoundPath(
+        width: Float,
+        height: Float,
+        radius: Float
+    ): android.graphics.Path {
+        val outline = ContinuousRoundedRectangle(
+            topStart = CornerSize(radius),
+            topEnd = CornerSize(radius),
+            bottomEnd = CornerSize(0f),
+            bottomStart = CornerSize(0f),
+            continuity = WETYPE_SMOOTH_CONTINUITY
+        ).createOutline(
+            size = Size(width, height),
+            layoutDirection = LayoutDirection.Ltr,
+            density = Density(1f)
+        )
+        return when (outline) {
+            is ComposeOutline.Generic -> outline.path.asAndroidPath()
+            is ComposeOutline.Rounded -> android.graphics.Path().apply {
+                addRoundRect(
+                    0f,
+                    0f,
+                    width,
+                    height,
+                    floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f),
+                    android.graphics.Path.Direction.CW
+                )
+            }
+            is ComposeOutline.Rectangle -> android.graphics.Path().apply {
+                addRect(0f, 0f, width, height, android.graphics.Path.Direction.CW)
+            }
+        }
+    }
+
+    private fun applyContinuousTopCornerOutline(view: View, radius: Float) {
+        view.clipToOutline = true
+        view.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(target: View, outline: Outline) {
+                val width = target.width
+                val height = target.height
+                if (width <= 0 || height <= 0) return
+                val path = createContinuousTopRoundPath(width.toFloat(), height.toFloat(), radius)
+                runCatching {
+                    Outline::class.java.getMethod("setPath", android.graphics.Path::class.java)
+                        .invoke(outline, path)
+                }.onFailure {
+                    outline.setRoundRect(0, 0, width, height, radius)
+                }
+            }
+        }
+        view.invalidateOutline()
     }
 
     private fun replaceWeTypeColor(color: Int): Int = WETYPE_COLOR_REPLACEMENTS[color] ?: color
