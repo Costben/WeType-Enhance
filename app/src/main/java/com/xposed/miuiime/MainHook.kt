@@ -4,6 +4,7 @@ import android.content.res.AssetManager
 import android.content.res.ColorStateList
 import android.content.res.Resources
 import android.content.res.TypedArray
+import android.content.Context
 import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Outline
@@ -13,10 +14,12 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
+import android.view.Gravity
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.Window
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.view.inputmethod.EditorInfo
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
@@ -82,6 +85,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         if (isWeType) {
             hookWeTypeFont()
             hookWeTypeTransparentColors()
+            hookWeTypeWindowBlur()
             hookWeTypeWindowCorner()
         }
 
@@ -268,6 +272,55 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             Log.i("Success: Hook WeType window corner")
         }.onFailure {
             Log.i("Failed: Hook WeType window corner")
+            Log.i(it)
+        }
+    }
+
+    private fun hookWeTypeWindowBlur() {
+        runCatching {
+            val inputMethodService = loadClassOrNull("android.inputmethodservice.InputMethodService")
+                ?: error("Failed to load InputMethodService")
+
+            inputMethodService.getMethod("onCreate").hookAfter { param ->
+                applyWeTypeWindowBlur(param.thisObject)
+            }
+            inputMethodService.getMethod(
+                "onStartInputView",
+                EditorInfo::class.java,
+                Boolean::class.javaPrimitiveType
+            ).hookAfter { param ->
+                applyWeTypeWindowBlur(param.thisObject)
+            }
+            runCatching {
+                inputMethodService.getMethod("onWindowShown").hookAfter { param ->
+                    applyWeTypeWindowBlur(param.thisObject)
+                }
+            }
+            runCatching {
+                inputMethodService.getMethod("updateFullscreenMode").hookAfter { param ->
+                    applyWeTypeWindowBlur(param.thisObject)
+                }
+            }
+            Log.i("Success: Hook WeType window blur")
+        }.onFailure {
+            Log.i("Failed: Hook WeType window blur")
+            Log.i(it)
+        }
+    }
+
+    private fun applyWeTypeWindowBlur(inputMethodService: Any) {
+        runCatching {
+            val context = inputMethodService as? Context ?: return
+            val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return
+            val window = softInputWindow.invokeMethodAs<Window>("getWindow") ?: return
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+            window.setGravity(Gravity.BOTTOM)
+            window.setBackgroundBlurRadius(WeTypeSettings.getBlurRadiusXposed())
+            window.setBackgroundDrawable(
+                ColorDrawable(WeTypeSettings.getCurrentBackgroundColorXposed(context))
+            )
+        }.onFailure {
+            Log.i("Failed: Apply WeType window blur")
             Log.i(it)
         }
     }
