@@ -13,15 +13,16 @@ import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.Typeface
-import android.view.Gravity
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.Window
-import android.view.WindowManager
+import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
 import com.github.kyuubiran.ezxhelper.utils.findMethod
@@ -39,17 +40,65 @@ import com.github.kyuubiran.ezxhelper.utils.sameAs
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.IXposedHookZygoteInit
 import de.robv.android.xposed.callbacks.XC_LoadPackage
+import java.util.WeakHashMap
 
 private const val TAG = "miuiime"
 private const val WETYPE_PACKAGE = "com.tencent.wetype"
 private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
 private const val MODULE_WETYPE_FONT_ASSET = "WE-Regular.ttf"
+private const val WETYPE_BLUR_APPLY_MAX_RETRY = 6
+private const val WETYPE_BACKGROUND_SETTLE_RETRY = 3
 private val WETYPE_COLOR_REPLACEMENTS = mapOf(
     0xFFE1E3E8.toInt() to Color.TRANSPARENT,
     0xFFE5E6EB.toInt() to Color.TRANSPARENT,
     0xFF202020.toInt() to Color.TRANSPARENT,
     0xFFD5D7DD.toInt() to Color.TRANSPARENT
 )
+
+private data class WeTypeWindowState(
+    var lifecycleOrder: Int = 0,
+    var blurApplyToken: Int = 0,
+    var blurEligible: Boolean = false,
+    var backgroundCarrier: View? = null,
+    var firstPopupLogged: Boolean = false
+)
+
+private data class WeTypeViewSnapshot(
+    val name: String,
+    val locationX: Int,
+    val locationY: Int,
+    val top: Int,
+    val height: Int,
+    val measuredHeight: Int
+)
+
+private data class WeTypeWindowSnapshot(
+    val decorView: WeTypeViewSnapshot?,
+    val candidatesFrame: WeTypeViewSnapshot?,
+    val inputFrame: WeTypeViewSnapshot?,
+    val inputView: WeTypeViewSnapshot?,
+    val windowWidth: Int,
+    val windowHeight: Int,
+    val windowGravity: Int
+) {
+    fun isLayoutReady(): Boolean {
+        val decorReady = (decorView?.height ?: 0) > 0
+        val contentReady = listOf(candidatesFrame, inputFrame, inputView)
+            .any { snapshot -> snapshot != null && (snapshot.height > 0 || snapshot.measuredHeight > 0) }
+        return decorReady && contentReady
+    }
+
+    fun backgroundTop(): Int {
+        val contentTop = listOf(candidatesFrame, inputFrame, inputView)
+            .filter { snapshot -> snapshot != null && (snapshot.height > 0 || snapshot.measuredHeight > 0) }
+            .mapNotNull { snapshot ->
+                val resolved = snapshot ?: return@mapNotNull null
+                resolved.locationY.takeIf { it > 0 } ?: resolved.top.takeIf { it > 0 }
+            }
+            .minOrNull()
+        return contentTop ?: 0
+    }
+}
 
 class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private val miuiImeList: List<String> = listOf(
@@ -58,6 +107,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         "com.baidu.input_mi",
         "com.miui.catcherpatch"
     )
+    private val weTypeWindowStates = WeakHashMap<Any, WeTypeWindowState>()
     private var navBarColor: Int? = null
     private var bottomViewSourceColor: Int? = null
     private lateinit var modulePath: String
@@ -281,24 +331,21 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             val inputMethodService = loadClassOrNull("android.inputmethodservice.InputMethodService")
                 ?: error("Failed to load InputMethodService")
 
-            inputMethodService.getMethod("onCreate").hookAfter { param ->
-                applyWeTypeWindowBlur(param.thisObject)
-            }
             inputMethodService.getMethod(
                 "onStartInputView",
                 EditorInfo::class.java,
                 Boolean::class.javaPrimitiveType
             ).hookAfter { param ->
-                applyWeTypeWindowBlur(param.thisObject)
+                onWeTypeWindowStage(param.thisObject, "onStartInputView")
             }
             runCatching {
                 inputMethodService.getMethod("onWindowShown").hookAfter { param ->
-                    applyWeTypeWindowBlur(param.thisObject)
+                    onWeTypeWindowStage(param.thisObject, "onWindowShown")
                 }
             }
             runCatching {
                 inputMethodService.getMethod("updateFullscreenMode").hookAfter { param ->
-                    applyWeTypeWindowBlur(param.thisObject)
+                    onWeTypeWindowStage(param.thisObject, "updateFullscreenMode")
                 }
             }
             Log.i("Success: Hook WeType window blur")
@@ -308,20 +355,127 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         }
     }
 
-    private fun applyWeTypeWindowBlur(inputMethodService: Any) {
+    private fun onWeTypeWindowStage(inputMethodService: Any, stage: String) {
         runCatching {
+            val state = getWeTypeWindowState(inputMethodService)
+            state.lifecycleOrder += 1
+            when (stage) {
+                "onStartInputView" -> state.blurEligible = false
+                "onWindowShown", "updateFullscreenMode" -> state.blurEligible = true
+            }
+
+            if (!state.firstPopupLogged) {
+                collectWeTypeWindowSnapshot(inputMethodService)?.also { snapshot ->
+                    logWeTypeWindowSnapshot(
+                        stage = stage,
+                        order = state.lifecycleOrder,
+                        attempt = 0,
+                        snapshot = snapshot
+                    )
+                }
+            }
+
+            if (!state.blurEligible) return@runCatching
+            scheduleWeTypeWindowBlur(inputMethodService, stage)
+        }.onFailure {
+            Log.i("Failed: Handle WeType window stage $stage")
+            Log.i(it)
+        }
+    }
+
+    private fun scheduleWeTypeWindowBlur(inputMethodService: Any, trigger: String) {
+        val state = getWeTypeWindowState(inputMethodService)
+        val token = ++state.blurApplyToken
+        applyWeTypeWindowBlurWhenReady(inputMethodService, trigger, token, 0)
+    }
+
+    private fun applyWeTypeWindowBlurWhenReady(
+        inputMethodService: Any,
+        trigger: String,
+        token: Int,
+        attempt: Int
+    ) {
+        runCatching {
+            val state = getWeTypeWindowState(inputMethodService)
+            if (state.blurApplyToken != token) return
+
             val context = inputMethodService as? Context ?: return
             val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return
             val window = softInputWindow.invokeMethodAs<Window>("getWindow") ?: return
-            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
-            window.setGravity(Gravity.BOTTOM)
-            window.setBackgroundBlurRadius(WeTypeSettings.getBlurRadiusXposed())
-            window.setBackgroundDrawable(
-                ColorDrawable(WeTypeSettings.getCurrentBackgroundColorXposed(context))
-            )
+            val decorView = window.decorView ?: return
+            val snapshot = collectWeTypeWindowSnapshot(inputMethodService) ?: return
+
+            if (snapshot.isLayoutReady()) {
+                // 避免在 SoftInputWindow 首次测量前改动窗口背景，先等视图具备稳定尺寸。
+                applyWeTypeBackgroundCarrier(window, decorView, context, state, snapshot)
+                if (!state.firstPopupLogged) {
+                    logWeTypeWindowSnapshot(trigger, state.lifecycleOrder, attempt, snapshot)
+                    state.firstPopupLogged = true
+                }
+                scheduleWeTypeBackgroundSettle(inputMethodService, token, WETYPE_BACKGROUND_SETTLE_RETRY)
+                return
+            }
+
+            if (attempt >= WETYPE_BLUR_APPLY_MAX_RETRY) {
+                if (!state.firstPopupLogged) {
+                    logWeTypeWindowSnapshot(trigger, state.lifecycleOrder, attempt, snapshot)
+                }
+                return
+            }
+
+            decorView.post {
+                applyWeTypeWindowBlurWhenReady(inputMethodService, trigger, token, attempt + 1)
+            }
         }.onFailure {
             Log.i("Failed: Apply WeType window blur")
             Log.i(it)
+        }
+    }
+
+    private fun scheduleWeTypeBackgroundSettle(
+        inputMethodService: Any,
+        token: Int,
+        remaining: Int
+    ) {
+        if (remaining <= 0) return
+        runCatching {
+            val state = getWeTypeWindowState(inputMethodService)
+            if (state.blurApplyToken != token) return
+
+            val context = inputMethodService as? Context ?: return
+            val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return
+            val window = softInputWindow.invokeMethodAs<Window>("getWindow") ?: return
+            val decorView = window.decorView ?: return
+
+            decorView.post {
+                runCatching {
+                    val latestState = getWeTypeWindowState(inputMethodService)
+                    if (latestState.blurApplyToken != token) return@runCatching
+
+                    val latestSoftInputWindow =
+                        inputMethodService.invokeMethodAs<Any>("getWindow") ?: return@runCatching
+                    val latestWindow =
+                        latestSoftInputWindow.invokeMethodAs<Window>("getWindow") ?: return@runCatching
+                    val latestDecorView = latestWindow.decorView ?: return@runCatching
+                    val snapshot =
+                        collectWeTypeWindowSnapshot(inputMethodService) ?: return@runCatching
+                    if (!snapshot.isLayoutReady()) {
+                        scheduleWeTypeBackgroundSettle(inputMethodService, token, remaining - 1)
+                        return@runCatching
+                    }
+                    applyWeTypeBackgroundCarrier(
+                        latestWindow,
+                        latestDecorView,
+                        context,
+                        latestState,
+                        snapshot
+                    )
+                    scheduleWeTypeBackgroundSettle(inputMethodService, token, remaining - 1)
+                }.onFailure {
+                    Log.i("Failed: Settle WeType background carrier")
+                    Log.i(it)
+                }
+            }
         }
     }
 
@@ -367,6 +521,200 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             }
             decorView.invalidateOutline()
         }
+    }
+
+    private fun getWeTypeWindowState(inputMethodService: Any): WeTypeWindowState =
+        synchronized(weTypeWindowStates) {
+            weTypeWindowStates.getOrPut(inputMethodService) { WeTypeWindowState() }
+        }
+
+    private fun collectWeTypeWindowSnapshot(inputMethodService: Any): WeTypeWindowSnapshot? {
+        val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return null
+        val window = softInputWindow.invokeMethodAs<Window>("getWindow") ?: return null
+        return WeTypeWindowSnapshot(
+            decorView = window.decorView?.toWeTypeViewSnapshot("decorView"),
+            candidatesFrame = readWeTypeViewField(inputMethodService, "mCandidatesFrame")
+                ?.toWeTypeViewSnapshot("mCandidatesFrame"),
+            inputFrame = readWeTypeViewField(inputMethodService, "mInputFrame")
+                ?.toWeTypeViewSnapshot("mInputFrame"),
+            inputView = runCatching { inputMethodService.invokeMethodAs<View>("getInputView") }
+                .getOrNull()
+                ?.toWeTypeViewSnapshot("getInputView"),
+            windowWidth = window.attributes.width,
+            windowHeight = window.attributes.height,
+            windowGravity = window.attributes.gravity
+        )
+    }
+
+    private fun readWeTypeViewField(inputMethodService: Any, fieldName: String): View? =
+        runCatching { inputMethodService.getObjectAs<View>(fieldName) }.getOrNull()
+
+    private fun View.toWeTypeViewSnapshot(name: String): WeTypeViewSnapshot {
+        val location = IntArray(2)
+        runCatching { getLocationInWindow(location) }
+        return WeTypeViewSnapshot(
+            name = name,
+            locationX = location[0],
+            locationY = location[1],
+            top = top,
+            height = height,
+            measuredHeight = measuredHeight
+        )
+    }
+
+    private fun logWeTypeWindowSnapshot(
+        stage: String,
+        order: Int,
+        attempt: Int,
+        snapshot: WeTypeWindowSnapshot
+    ) {
+        Log.i(
+            "WeType[first-popup][$stage] order=$order attempt=$attempt ready=${snapshot.isLayoutReady()} " +
+                "window{width=${snapshot.windowWidth},height=${snapshot.windowHeight},gravity=${snapshot.windowGravity}} " +
+                "backgroundTop=${snapshot.backgroundTop()}"
+        )
+        Log.i(
+            "WeType[first-popup][$stage] " +
+                describeWeTypeViewSnapshot("decorView", snapshot.decorView) + " " +
+                describeWeTypeViewSnapshot("mCandidatesFrame", snapshot.candidatesFrame) + " " +
+                describeWeTypeViewSnapshot("mInputFrame", snapshot.inputFrame) + " " +
+                describeWeTypeViewSnapshot("getInputView", snapshot.inputView)
+        )
+    }
+
+    private fun describeWeTypeViewSnapshot(
+        name: String,
+        snapshot: WeTypeViewSnapshot?
+    ): String {
+        if (snapshot == null) return "$name{null}"
+        return "$name{locationInWindow=(${snapshot.locationX},${snapshot.locationY}),top=${snapshot.top}," +
+            "height=${snapshot.height},measuredHeight=${snapshot.measuredHeight}}"
+    }
+
+    private fun applyWeTypeBackgroundCarrier(
+        window: Window,
+        decorView: View,
+        context: Context,
+        state: WeTypeWindowState,
+        snapshot: WeTypeWindowSnapshot
+    ) {
+        window.setBackgroundBlurRadius(0)
+        window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val decorGroup = decorView as? ViewGroup ?: return
+        val decorHeight = snapshot.decorView?.height ?: decorGroup.height
+        val backgroundTop = snapshot.backgroundTop().coerceIn(0, decorHeight)
+        val backgroundHeight = (decorHeight - backgroundTop).coerceAtLeast(0)
+        val carrier = ensureWeTypeBackgroundCarrier(context, decorGroup, state)
+        val layoutParams = (carrier.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                backgroundHeight
+            )
+        layoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT
+        layoutParams.height = backgroundHeight
+        layoutParams.topMargin = backgroundTop
+        carrier.layoutParams = layoutParams
+        carrier.visibility = if (backgroundHeight > 0) View.VISIBLE else View.GONE
+        carrier.background = createWeTypeBackgroundDrawable(carrier, context)
+    }
+
+    private fun ensureWeTypeBackgroundCarrier(
+        context: Context,
+        decorGroup: ViewGroup,
+        state: WeTypeWindowState
+    ): View {
+        val existing = state.backgroundCarrier?.takeIf { it.parent === decorGroup }
+        if (existing != null) return existing
+
+        val carrier = View(context).apply {
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        decorGroup.addView(
+            carrier,
+            0,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0
+            )
+        )
+        state.backgroundCarrier = carrier
+        return carrier
+    }
+
+    private fun createWeTypeBackgroundDrawable(
+        targetView: View,
+        context: Context
+    ): Drawable {
+        val radius = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            30f,
+            context.resources.displayMetrics
+        )
+        val color = WeTypeSettings.getCurrentBackgroundColorXposed(context)
+        val blurRadius = WeTypeSettings.getBlurRadiusXposed()
+        val tintDrawable = createWeTypeTintDrawable(color, radius)
+        val blurDrawable = createInternalBackgroundBlurDrawable(targetView, blurRadius, radius)
+        if (blurDrawable != null) {
+            return LayerDrawable(arrayOf(blurDrawable, tintDrawable))
+        }
+
+        return tintDrawable
+    }
+
+    private fun createInternalBackgroundBlurDrawable(
+        targetView: View,
+        blurRadius: Int,
+        cornerRadius: Float
+    ): Drawable? {
+        val viewRootImpl = runCatching { targetView.invokeMethodAs<Any>("getViewRootImpl") }.getOrNull()
+            ?: return null
+        val blurDrawable = runCatching {
+            viewRootImpl.invokeMethodAs<Drawable>("createBackgroundBlurDrawable")
+        }.getOrNull() ?: return null
+        runCatching {
+            blurDrawable.javaClass.getMethod(
+                "setBlurRadius",
+                Int::class.javaPrimitiveType
+            ).invoke(blurDrawable, blurRadius)
+        }
+        runCatching {
+            blurDrawable.javaClass.getMethod(
+                "setColor",
+                Int::class.javaPrimitiveType
+            ).invoke(blurDrawable, Color.TRANSPARENT)
+        }
+        runCatching {
+            blurDrawable.javaClass.getMethod(
+                "setCornerRadius",
+                Float::class.javaPrimitiveType,
+                Float::class.javaPrimitiveType,
+                Float::class.javaPrimitiveType,
+                Float::class.javaPrimitiveType
+            ).invoke(blurDrawable, cornerRadius, cornerRadius, 0f, 0f)
+        }.recoverCatching {
+            blurDrawable.javaClass.getMethod(
+                "setCornerRadius",
+                Float::class.javaPrimitiveType
+            ).invoke(blurDrawable, cornerRadius)
+        }
+        return blurDrawable
+    }
+
+    private fun createWeTypeTintDrawable(
+        color: Int,
+        radius: Float
+    ): Drawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadii = floatArrayOf(
+            radius, radius,
+            radius, radius,
+            0f, 0f,
+            0f, 0f
+        )
+        setColor(color)
     }
 
     private fun replaceWeTypeColor(color: Int): Int = WETYPE_COLOR_REPLACEMENTS[color] ?: color

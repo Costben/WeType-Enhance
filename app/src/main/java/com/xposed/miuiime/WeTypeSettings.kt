@@ -12,7 +12,7 @@ object WeTypeSettings {
     private const val KEY_DARK_COLOR = "dark_color"
     private const val KEY_BLUR_RADIUS = "blur_radius"
 
-    const val DEFAULT_LIGHT_COLOR = 0xCCFFFFFF.toInt()
+    const val DEFAULT_LIGHT_COLOR = 0xCCE1E3E8.toInt()
     const val DEFAULT_DARK_COLOR = 0x80202020.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
 
