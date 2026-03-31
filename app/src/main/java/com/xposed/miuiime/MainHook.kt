@@ -6,13 +6,19 @@ import android.content.res.Resources
 import android.content.res.TypedArray
 import android.content.IntentFilter
 import android.graphics.Color
+import android.graphics.Outline
+import android.graphics.Path
 import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
+import android.util.TypedValue
 import android.view.View
+import android.view.ViewOutlineProvider
+import android.view.Window
 import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.EditorInfo
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
 import com.github.kyuubiran.ezxhelper.utils.findMethod
@@ -76,6 +82,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         if (isWeType) {
             hookWeTypeFont()
             hookWeTypeTransparentColors()
+            hookWeTypeWindowCorner()
         }
 
         // 检查是否为小米定制输入法
@@ -235,6 +242,77 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         }.onFailure {
             Log.i("Failed: Hook WeType transparent colors")
             Log.i(it)
+        }
+    }
+
+    private fun hookWeTypeWindowCorner() {
+        runCatching {
+            val inputMethodService = loadClassOrNull("android.inputmethodservice.InputMethodService")
+                ?: error("Failed to load InputMethodService")
+
+            inputMethodService.getMethod("onCreate").hookAfter { param ->
+                applyWeTypeWindowCorner(param.thisObject)
+            }
+            inputMethodService.getMethod(
+                "onStartInputView",
+                EditorInfo::class.java,
+                Boolean::class.javaPrimitiveType
+            ).hookAfter { param ->
+                applyWeTypeWindowCorner(param.thisObject)
+            }
+            runCatching {
+                inputMethodService.getMethod("onWindowShown").hookAfter { param ->
+                    applyWeTypeWindowCorner(param.thisObject)
+                }
+            }
+            Log.i("Success: Hook WeType window corner")
+        }.onFailure {
+            Log.i("Failed: Hook WeType window corner")
+            Log.i(it)
+        }
+    }
+
+    private fun applyWeTypeWindowCorner(inputMethodService: Any) {
+        runCatching {
+            val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return
+            val window = softInputWindow.invokeMethodAs<Window>("getWindow")
+                ?: return
+            val decorView = window.decorView ?: return
+            val radius = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                30f,
+                decorView.resources.displayMetrics
+            )
+            decorView.clipToOutline = true
+            decorView.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    val width = view.width
+                    val height = view.height
+                    if (width <= 0 || height <= 0) return
+                    val path = Path().apply {
+                        addRoundRect(
+                            0f,
+                            0f,
+                            width.toFloat(),
+                            height.toFloat(),
+                            floatArrayOf(
+                                radius, radius,
+                                radius, radius,
+                                0f, 0f,
+                                0f, 0f
+                            ),
+                            Path.Direction.CW
+                        )
+                    }
+                    runCatching {
+                        Outline::class.java.getMethod("setPath", Path::class.java)
+                            .invoke(outline, path)
+                    }.onFailure {
+                        outline.setRoundRect(0, 0, width, height, radius)
+                    }
+                }
+            }
+            decorView.invalidateOutline()
         }
     }
 
