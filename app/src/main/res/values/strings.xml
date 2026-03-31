@@ -3,6 +3,7 @@
     <string name="xposeddescription">Unlock MIUI Enhance keyboard;Instructions: Check the input method to be unlocked in the xposed scope</string>
     <string name="settings_title">WeType Blur Settings</string>
     <string name="settings_summary">Configure blur radius and background colors for the WeType input method window.</string>
+    <string name="settings_corner_label">Corner Radius</string>
     <string name="settings_light_mode">Light</string>
     <string name="settings_dark_mode">Dark</string>
     <string name="settings_color_label">Background Color</string>
@@ -11,6 +12,10 @@
     <string name="settings_preview_label">Preview</string>
     <string name="settings_save">Save</string>
     <string name="settings_reset">Reset</string>
+    <string name="settings_restart">Restart WeType</string>
     <string name="settings_saved">Settings saved</string>
     <string name="settings_invalid_color">Invalid color. Use #RRGGBB.</string>
+    <string name="settings_root_required">Grant root access first</string>
+    <string name="settings_restart_done">WeType restarted</string>
+    <string name="settings_restart_failed">Failed to restart WeType</string>
 </resources>

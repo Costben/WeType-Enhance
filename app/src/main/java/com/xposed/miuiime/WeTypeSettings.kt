@@ -11,10 +11,12 @@ object WeTypeSettings {
     private const val KEY_LIGHT_COLOR = "light_color"
     private const val KEY_DARK_COLOR = "dark_color"
     private const val KEY_BLUR_RADIUS = "blur_radius"
+    private const val KEY_CORNER_RADIUS = "corner_radius"
 
-    const val DEFAULT_LIGHT_COLOR = 0xCCE1E3E8.toInt()
-    const val DEFAULT_DARK_COLOR = 0x80202020.toInt()
+    const val DEFAULT_LIGHT_COLOR = 0xA0E1E3E8.toInt()
+    const val DEFAULT_DARK_COLOR = 0xA0202020.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
+    const val DEFAULT_CORNER_RADIUS = 28
 
     fun getLightColor(context: Context): Int =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -28,12 +30,23 @@ object WeTypeSettings {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS)
 
-    fun save(context: Context, lightColor: Int, darkColor: Int, blurRadius: Int) {
+    fun getCornerRadius(context: Context): Int =
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+
+    fun save(
+        context: Context,
+        lightColor: Int,
+        darkColor: Int,
+        blurRadius: Int,
+        cornerRadius: Int
+    ) {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_LIGHT_COLOR, lightColor)
             .putInt(KEY_DARK_COLOR, darkColor)
             .putInt(KEY_BLUR_RADIUS, blurRadius.coerceIn(0, 100))
+            .putInt(KEY_CORNER_RADIUS, cornerRadius.coerceIn(0, 100))
             .commit()
         File(context.applicationInfo.dataDir, "shared_prefs/$PREF_NAME.xml")
             .setReadable(true, false)
@@ -55,4 +68,9 @@ object WeTypeSettings {
         XSharedPreferences(MODULE_PACKAGE_NAME, PREF_NAME)
             .apply { reload() }
             .getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS)
+
+    fun getCornerRadiusXposed(): Int =
+        XSharedPreferences(MODULE_PACKAGE_NAME, PREF_NAME)
+            .apply { reload() }
+            .getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
 }

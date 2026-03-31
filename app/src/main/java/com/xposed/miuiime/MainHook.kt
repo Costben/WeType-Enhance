@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Path
 import android.graphics.PorterDuffColorFilter
+import android.graphics.RectF
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -56,15 +57,12 @@ private val WETYPE_COLOR_REPLACEMENTS = mapOf(
 )
 
 private data class WeTypeWindowState(
-    var lifecycleOrder: Int = 0,
     var blurApplyToken: Int = 0,
     var blurEligible: Boolean = false,
-    var backgroundCarrier: View? = null,
-    var firstPopupLogged: Boolean = false
+    var backgroundCarrier: View? = null
 )
 
 private data class WeTypeViewSnapshot(
-    val name: String,
     val locationX: Int,
     val locationY: Int,
     val top: Int,
@@ -76,10 +74,7 @@ private data class WeTypeWindowSnapshot(
     val decorView: WeTypeViewSnapshot?,
     val candidatesFrame: WeTypeViewSnapshot?,
     val inputFrame: WeTypeViewSnapshot?,
-    val inputView: WeTypeViewSnapshot?,
-    val windowWidth: Int,
-    val windowHeight: Int,
-    val windowGravity: Int
+    val inputView: WeTypeViewSnapshot?
 ) {
     fun isLayoutReady(): Boolean {
         val decorReady = (decorView?.height ?: 0) > 0
@@ -358,40 +353,27 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private fun onWeTypeWindowStage(inputMethodService: Any, stage: String) {
         runCatching {
             val state = getWeTypeWindowState(inputMethodService)
-            state.lifecycleOrder += 1
             when (stage) {
                 "onStartInputView" -> state.blurEligible = false
                 "onWindowShown", "updateFullscreenMode" -> state.blurEligible = true
             }
 
-            if (!state.firstPopupLogged) {
-                collectWeTypeWindowSnapshot(inputMethodService)?.also { snapshot ->
-                    logWeTypeWindowSnapshot(
-                        stage = stage,
-                        order = state.lifecycleOrder,
-                        attempt = 0,
-                        snapshot = snapshot
-                    )
-                }
-            }
-
             if (!state.blurEligible) return@runCatching
-            scheduleWeTypeWindowBlur(inputMethodService, stage)
+            scheduleWeTypeWindowBlur(inputMethodService)
         }.onFailure {
-            Log.i("Failed: Handle WeType window stage $stage")
+            Log.i("Failed: Handle WeType window stage")
             Log.i(it)
         }
     }
 
-    private fun scheduleWeTypeWindowBlur(inputMethodService: Any, trigger: String) {
+    private fun scheduleWeTypeWindowBlur(inputMethodService: Any) {
         val state = getWeTypeWindowState(inputMethodService)
         val token = ++state.blurApplyToken
-        applyWeTypeWindowBlurWhenReady(inputMethodService, trigger, token, 0)
+        applyWeTypeWindowBlurWhenReady(inputMethodService, token, 0)
     }
 
     private fun applyWeTypeWindowBlurWhenReady(
         inputMethodService: Any,
-        trigger: String,
         token: Int,
         attempt: Int
     ) {
@@ -408,23 +390,14 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             if (snapshot.isLayoutReady()) {
                 // 避免在 SoftInputWindow 首次测量前改动窗口背景，先等视图具备稳定尺寸。
                 applyWeTypeBackgroundCarrier(window, decorView, context, state, snapshot)
-                if (!state.firstPopupLogged) {
-                    logWeTypeWindowSnapshot(trigger, state.lifecycleOrder, attempt, snapshot)
-                    state.firstPopupLogged = true
-                }
                 scheduleWeTypeBackgroundSettle(inputMethodService, token, WETYPE_BACKGROUND_SETTLE_RETRY)
                 return
             }
 
-            if (attempt >= WETYPE_BLUR_APPLY_MAX_RETRY) {
-                if (!state.firstPopupLogged) {
-                    logWeTypeWindowSnapshot(trigger, state.lifecycleOrder, attempt, snapshot)
-                }
-                return
-            }
+            if (attempt >= WETYPE_BLUR_APPLY_MAX_RETRY) return
 
             decorView.post {
-                applyWeTypeWindowBlurWhenReady(inputMethodService, trigger, token, attempt + 1)
+                applyWeTypeWindowBlurWhenReady(inputMethodService, token, attempt + 1)
             }
         }.onFailure {
             Log.i("Failed: Apply WeType window blur")
@@ -487,7 +460,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             val decorView = window.decorView ?: return
             val radius = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP,
-                30f,
+                WeTypeSettings.getCornerRadiusXposed().toFloat(),
                 decorView.resources.displayMetrics
             )
             decorView.clipToOutline = true
@@ -496,21 +469,10 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     val width = view.width
                     val height = view.height
                     if (width <= 0 || height <= 0) return
-                    val path = Path().apply {
-                        addRoundRect(
-                            0f,
-                            0f,
-                            width.toFloat(),
-                            height.toFloat(),
-                            floatArrayOf(
-                                radius, radius,
-                                radius, radius,
-                                0f, 0f,
-                                0f, 0f
-                            ),
-                            Path.Direction.CW
-                        )
-                    }
+                    val path = RoundPath.getSmoothTopRoundPath(
+                        RectF(0f, 0f, width.toFloat(), height.toFloat()),
+                        radius
+                    )
                     runCatching {
                         Outline::class.java.getMethod("setPath", Path::class.java)
                             .invoke(outline, path)
@@ -532,63 +494,30 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return null
         val window = softInputWindow.invokeMethodAs<Window>("getWindow") ?: return null
         return WeTypeWindowSnapshot(
-            decorView = window.decorView?.toWeTypeViewSnapshot("decorView"),
+            decorView = window.decorView?.toWeTypeViewSnapshot(),
             candidatesFrame = readWeTypeViewField(inputMethodService, "mCandidatesFrame")
-                ?.toWeTypeViewSnapshot("mCandidatesFrame"),
+                ?.toWeTypeViewSnapshot(),
             inputFrame = readWeTypeViewField(inputMethodService, "mInputFrame")
-                ?.toWeTypeViewSnapshot("mInputFrame"),
+                ?.toWeTypeViewSnapshot(),
             inputView = runCatching { inputMethodService.invokeMethodAs<View>("getInputView") }
                 .getOrNull()
-                ?.toWeTypeViewSnapshot("getInputView"),
-            windowWidth = window.attributes.width,
-            windowHeight = window.attributes.height,
-            windowGravity = window.attributes.gravity
+                ?.toWeTypeViewSnapshot()
         )
     }
 
     private fun readWeTypeViewField(inputMethodService: Any, fieldName: String): View? =
         runCatching { inputMethodService.getObjectAs<View>(fieldName) }.getOrNull()
 
-    private fun View.toWeTypeViewSnapshot(name: String): WeTypeViewSnapshot {
+    private fun View.toWeTypeViewSnapshot(): WeTypeViewSnapshot {
         val location = IntArray(2)
         runCatching { getLocationInWindow(location) }
         return WeTypeViewSnapshot(
-            name = name,
             locationX = location[0],
             locationY = location[1],
             top = top,
             height = height,
             measuredHeight = measuredHeight
         )
-    }
-
-    private fun logWeTypeWindowSnapshot(
-        stage: String,
-        order: Int,
-        attempt: Int,
-        snapshot: WeTypeWindowSnapshot
-    ) {
-        Log.i(
-            "WeType[first-popup][$stage] order=$order attempt=$attempt ready=${snapshot.isLayoutReady()} " +
-                "window{width=${snapshot.windowWidth},height=${snapshot.windowHeight},gravity=${snapshot.windowGravity}} " +
-                "backgroundTop=${snapshot.backgroundTop()}"
-        )
-        Log.i(
-            "WeType[first-popup][$stage] " +
-                describeWeTypeViewSnapshot("decorView", snapshot.decorView) + " " +
-                describeWeTypeViewSnapshot("mCandidatesFrame", snapshot.candidatesFrame) + " " +
-                describeWeTypeViewSnapshot("mInputFrame", snapshot.inputFrame) + " " +
-                describeWeTypeViewSnapshot("getInputView", snapshot.inputView)
-        )
-    }
-
-    private fun describeWeTypeViewSnapshot(
-        name: String,
-        snapshot: WeTypeViewSnapshot?
-    ): String {
-        if (snapshot == null) return "$name{null}"
-        return "$name{locationInWindow=(${snapshot.locationX},${snapshot.locationY}),top=${snapshot.top}," +
-            "height=${snapshot.height},measuredHeight=${snapshot.measuredHeight}}"
     }
 
     private fun applyWeTypeBackgroundCarrier(
@@ -650,7 +579,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     ): Drawable {
         val radius = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP,
-            30f,
+            WeTypeSettings.getCornerRadiusXposed().toFloat(),
             context.resources.displayMetrics
         )
         val color = WeTypeSettings.getCurrentBackgroundColorXposed(context)

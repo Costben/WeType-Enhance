@@ -16,6 +16,8 @@ class MainActivity : Activity() {
     private var darkColor = WeTypeSettings.DEFAULT_DARK_COLOR
     private var currentModeIsDark = false
 
+    private lateinit var cornerSeekBar: SeekBar
+    private lateinit var cornerValue: TextView
     private lateinit var modeGroup: RadioGroup
     private lateinit var colorInput: EditText
     private lateinit var alphaSeekBar: SeekBar
@@ -28,6 +30,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        cornerSeekBar = findViewById(R.id.corner_seekbar)
+        cornerValue = findViewById(R.id.corner_value)
         modeGroup = findViewById(R.id.mode_group)
         colorInput = findViewById(R.id.color_input)
         alphaSeekBar = findViewById(R.id.alpha_seekbar)
@@ -38,6 +42,8 @@ class MainActivity : Activity() {
 
         lightColor = WeTypeSettings.getLightColor(this)
         darkColor = WeTypeSettings.getDarkColor(this)
+        cornerSeekBar.progress = WeTypeSettings.getCornerRadius(this)
+        cornerValue.text = cornerSeekBar.progress.toString()
         blurSeekBar.progress = WeTypeSettings.getBlurRadius(this)
         blurValue.text = blurSeekBar.progress.toString()
 
@@ -64,6 +70,10 @@ class MainActivity : Activity() {
             updatePreview()
         })
 
+        cornerSeekBar.setOnSeekBarChangeListener(simpleSeekBarListener { progress ->
+            cornerValue.text = progress.toString()
+        })
+
         blurSeekBar.setOnSeekBarChangeListener(simpleSeekBarListener { progress ->
             blurValue.text = progress.toString()
         })
@@ -78,16 +88,28 @@ class MainActivity : Activity() {
             } else {
                 lightColor = color
             }
-            WeTypeSettings.save(this, lightColor, darkColor, blurSeekBar.progress)
+            WeTypeSettings.save(
+                this,
+                lightColor,
+                darkColor,
+                blurSeekBar.progress,
+                cornerSeekBar.progress
+            )
             Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         }
 
         findViewById<TextView>(R.id.reset_button).setOnClickListener {
             lightColor = WeTypeSettings.DEFAULT_LIGHT_COLOR
             darkColor = WeTypeSettings.DEFAULT_DARK_COLOR
+            cornerSeekBar.progress = WeTypeSettings.DEFAULT_CORNER_RADIUS
+            cornerValue.text = cornerSeekBar.progress.toString()
             blurSeekBar.progress = WeTypeSettings.DEFAULT_BLUR_RADIUS
             blurValue.text = blurSeekBar.progress.toString()
             bindCurrentMode()
+        }
+
+        findViewById<TextView>(R.id.restart_button).setOnClickListener {
+            restartWeType()
         }
     }
 
@@ -137,6 +159,38 @@ class MainActivity : Activity() {
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        }
+    }
+
+    private fun restartWeType() {
+        Thread {
+            val hasRoot = runRootCommand("id")
+            if (!hasRoot) {
+                runOnUiThread {
+                    Toast.makeText(this, R.string.settings_root_required, Toast.LENGTH_SHORT).show()
+                }
+                return@Thread
+            }
+
+            val restarted = runRootCommand(
+                "killall com.tencent.wetype || pkill -f com.tencent.wetype || am force-stop com.tencent.wetype"
+            )
+            runOnUiThread {
+                val message =
+                    if (restarted) R.string.settings_restart_done else R.string.settings_restart_failed
+                Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            }
+        }.start()
+    }
+
+    private fun runRootCommand(command: String): Boolean {
+        val process = runCatching {
+            Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+        }.getOrNull() ?: return false
+        return runCatching {
+            process.waitFor() == 0
+        }.getOrDefault(false).also {
+            process.destroy()
         }
     }
 }
