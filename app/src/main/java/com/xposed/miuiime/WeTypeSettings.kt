@@ -16,8 +16,8 @@ object WeTypeSettings {
     private const val KEY_CORNER_RADIUS = "corner_radius"
     private const val METHOD_GET_SETTINGS = "get_settings"
 
-    const val DEFAULT_LIGHT_COLOR = 0xA0E1E3E8.toInt()
-    const val DEFAULT_DARK_COLOR = 0xA0202020.toInt()
+    const val DEFAULT_LIGHT_COLOR = 0xA0D1D3D8.toInt()
+    const val DEFAULT_DARK_COLOR = 0x90202020.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
     const val DEFAULT_CORNER_RADIUS = 28
     const val PROVIDER_AUTHORITY = "$MODULE_PACKAGE_NAME.settings"

@@ -12,8 +12,8 @@ android {
         applicationId = "com.xposed.miuiime"
         minSdk = 28
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.16"
+        versionCode = 15
+        versionName = "1.17"
     }
 
     buildTypes {
@@ -56,8 +56,8 @@ kotlin {
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")
     implementation("com.github.kyuubiran:EzXHelper:1.0.3")
-    implementation("androidx.compose.foundation:foundation-android:1.10.1")
-    implementation("androidx.compose.ui:ui-android:1.10.1")
-    implementation("androidx.compose.ui:ui-graphics-android:1.10.1")
+    implementation("androidx.compose.foundation:foundation-android:1.10.6")
+    implementation("androidx.compose.ui:ui-android:1.10.6")
+    implementation("androidx.compose.ui:ui-graphics-android:1.10.6")
     implementation("io.github.kyant0:capsule:2.1.3")
 }
