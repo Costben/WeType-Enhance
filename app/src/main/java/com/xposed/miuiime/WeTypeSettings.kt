@@ -2,7 +2,9 @@ package com.xposed.miuiime
 
 import android.content.Context
 import android.content.res.Configuration
-import de.robv.android.xposed.XSharedPreferences
+import android.net.Uri
+import android.os.BaseBundle
+import android.os.Bundle
 import java.io.File
 
 object WeTypeSettings {
@@ -12,27 +14,28 @@ object WeTypeSettings {
     private const val KEY_DARK_COLOR = "dark_color"
     private const val KEY_BLUR_RADIUS = "blur_radius"
     private const val KEY_CORNER_RADIUS = "corner_radius"
+    private const val METHOD_GET_SETTINGS = "get_settings"
 
     const val DEFAULT_LIGHT_COLOR = 0xA0E1E3E8.toInt()
     const val DEFAULT_DARK_COLOR = 0xA0202020.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
     const val DEFAULT_CORNER_RADIUS = 28
+    const val PROVIDER_AUTHORITY = "$MODULE_PACKAGE_NAME.settings"
 
-    fun getLightColor(context: Context): Int =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR)
+    data class Snapshot(
+        val lightColor: Int,
+        val darkColor: Int,
+        val blurRadius: Int,
+        val cornerRadius: Int
+    )
 
-    fun getDarkColor(context: Context): Int =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR)
+    fun getLightColor(context: Context): Int = readSnapshot(context).lightColor
 
-    fun getBlurRadius(context: Context): Int =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS)
+    fun getDarkColor(context: Context): Int = readSnapshot(context).darkColor
 
-    fun getCornerRadius(context: Context): Int =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+    fun getBlurRadius(context: Context): Int = readSnapshot(context).blurRadius
+
+    fun getCornerRadius(context: Context): Int = readSnapshot(context).cornerRadius
 
     fun save(
         context: Context,
@@ -48,29 +51,68 @@ object WeTypeSettings {
             .putInt(KEY_BLUR_RADIUS, blurRadius.coerceIn(0, 100))
             .putInt(KEY_CORNER_RADIUS, cornerRadius.coerceIn(0, 100))
             .commit()
-        File(context.applicationInfo.dataDir, "shared_prefs/$PREF_NAME.xml")
-            .setReadable(true, false)
+        val sharedPrefsDir = File(context.dataDir, "shared_prefs").apply {
+            setReadable(true, false)
+            setExecutable(true, false)
+        }
+        File(sharedPrefsDir, "$PREF_NAME.xml").setReadable(true, false)
     }
 
     fun getCurrentBackgroundColorXposed(context: Context): Int {
-        val prefs = XSharedPreferences(MODULE_PACKAGE_NAME, PREF_NAME).apply { reload() }
+        val snapshot = readSnapshotXposed(context)
         val isDarkMode =
             context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
                 Configuration.UI_MODE_NIGHT_YES
-        return if (isDarkMode) {
-            prefs.getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR)
-        } else {
-            prefs.getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR)
-        }
+        return if (isDarkMode) snapshot.darkColor else snapshot.lightColor
     }
 
-    fun getBlurRadiusXposed(): Int =
-        XSharedPreferences(MODULE_PACKAGE_NAME, PREF_NAME)
-            .apply { reload() }
-            .getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS)
+    fun getBlurRadiusXposed(context: Context): Int = readSnapshotXposed(context).blurRadius
 
-    fun getCornerRadiusXposed(): Int =
-        XSharedPreferences(MODULE_PACKAGE_NAME, PREF_NAME)
-            .apply { reload() }
-            .getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+    fun getCornerRadiusXposed(context: Context): Int = readSnapshotXposed(context).cornerRadius
+
+    fun readSnapshot(context: Context): Snapshot {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        return Snapshot(
+            lightColor = prefs.getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR),
+            darkColor = prefs.getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR),
+            blurRadius = prefs.getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS),
+            cornerRadius = prefs.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+        )
+    }
+
+    private fun readSnapshotXposed(context: Context): Snapshot {
+        val bundle = runCatching {
+            context.contentResolver.call(
+                Uri.parse("content://$PROVIDER_AUTHORITY"),
+                METHOD_GET_SETTINGS,
+                null,
+                null
+            )
+        }.getOrNull()
+        return bundle.toSnapshotOrDefault()
+    }
+
+    private fun Bundle?.toSnapshotOrDefault(): Snapshot {
+        val bundle = this ?: return defaultSnapshot()
+        return Snapshot(
+            lightColor = bundle.getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR),
+            darkColor = bundle.getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR),
+            blurRadius = bundle.getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS),
+            cornerRadius = bundle.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+        )
+    }
+
+    fun toBundle(snapshot: Snapshot): Bundle = Bundle().apply {
+        putInt(KEY_LIGHT_COLOR, snapshot.lightColor)
+        putInt(KEY_DARK_COLOR, snapshot.darkColor)
+        putInt(KEY_BLUR_RADIUS, snapshot.blurRadius)
+        putInt(KEY_CORNER_RADIUS, snapshot.cornerRadius)
+    }
+
+    private fun defaultSnapshot(): Snapshot = Snapshot(
+        lightColor = DEFAULT_LIGHT_COLOR,
+        darkColor = DEFAULT_DARK_COLOR,
+        blurRadius = DEFAULT_BLUR_RADIUS,
+        cornerRadius = DEFAULT_CORNER_RADIUS
+    )
 }

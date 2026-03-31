@@ -460,7 +460,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             val decorView = window.decorView ?: return
             val radius = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP,
-                WeTypeSettings.getCornerRadiusXposed().toFloat(),
+                WeTypeSettings.getCornerRadiusXposed(decorView.context).toFloat(),
                 decorView.resources.displayMetrics
             )
             decorView.clipToOutline = true
@@ -579,11 +579,11 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     ): Drawable {
         val radius = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP,
-            WeTypeSettings.getCornerRadiusXposed().toFloat(),
+            WeTypeSettings.getCornerRadiusXposed(context).toFloat(),
             context.resources.displayMetrics
         )
         val color = WeTypeSettings.getCurrentBackgroundColorXposed(context)
-        val blurRadius = WeTypeSettings.getBlurRadiusXposed()
+        val blurRadius = WeTypeSettings.getBlurRadiusXposed(context)
         val tintDrawable = createWeTypeTintDrawable(color, radius)
         val blurDrawable = createInternalBackgroundBlurDrawable(targetView, blurRadius, radius)
         if (blurDrawable != null) {
