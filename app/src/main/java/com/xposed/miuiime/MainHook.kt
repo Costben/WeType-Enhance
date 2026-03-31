@@ -1,8 +1,17 @@
 package com.xposed.miuiime
 
 import android.content.res.AssetManager
+import android.content.res.ColorStateList
+import android.content.res.Resources
+import android.content.res.TypedArray
 import android.content.IntentFilter
+import android.graphics.Color
+import android.graphics.PorterDuffColorFilter
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
+import android.view.View
 import android.view.inputmethod.InputMethodManager
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
@@ -26,6 +35,12 @@ private const val TAG = "miuiime"
 private const val WETYPE_PACKAGE = "com.tencent.wetype"
 private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
 private const val MODULE_WETYPE_FONT_ASSET = "WE-Regular.ttf"
+private val WETYPE_COLOR_REPLACEMENTS = mapOf(
+    0xFFE1E3E8.toInt() to Color.TRANSPARENT,
+    0xFFE5E6EB.toInt() to Color.TRANSPARENT,
+    0xFF202020.toInt() to Color.TRANSPARENT,
+    0xFFD5D7DD.toInt() to Color.TRANSPARENT
+)
 
 class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private val miuiImeList: List<String> = listOf(
@@ -35,6 +50,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         "com.miui.catcherpatch"
     )
     private var navBarColor: Int? = null
+    private var bottomViewSourceColor: Int? = null
     private lateinit var modulePath: String
 
     override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam) {
@@ -56,8 +72,10 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam) {
-        if (lpparam.packageName == WETYPE_PACKAGE) {
+        val isWeType = lpparam.packageName == WETYPE_PACKAGE
+        if (isWeType) {
             hookWeTypeFont()
+            hookWeTypeTransparentColors()
         }
 
         // 检查是否为小米定制输入法
@@ -70,7 +88,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             sInputMethodServiceInjector?.also {
                 hookSIsImeSupport(it)
                 hookIsXiaoAiEnable(it)
-                setPhraseBgColor(it)
+                setPhraseBgColor(it, isWeType)
             } ?: Log.e("Failed:Class not found: InputMethodServiceInjector")
         }
 
@@ -130,6 +148,104 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         }
     }
 
+    private fun hookWeTypeTransparentColors() {
+        runCatching {
+            Resources::class.java.getMethod("getColor", Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    param.result = replaceWeTypeColor(param.result as Int)
+                }
+            Resources::class.java.getMethod(
+                "getColor",
+                Int::class.javaPrimitiveType,
+                Resources.Theme::class.java
+            ).hookAfter { param ->
+                param.result = replaceWeTypeColor(param.result as Int)
+            }
+            Resources::class.java.getMethod("getColorStateList", Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    param.result = replaceWeTypeColorStateList(param.result as ColorStateList)
+                }
+            Resources::class.java.getMethod(
+                "getColorStateList",
+                Int::class.javaPrimitiveType,
+                Resources.Theme::class.java
+            ).hookAfter { param ->
+                param.result = replaceWeTypeColorStateList(param.result as ColorStateList)
+            }
+            TypedArray::class.java.getMethod(
+                "getColor",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType
+            ).hookAfter { param ->
+                param.result = replaceWeTypeColor(param.result as Int)
+            }
+            TypedArray::class.java.getMethod("getColorStateList", Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val colorStateList = param.result as? ColorStateList ?: return@hookAfter
+                    param.result = replaceWeTypeColorStateList(colorStateList)
+                }
+            View::class.java.getMethod("setBackgroundColor", Int::class.javaPrimitiveType)
+                .hookBefore { param ->
+                    param.args[0] = replaceWeTypeColor(param.args[0] as Int)
+                }
+            GradientDrawable::class.java.getMethod("setColor", Int::class.javaPrimitiveType)
+                .hookBefore { param ->
+                    param.args[0] = replaceWeTypeColor(param.args[0] as Int)
+                }
+            runCatching {
+                GradientDrawable::class.java.getMethod("setColors", IntArray::class.java)
+                    .hookBefore { param ->
+                        val colors = param.args[0] as? IntArray ?: return@hookBefore
+                        param.args[0] = colors.map(::replaceWeTypeColor).toIntArray()
+                    }
+            }
+            ColorDrawable::class.java.getMethod("setColor", Int::class.javaPrimitiveType)
+                .hookBefore { param ->
+                    param.args[0] = replaceWeTypeColor(param.args[0] as Int)
+                }
+            runCatching {
+                Drawable::class.java.getMethod(
+                    "setTint",
+                    Int::class.javaPrimitiveType
+                ).hookBefore { param ->
+                    param.args[0] = replaceWeTypeColor(param.args[0] as Int)
+                }
+            }
+            runCatching {
+                Drawable::class.java.getMethod(
+                    "setColorFilter",
+                    Int::class.javaPrimitiveType,
+                    android.graphics.PorterDuff.Mode::class.java
+                ).hookBefore { param ->
+                    param.args[0] = replaceWeTypeColor(param.args[0] as Int)
+                }
+            }
+            runCatching {
+                Drawable::class.java.getMethod(
+                    "setColorFilter",
+                    android.graphics.ColorFilter::class.java
+                ).hookBefore { param ->
+                    val colorFilter = param.args[0] as? PorterDuffColorFilter ?: return@hookBefore
+                    val colorField = PorterDuffColorFilter::class.java.getDeclaredField("mColor")
+                    colorField.isAccessible = true
+                    colorField.setInt(colorFilter, replaceWeTypeColor(colorField.getInt(colorFilter)))
+                }
+            }
+            Log.i("Success: Hook WeType transparent colors")
+        }.onFailure {
+            Log.i("Failed: Hook WeType transparent colors")
+            Log.i(it)
+        }
+    }
+
+    private fun replaceWeTypeColor(color: Int): Int = WETYPE_COLOR_REPLACEMENTS[color] ?: color
+
+    private fun replaceWeTypeColorStateList(colorStateList: ColorStateList): ColorStateList {
+        val replacedColor = replaceWeTypeColor(colorStateList.defaultColor)
+        if (replacedColor == colorStateList.defaultColor) return colorStateList
+        return ColorStateList.valueOf(replacedColor)
+    }
+
     /**
      * 跳过包名检查，直接开启输入法优化
      *
@@ -164,21 +280,40 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
      *
      * @param clazz 声明或继承字段的类
      */
-    private fun setPhraseBgColor(clazz: Class<*>) {
+    private fun setPhraseBgColor(clazz: Class<*>, forceTransparent: Boolean) {
         kotlin.runCatching {
             // 导航栏颜色被设置后, 将颜色存储起来并传递给常用语
-            findMethod("com.android.internal.policy.PhoneWindow") {
+            val setNavigationBarColorMethod = findMethod("com.android.internal.policy.PhoneWindow") {
                 name == "setNavigationBarColor" && parameterTypes.sameAs(Int::class.java)
-            }.hookAfter { param ->
+            }
+            setNavigationBarColorMethod.hookBefore { param ->
+                if (forceTransparent) {
+                    bottomViewSourceColor = param.args[0] as? Int
+                    param.args[0] = Color.TRANSPARENT
+                }
+            }
+            setNavigationBarColorMethod.hookAfter { param ->
+                if (forceTransparent) {
+                    navBarColor = Color.TRANSPARENT
+                    customizeBottomViewColor(clazz, true)
+                    return@hookAfter
+                }
                 if (param.args[0] == 0) return@hookAfter
 
                 navBarColor = param.args[0] as Int
-                customizeBottomViewColor(clazz)
+                customizeBottomViewColor(clazz, false)
+            }
+
+            clazz.findMethod { name == "customizeBottomViewColor" }.hookBefore { param ->
+                if (!forceTransparent) return@hookBefore
+                if (param.args.size > 1 && param.args[1] is Int) {
+                    param.args[1] = Color.TRANSPARENT
+                }
             }
 
             // 当常用语被创建后, 将背景颜色设置为存储的导航栏颜色
             clazz.findMethod { name == "addMiuiBottomView" }.hookAfter {
-                customizeBottomViewColor(clazz)
+                customizeBottomViewColor(clazz, forceTransparent)
             }
         }.onFailure {
             Log.i("Failed to set the color of the MiuiBottomView")
@@ -191,7 +326,20 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
      *
      * @param clazz 声明或继承字段的类
      */
-    private fun customizeBottomViewColor(clazz: Class<*>) {
+    private fun customizeBottomViewColor(clazz: Class<*>, forceTransparent: Boolean) {
+        if (forceTransparent) {
+            val sourceColor = bottomViewSourceColor ?: navBarColor ?: Color.BLACK
+            val contentColor = -0x1 - sourceColor
+            clazz.invokeStaticMethodAuto(
+                "customizeBottomViewColor",
+                true,
+                Color.TRANSPARENT,
+                contentColor or -0x1000000,
+                contentColor or 0x66000000
+            )
+            return
+        }
+
         navBarColor?.let {
             val color = -0x1 - it
             clazz.invokeStaticMethodAuto(

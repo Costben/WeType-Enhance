@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    compileSdk = 34
+    compileSdk = 36
     namespace = "com.xposed.miuiime"
 
     defaultConfig {
         applicationId = "com.xposed.miuiime"
         minSdk = 28
-        targetSdk = 34
-        versionCode = 12
-        versionName = "1.14"
+        targetSdk = 36
+        versionCode = 14
+        versionName = "1.16"
     }
 
     buildTypes {
