@@ -1,5 +1,7 @@
 package com.xposed.miuiime
 
+import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.widget.Toast
@@ -16,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,8 +31,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -227,6 +232,7 @@ private fun WeTypeSettingsScreen(
                             color = previewColor,
                             blurRadius = blurRadius,
                             cornerRadius = cornerRadius,
+                            edgeHighlightEnabled = edgeHighlightEnabled,
                             isDark = currentModeIsDark
                         )
 
@@ -366,8 +372,10 @@ private fun PreviewCard(
     color: Int,
     blurRadius: Int,
     cornerRadius: Int,
+    edgeHighlightEnabled: Boolean,
     isDark: Boolean
 ) {
+    val previewCorner = cornerRadius.coerceIn(8, 32).dp
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -381,36 +389,106 @@ private fun PreviewCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(ContinuousRoundedRectangle(cornerRadius.coerceIn(8, 32).dp))
-                .background(ComposeColor(color))
-                .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(4.dp)
+                    .weTypePreviewBloom(
+                        color = color,
+                        cornerRadius = previewCorner,
+                        edgeHighlightEnabled = edgeHighlightEnabled,
+                        isDark = isDark
+                    )
+                    .clip(ContinuousRoundedRectangle(previewCorner))
+                    .background(ComposeColor(color))
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (isDark) stringResource(R.string.settings_preview_mode_dark) else stringResource(R.string.settings_preview_mode_light),
-                        color = previewTextColor(color).copy(alpha = 0.7f),
-                        style = MiuixTheme.textStyles.body2
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = formatArgb(color),
-                        color = previewTextColor(color),
-                        style = MiuixTheme.textStyles.headline1
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "${stringResource(R.string.settings_blur_label)} $blurRadius · ${stringResource(R.string.settings_corner_label)} $cornerRadius",
-                        color = previewTextColor(color).copy(alpha = 0.7f),
-                        style = MiuixTheme.textStyles.body2
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (isDark) stringResource(R.string.settings_preview_mode_dark) else stringResource(R.string.settings_preview_mode_light),
+                            color = previewTextColor(color).copy(alpha = 0.7f),
+                            style = MiuixTheme.textStyles.body2
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = formatArgb(color),
+                            color = previewTextColor(color),
+                            style = MiuixTheme.textStyles.headline1
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${stringResource(R.string.settings_blur_label)} $blurRadius · ${stringResource(R.string.settings_corner_label)} $cornerRadius",
+                            color = previewTextColor(color).copy(alpha = 0.7f),
+                            style = MiuixTheme.textStyles.body2
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun Modifier.weTypePreviewBloom(
+    color: Int,
+    cornerRadius: androidx.compose.ui.unit.Dp,
+    edgeHighlightEnabled: Boolean,
+    isDark: Boolean
+): Modifier {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val previewContext = remember(context, isDark) {
+        createPreviewContext(context, isDark)
+    }
+    val cornerRadiusPx = with(density) { cornerRadius.toPx() }
+    return this.drawWithCache {
+        val clipPath = createWeTypeContinuousRoundedPath(
+            width = size.width,
+            height = size.height,
+            cornerRadii = WeTypeCornerRadii.uniform(cornerRadiusPx)
+        )
+        val bloomDrawable = if (edgeHighlightEnabled) {
+            WeTypeBloomStrokeDrawable(
+                context = previewContext,
+                cornerRadii = WeTypeCornerRadii(
+                    topLeft = cornerRadiusPx,
+                    topRight = cornerRadiusPx,
+                    bottomRight = cornerRadiusPx,
+                    bottomLeft = cornerRadiusPx
+                ),
+                surfaceColor = color
+            )
+        } else {
+            null
+        }
+
+        onDrawWithContent {
+            drawContent()
+            bloomDrawable ?: return@onDrawWithContent
+            bloomDrawable.setBounds(0, 0, size.width.roundToInt(), size.height.roundToInt())
+            drawIntoCanvas { canvas ->
+                val nativeCanvas = canvas.nativeCanvas
+                val checkpoint = nativeCanvas.save()
+                nativeCanvas.clipPath(clipPath)
+                bloomDrawable.draw(nativeCanvas)
+                nativeCanvas.restoreToCount(checkpoint)
+            }
+        }
+    }
+}
+
+private fun createPreviewContext(baseContext: Context, isDark: Boolean): Context {
+    val configuration = Configuration(baseContext.resources.configuration).apply {
+        uiMode =
+            (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                if (isDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+    }
+    return baseContext.createConfigurationContext(configuration)
 }
 
 @Composable
