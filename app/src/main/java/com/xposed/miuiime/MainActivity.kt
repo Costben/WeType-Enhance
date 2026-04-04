@@ -47,6 +47,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.kyant.capsule.ContinuousRectangle
 import com.kyant.capsule.ContinuousRoundedRectangle
+import com.xposed.miuiime.wetype.graphics.WeTypeBloomStrokeDrawable
+import com.xposed.miuiime.wetype.graphics.WeTypeCornerRadii
+import com.xposed.miuiime.wetype.graphics.createWeTypeContinuousRoundedPath
+import com.xposed.miuiime.wetype.settings.WeTypeSettings
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
