@@ -60,7 +60,7 @@ kotlin {
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")
     implementation("com.github.kyuubiran:EzXHelper:1.0.3")
-    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.foundation:foundation-android:1.10.6")
     implementation("androidx.compose.ui:ui-android:1.10.6")
     implementation("androidx.compose.ui:ui-graphics-android:1.10.6")

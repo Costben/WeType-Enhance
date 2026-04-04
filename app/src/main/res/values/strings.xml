@@ -24,7 +24,7 @@
     <string name="settings_section_effect">模糊与圆角</string>
     <string name="settings_section_actions">操作</string>
     <string name="settings_alpha_hint">0-255 opacity</string>
-    <string name="settings_color_helper">支持 #RRGGBB，透明度请用下方滑块调整。</string>
+    <string name="settings_color_helper">支持 #RRGGBB，透明度请用上方滑块调整。</string>
     <string name="settings_preview_hint">实时查看当前背景效果。</string>
     <string name="settings_alpha_summary">当前透明度 %1$d / 255</string>
     <string name="settings_blur_summary">当前模糊强度 %1$d / 100</string>

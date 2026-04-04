@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.kyant.capsule.ContinuousRectangle
+import com.kyant.capsule.ContinuousRoundedRectangle
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -171,9 +173,6 @@ private fun WeTypeSettingsScreen(
                 SmallTitle(
                     text = stringResource(R.string.settings_group_appearance)
                 )
-            }
-
-            item {
                 Card(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     insideMargin = PaddingValues(0.dp)
@@ -260,9 +259,6 @@ private fun WeTypeSettingsScreen(
                 SmallTitle(
                     text = stringResource(R.string.settings_group_color)
                 )
-            }
-
-            item {
                 Card(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
@@ -311,9 +307,6 @@ private fun WeTypeSettingsScreen(
                 SmallTitle(
                     text = stringResource(R.string.settings_group_actions)
                 )
-            }
-
-            item {
                 Card(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     insideMargin = PaddingValues(0.dp)
@@ -374,7 +367,7 @@ private fun PreviewCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(cornerRadius.coerceIn(8, 32).dp))
+                .clip(ContinuousRoundedRectangle(cornerRadius.coerceIn(8, 32).dp))
                 .background(ComposeColor(color))
                 .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
