@@ -23,9 +23,10 @@ object WeTypeSettings {
     const val DEFAULT_DARK_COLOR = 0x90202020.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
     const val DEFAULT_CORNER_RADIUS = 28
+    const val MAX_CORNER_RADIUS = DEFAULT_CORNER_RADIUS * 2
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 50
-    const val DEFAULT_KEY_OPACITY = 160
+    const val DEFAULT_KEY_OPACITY = 180
     const val PROVIDER_AUTHORITY = "$MODULE_PACKAGE_NAME.settings"
 
     data class Snapshot(
@@ -67,7 +68,7 @@ object WeTypeSettings {
             .putInt(KEY_LIGHT_COLOR, lightColor)
             .putInt(KEY_DARK_COLOR, darkColor)
             .putInt(KEY_BLUR_RADIUS, blurRadius.coerceIn(0, 100))
-            .putInt(KEY_CORNER_RADIUS, cornerRadius.coerceIn(0, 100))
+            .putInt(KEY_CORNER_RADIUS, cornerRadius.coerceIn(0, MAX_CORNER_RADIUS))
             .putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, edgeHighlightEnabled)
             .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity.coerceIn(0, 200))
             .putInt(KEY_KEY_OPACITY, keyOpacity.coerceIn(0, 255))
@@ -105,7 +106,8 @@ object WeTypeSettings {
             lightColor = prefs.getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR),
             darkColor = prefs.getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR),
             blurRadius = prefs.getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS),
-            cornerRadius = prefs.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS),
+            cornerRadius = prefs.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+                .coerceIn(0, MAX_CORNER_RADIUS),
             edgeHighlightEnabled = prefs.getBoolean(
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 DEFAULT_EDGE_HIGHLIGHT_ENABLED
@@ -136,7 +138,8 @@ object WeTypeSettings {
             lightColor = bundle.getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR),
             darkColor = bundle.getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR),
             blurRadius = bundle.getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS),
-            cornerRadius = bundle.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS),
+            cornerRadius = bundle.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+                .coerceIn(0, MAX_CORNER_RADIUS),
             edgeHighlightEnabled = bundle.getBoolean(
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 DEFAULT_EDGE_HIGHLIGHT_ENABLED
