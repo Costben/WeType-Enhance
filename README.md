@@ -1,14 +1,16 @@
 # MIUI IME Unlock
 
-解锁 MIUI 全面屏优化限制
+解锁 MIUI 全面屏优化限制，为微信输入法提供界面美化优化
 
 ## 测试环境
 
-LSPosed v1.2.2(API 93.0)
+设备：Xiaomi 17 Pro
 
-MUI 12.5
+HYPER OS 3
 
-Android 11(R,API 30)
+Android 16
+
+LSPosed v2.0.1
 
 ## 使用方法
 
@@ -18,7 +20,7 @@ Xposed API Version >= 93
 
 ## 下载
 
-[app-release.apk](../../release)
+见 Releases 页面
 
 ## 特别说明
 
@@ -30,37 +32,90 @@ Xposed API Version >= 93
 
 ## 更新日志
 
+v1.18
+
+    UI迁移至 Compose with MIUIX
+    支持高光效果开启/关闭
+    支持调节高光强度
+    申请自启动权限
+    支持高光效果实时预览
+    修复高光效果按目标投影长度计算
+    国际化字符串资源规范
+    细节优化
+
+v1.17
+
+    修复部分颜色不应该透明
+    修复背景高度将动态变化
+    新增高光描边功能
+
+v1.16
+
+    微信输入法相关功能优化
+    替换微信输入法字体（自用）
+    微信输入法背景透明（需搭配模糊模块）
+    为微信输入法裁切圆角
+    微信输入法模糊背景
+
+v1.15
+
+    修复 MethodNotFound getSupportIme
+    修复 IME 列表访问权限问题
+
+v1.14
+
+    更新 AGP 和 Kotlin
+    修复透明色记录问题
+    修复翻转屏幕后背景颜色重置问题
+    代码重构优化
+
+v1.12
+
+    Android 12 适配
+    代码重构
+    删除无用资源
+
+v1.11
+
+    更新 MainHook 逻辑
+
+v1.10
+
+    修复崩溃问题
+    Convert Java to Kotlin
+    减小 APK 体积
+
 v1.09
 
     无实质更新
-    加了个try
+    加了个 try
 
 v1.08
 
-    删除一个hook函数，解决重复hook
+    删除一个 hook 函数，解决重复 hook
     整理代码
 
 v1.07
 
-    增加检查prop ro.miui.support_miui_ime_bottom
+    增加检查 prop ro.miui.support_miui_ime_bottom
     底部按钮改为反色按钮
-    尝试在安卓9使用与安卓10相同的hook方法
+    尝试在安卓 9 使用与安卓 10 相同的 hook 方法
 
 v1.06
 
-    更换检查MIUI版本为检查Android版本
+    更换检查 MIUI 版本为检查 Android 版本
     删除旧方法依赖的代码
 
 v1.05
 
     感谢 @ketal178 帮忙删除无用的代码
-    删除一些非必要的Hook
+    删除一些非必要的 Hook
     删除一些过时的代码
     尝试修复小爱语音输入按钮失效问题
 
 v1.04
 
-    对 MIUI12 改回使用旧的hook点
+    对 MIUI12 改回使用旧的 hook 点
 
 v1.03
 
@@ -71,5 +126,5 @@ v1.03
 v1.02
 
     优化执行逻辑
-    部分hook方法不会对定制版进行hook
+    部分 hook 方法不会对定制版进行 hook
     增加对底视图颜色的修改，颜色完全由输入法控制
