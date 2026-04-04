@@ -36,6 +36,8 @@
     <string name="settings_mode_summary_dark">当前编辑深色模式效果</string>
     <string name="settings_preview_summary">实时查看当前颜色、透明度与圆角效果</string>
     <string name="settings_group_appearance">外观</string>
+    <string name="settings_edge_highlight_title">开启边缘高光效果</string>
+    <string name="settings_edge_highlight_desc">关闭后仅保留背景模糊与底色，不再绘制边缘高光。</string>
     <string name="settings_group_color">颜色</string>
     <string name="settings_group_actions">操作</string>
     <string name="settings_preview_title">效果预览</string>

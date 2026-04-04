@@ -43,6 +43,7 @@ import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.TabRow
 import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
@@ -50,6 +51,7 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
@@ -120,6 +122,7 @@ private fun WeTypeSettingsScreen(
     var darkColor by rememberSaveable { mutableIntStateOf(snapshot.darkColor) }
     var blurRadius by rememberSaveable { mutableIntStateOf(snapshot.blurRadius) }
     var cornerRadius by rememberSaveable { mutableIntStateOf(snapshot.cornerRadius) }
+    var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
     var alphaValue by rememberSaveable {
         mutableIntStateOf(Color.alpha(if (currentModeIsDark) darkColor else lightColor))
@@ -141,7 +144,8 @@ private fun WeTypeSettingsScreen(
             lightColor = lightColor,
             darkColor = darkColor,
             blurRadius = blurRadius,
-            cornerRadius = cornerRadius
+            cornerRadius = cornerRadius,
+            edgeHighlightEnabled = edgeHighlightEnabled
         )
         Toast.makeText(context, R.string.settings_saved, Toast.LENGTH_SHORT).show()
     }
@@ -178,6 +182,15 @@ private fun WeTypeSettingsScreen(
                     insideMargin = PaddingValues(0.dp)
                 ) {
                     Column {
+                        MiuixSwitchWidget(
+                            title = stringResource(R.string.settings_edge_highlight_title),
+                            description = stringResource(R.string.settings_edge_highlight_desc),
+                            checked = edgeHighlightEnabled,
+                            onCheckedChange = { edgeHighlightEnabled = it }
+                        )
+
+                        HorizontalDivider()
+
                         // 模式切换 - 使用 TabRow
                         Column(
                             modifier = Modifier
@@ -328,6 +341,7 @@ private fun WeTypeSettingsScreen(
                                 darkColor = WeTypeSettings.DEFAULT_DARK_COLOR
                                 blurRadius = WeTypeSettings.DEFAULT_BLUR_RADIUS
                                 cornerRadius = WeTypeSettings.DEFAULT_CORNER_RADIUS
+                                edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
                                 syncEditorFromState()
                                 Toast.makeText(context, context.getString(R.string.settings_reset_toast), Toast.LENGTH_SHORT).show()
                             }
@@ -434,6 +448,30 @@ private fun SliderPreferenceItem(
             modifier = Modifier.fillMaxWidth()
         )
     }
+}
+
+@Composable
+private fun MiuixSwitchWidget(
+    title: String,
+    description: String? = null,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val toggleAction = {
+        onCheckedChange(!checked)
+    }
+
+    BasicComponent(
+        title = title,
+        summary = description,
+        onClick = toggleAction,
+        endActions = {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange
+            )
+        }
+    )
 }
 
 private fun previewTextColor(color: Int): ComposeColor =
