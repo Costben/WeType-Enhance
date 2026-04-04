@@ -268,34 +268,16 @@ private fun WeTypeSettingsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 外观分组
+            // 颜色分组
             item {
                 SmallTitle(
-                    text = stringResource(R.string.settings_group_appearance)
+                    text = stringResource(R.string.settings_group_color)
                 )
                 Card(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     insideMargin = PaddingValues(0.dp)
                 ) {
                     Column {
-                        MiuixSwitchWidget(
-                            title = stringResource(R.string.settings_edge_highlight_title),
-                            description = stringResource(R.string.settings_edge_highlight_desc),
-                            checked = edgeHighlightEnabled,
-                            onCheckedChange = { edgeHighlightEnabled = it }
-                        )
-
-                        if (edgeHighlightEnabled) {
-                            SliderPreferenceItem(
-                                title = stringResource(R.string.settings_edge_highlight_intensity_title),
-                                value = edgeHighlightIntensity,
-                                max = 200,
-                                onValueChange = { edgeHighlightIntensity = it }
-                            )
-                        }
-
-                        HorizontalDivider()
-
                         // 模式切换 - 使用 TabRow
                         Column(
                             modifier = Modifier
@@ -335,6 +317,95 @@ private fun WeTypeSettingsScreen(
                             isDark = currentModeIsDark
                         )
 
+                        // 透明度滑块
+                        SliderPreferenceItem(
+                            title = stringResource(R.string.settings_alpha_title),
+                            value = alphaValue,
+                            max = 255,
+                            onValueChange = {
+                                alphaValue = it
+                                val rgb = currentColor() and 0xFFFFFF
+                                updateColorFromArgb((alphaValue shl 24) or rgb)
+                                colorInput = formatRgb(currentColor())
+                            }
+                        )
+
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.settings_custom_color),
+                                style = MiuixTheme.textStyles.main
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = stringResource(R.string.settings_color_helper),
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                style = MiuixTheme.textStyles.body2
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            TextField(
+                                value = colorInput,
+                                onValueChange = { input ->
+                                    val trimmed = input.trim()
+                                    val hasPrefix = trimmed.startsWith("#")
+                                    val body = trimmed.removePrefix("#")
+                                    if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                        return@TextField
+                                    }
+
+                                    colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+
+                                    if (body.length == 6) {
+                                        runCatching {
+                                            val opaque = Color.parseColor("#$body")
+                                            val argb = Color.argb(
+                                                alphaValue.coerceIn(0, 255),
+                                                Color.red(opaque),
+                                                Color.green(opaque),
+                                                Color.blue(opaque)
+                                            )
+                                            updateColorFromArgb(argb)
+                                        }
+                                    }
+                                },
+                                label = stringResource(R.string.settings_color_label),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 外观分组
+            item {
+                SmallTitle(
+                    text = stringResource(R.string.settings_group_appearance)
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        MiuixSwitchWidget(
+                            title = stringResource(R.string.settings_edge_highlight_title),
+                            description = stringResource(R.string.settings_edge_highlight_desc),
+                            checked = edgeHighlightEnabled,
+                            onCheckedChange = { edgeHighlightEnabled = it }
+                        )
+
+                        if (edgeHighlightEnabled) {
+                            SliderPreferenceItem(
+                                title = stringResource(R.string.settings_edge_highlight_intensity_title),
+                                value = edgeHighlightIntensity,
+                                max = 200,
+                                onValueChange = { edgeHighlightIntensity = it }
+                            )
+                        }
+
+                        HorizontalDivider()
+
                         // 模糊滑块
                         SliderPreferenceItem(
                             title = stringResource(R.string.settings_blur_title),
@@ -351,78 +422,11 @@ private fun WeTypeSettingsScreen(
                             onValueChange = { cornerRadius = it }
                         )
 
-                        // 透明度滑块
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_alpha_title),
-                            value = alphaValue,
-                            max = 255,
-                            onValueChange = {
-                                alphaValue = it
-                                val rgb = currentColor() and 0xFFFFFF
-                                updateColorFromArgb((alphaValue shl 24) or rgb)
-                                colorInput = formatRgb(currentColor())
-                            }
-                        )
-
                         SliderPreferenceItem(
                             title = stringResource(R.string.settings_key_opacity_title),
                             value = keyOpacity,
                             max = 255,
                             onValueChange = { keyOpacity = it }
-                        )
-                    }
-                }
-            }
-
-            // 颜色分组
-            item {
-                SmallTitle(
-                    text = stringResource(R.string.settings_group_color)
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    Column {
-                        Text(
-                            text = stringResource(R.string.settings_custom_color),
-                            style = MiuixTheme.textStyles.main
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = stringResource(R.string.settings_color_helper),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            style = MiuixTheme.textStyles.body2
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        TextField(
-                            value = colorInput,
-                            onValueChange = { input ->
-                                val trimmed = input.trim()
-                                val hasPrefix = trimmed.startsWith("#")
-                                val body = trimmed.removePrefix("#")
-                                if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
-                                    return@TextField
-                                }
-
-                                colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
-
-                                if (body.length == 6) {
-                                    runCatching {
-                                        val opaque = Color.parseColor("#$body")
-                                        val argb = Color.argb(
-                                            alphaValue.coerceIn(0, 255),
-                                            Color.red(opaque),
-                                            Color.green(opaque),
-                                            Color.blue(opaque)
-                                        )
-                                        updateColorFromArgb(argb)
-                                    }
-                                }
-                            },
-                            label = stringResource(R.string.settings_color_label),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
@@ -630,7 +634,7 @@ private fun SliderPreferenceItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(16.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),

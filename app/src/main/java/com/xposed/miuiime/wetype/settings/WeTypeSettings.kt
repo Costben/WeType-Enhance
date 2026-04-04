@@ -25,7 +25,7 @@ object WeTypeSettings {
     const val DEFAULT_CORNER_RADIUS = 28
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 50
-    const val DEFAULT_KEY_OPACITY = 102
+    const val DEFAULT_KEY_OPACITY = 160
     const val PROVIDER_AUTHORITY = "$MODULE_PACKAGE_NAME.settings"
 
     data class Snapshot(

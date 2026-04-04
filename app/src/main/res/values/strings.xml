@@ -23,7 +23,7 @@
     <string name="settings_autostart_permission_warning">Missing auto-start permission may affect custom setting reads</string>
 
     <string name="settings_section_preview">Preview</string>
-    <string name="settings_section_mode">Appearance mode</string>
+    <string name="settings_section_mode">Color mode</string>
     <string name="settings_section_color">Color and opacity</string>
     <string name="settings_section_effect">Blur and corners</string>
     <string name="settings_section_actions">Actions</string>
