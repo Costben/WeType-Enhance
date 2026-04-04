@@ -208,7 +208,11 @@ private fun WeTypeSettingsScreen(
     var cornerRadius by rememberSaveable { mutableIntStateOf(snapshot.cornerRadius) }
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
+    var keyOpacity by rememberSaveable { mutableIntStateOf(snapshot.keyOpacity) }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
+    var colorInput by rememberSaveable {
+        mutableStateOf(formatRgb(if (currentModeIsDark) darkColor else lightColor))
+    }
     var alphaValue by rememberSaveable {
         mutableIntStateOf(Color.alpha(if (currentModeIsDark) darkColor else lightColor))
     }
@@ -217,6 +221,7 @@ private fun WeTypeSettingsScreen(
 
     fun syncEditorFromState() {
         alphaValue = Color.alpha(currentColor())
+        colorInput = formatRgb(currentColor())
     }
 
     fun updateColorFromArgb(argb: Int) {
@@ -231,7 +236,8 @@ private fun WeTypeSettingsScreen(
             blurRadius = blurRadius,
             cornerRadius = cornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity
+            edgeHighlightIntensity = edgeHighlightIntensity,
+            keyOpacity = keyOpacity
         )
         Toast.makeText(context, R.string.settings_saved, Toast.LENGTH_SHORT).show()
     }
@@ -350,7 +356,15 @@ private fun WeTypeSettingsScreen(
                                 alphaValue = it
                                 val rgb = currentColor() and 0xFFFFFF
                                 updateColorFromArgb((alphaValue shl 24) or rgb)
+                                colorInput = formatRgb(currentColor())
                             }
+                        )
+
+                        SliderPreferenceItem(
+                            title = stringResource(R.string.settings_key_opacity_title),
+                            value = keyOpacity,
+                            max = 255,
+                            onValueChange = { keyOpacity = it }
                         )
                     }
                 }
@@ -378,11 +392,17 @@ private fun WeTypeSettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         TextField(
-                            value = formatRgb(currentColor()),
+                            value = colorInput,
                             onValueChange = { input ->
-                                val raw = input.trim()
-                                val body = raw.removePrefix("#").take(6)
-                                if (!body.matches(Regex("^[0-9a-fA-F]{0,6}$"))) return@TextField
+                                val trimmed = input.trim()
+                                val hasPrefix = trimmed.startsWith("#")
+                                val body = trimmed.removePrefix("#")
+                                if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                    return@TextField
+                                }
+
+                                colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+
                                 if (body.length == 6) {
                                     runCatching {
                                         val opaque = Color.parseColor("#$body")
@@ -432,6 +452,7 @@ private fun WeTypeSettingsScreen(
                                 cornerRadius = WeTypeSettings.DEFAULT_CORNER_RADIUS
                                 edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
                                 edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
+                                keyOpacity = WeTypeSettings.DEFAULT_KEY_OPACITY
                                 syncEditorFromState()
                                 Toast.makeText(context, context.getString(R.string.settings_reset_toast), Toast.LENGTH_SHORT).show()
                             }

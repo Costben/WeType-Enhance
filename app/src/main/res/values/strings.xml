@@ -54,6 +54,7 @@
     <string name="settings_blur_title">Blur strength</string>
     <string name="settings_corner_title">Corner radius</string>
     <string name="settings_alpha_title">Background opacity</string>
+    <string name="settings_key_opacity_title">Key opacity</string>
     <string name="settings_custom_color">Custom color</string>
 
     <string name="settings_save_title">Save settings</string>

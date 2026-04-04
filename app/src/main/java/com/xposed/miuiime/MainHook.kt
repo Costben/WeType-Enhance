@@ -49,6 +49,7 @@ private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
 private const val MODULE_WETYPE_FONT_ASSET = "WE-Regular.ttf"
 private const val WETYPE_BLUR_APPLY_MAX_RETRY = 6
 private const val WETYPE_BACKGROUND_SETTLE_RETRY = 3
+private const val WETYPE_INLINE_TEXT_OFFSET_DP = 6f
 private val WETYPE_COLOR_REPLACEMENTS = mapOf(
     "g8" to Color.TRANSPARENT,
     "gb" to Color.TRANSPARENT,
@@ -62,6 +63,31 @@ private val WETYPE_DRAWABLE_REPLACEMENTS = mapOf(
     "gi" to R.drawable.wetype_gi,
     "ib" to R.drawable.wetype_ib,
     "gj" to R.drawable.wetype_gj,
+    // Key backgrounds
+    "i0" to R.drawable.wetype_key_grey,
+    "i1" to R.drawable.wetype_key_grey,
+    "i2" to R.drawable.wetype_key_grey_normal,
+    "i3" to R.drawable.wetype_key_grey_normal,
+    "i4" to R.drawable.wetype_key_grey_pressed,
+    "i5" to R.drawable.wetype_key_grey_pressed,
+    "i6" to R.drawable.wetype_key_plain,
+    "i7" to R.drawable.wetype_key_plain,
+    "i8" to R.drawable.wetype_key_plain_normal,
+    "i9" to R.drawable.wetype_key_plain_normal,
+    "i_" to R.drawable.wetype_key_plain_pressed,
+    "ia" to R.drawable.wetype_key_plain_pressed,
+    "hu" to R.drawable.wetype_key_green,
+    "hv" to R.drawable.wetype_key_green,
+    "hw" to R.drawable.wetype_key_green_normal,
+    "hx" to R.drawable.wetype_key_green_normal,
+    "hy" to R.drawable.wetype_key_green_pressed,
+    "hz" to R.drawable.wetype_key_green_pressed,
+    "hk" to R.drawable.wetype_key_plain,
+    "hl" to R.drawable.wetype_key_plain,
+    "hm" to R.drawable.wetype_key_plain_pressed,
+    "hn" to R.drawable.wetype_key_plain_pressed,
+    "hs" to R.drawable.wetype_key_delete,
+    "ht" to R.drawable.wetype_key_delete_dark,
 )
 
 private data class WeTypeWindowState(
@@ -146,6 +172,9 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             hookWeTypeFont()
             hookWeTypeTransparentColors()
             hookWeTypeXmlDrawables()
+            hookWeTypeDimensions()
+            hookWeTypeInlineTextAlignment()
+            hookWeTypeSelfDrawKeyColors()
             hookWeTypeWindowBlur()
             hookWeTypeWindowCorner()
         }
@@ -338,6 +367,126 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             Log.i("Success: Hook WeType transparent colors")
         }.onFailure {
             Log.i("Failed: Hook WeType transparent colors")
+            Log.i(it)
+        }
+    }
+
+    private fun hookWeTypeDimensions() {
+        runCatching {
+            Resources::class.java.getMethod("getDimensionPixelSize", Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val resources = param.thisObject as? Resources ?: return@hookAfter
+                    val dimenResId = param.args[0] as? Int ?: return@hookAfter
+                    val replaced = replaceWeTypeDimensionPixelSize(resources, dimenResId)
+                    if (replaced != null) param.result = replaced
+                }
+            Resources::class.java.getMethod("getDimensionPixelOffset", Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val resources = param.thisObject as? Resources ?: return@hookAfter
+                    val dimenResId = param.args[0] as? Int ?: return@hookAfter
+                    val replaced = replaceWeTypeDimensionPixelSize(resources, dimenResId)
+                    if (replaced != null) param.result = replaced
+                }
+            Resources::class.java.getMethod("getDimension", Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val resources = param.thisObject as? Resources ?: return@hookAfter
+                    val dimenResId = param.args[0] as? Int ?: return@hookAfter
+                    val replaced = replaceWeTypeDimension(resources, dimenResId)
+                    if (replaced != null) param.result = replaced
+                }
+            TypedArray::class.java.getMethod("getDimensionPixelSize", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val typedArray = param.thisObject as? TypedArray ?: return@hookAfter
+                    val index = param.args[0] as? Int ?: return@hookAfter
+                    val dimenResId = typedArray.getResourceId(index, 0)
+                    if (dimenResId == 0) return@hookAfter
+                    val replaced = replaceWeTypeDimensionPixelSize(typedArray.resources, dimenResId)
+                    if (replaced != null) param.result = replaced
+                }
+            TypedArray::class.java.getMethod("getDimensionPixelOffset", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val typedArray = param.thisObject as? TypedArray ?: return@hookAfter
+                    val index = param.args[0] as? Int ?: return@hookAfter
+                    val dimenResId = typedArray.getResourceId(index, 0)
+                    if (dimenResId == 0) return@hookAfter
+                    val replaced = replaceWeTypeDimensionPixelSize(typedArray.resources, dimenResId)
+                    if (replaced != null) param.result = replaced
+                }
+            TypedArray::class.java.getMethod("getDimension", Int::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val typedArray = param.thisObject as? TypedArray ?: return@hookAfter
+                    val index = param.args[0] as? Int ?: return@hookAfter
+                    val dimenResId = typedArray.getResourceId(index, 0)
+                    if (dimenResId == 0) return@hookAfter
+                    val replaced = replaceWeTypeDimension(typedArray.resources, dimenResId)
+                    if (replaced != null) param.result = replaced
+                }
+            Log.i("Success: Hook WeType dimensions")
+        }.onFailure {
+            Log.i("Failed: Hook WeType dimensions")
+            Log.i(it)
+        }
+    }
+
+    private fun hookWeTypeInlineTextAlignment() {
+        runCatching {
+            val imeCandidateViewClass = loadClassOrNull("com.tencent.wetype.plugin.hld.candidate.ImeCandidateView")
+                ?: error("Failed to load ImeCandidateView")
+
+            imeCandidateViewClass.getMethod("onLayout", Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .hookAfter { param ->
+                    val candidateView = param.thisObject as? View ?: return@hookAfter
+                    applyWeTypeInlineTextAlignment(candidateView)
+                    candidateView.post { applyWeTypeInlineTextAlignment(candidateView) }
+                }
+
+            runCatching {
+                imeCandidateViewClass.getMethod("dispatchDraw", android.graphics.Canvas::class.java).hookAfter { param ->
+                    val candidateView = param.thisObject as? View ?: return@hookAfter
+                    applyWeTypeInlineTextAlignment(candidateView)
+                }
+            }
+
+            runCatching {
+                imeCandidateViewClass.getMethod("onAttachedToWindow").hookAfter { param ->
+                    val candidateView = param.thisObject as? View ?: return@hookAfter
+                    candidateView.post { applyWeTypeInlineTextAlignment(candidateView) }
+                }
+            }
+
+            Log.i("Success: Hook WeType inline text alignment")
+        }.onFailure {
+            Log.i("Failed: Hook WeType inline text alignment")
+            Log.i(it)
+        }
+    }
+
+    private fun hookWeTypeSelfDrawKeyColors() {
+        runCatching {
+            val imeButtonClass = loadClassOrNull("com.tencent.wetype.plugin.hld.keyboard.selfdraw.j")
+                ?: error("Failed to load ImeButton")
+
+            listOf(
+                "i" to { context: Context -> WeTypeSettings.getKeyOpacityXposed(context) },
+                "k" to { _: Context -> 0x20 },
+                "X" to { context: Context -> (WeTypeSettings.getKeyOpacityXposed(context) + 20).coerceAtMost(255) }
+            ).forEach { (methodName, alphaProvider) ->
+                imeButtonClass.getMethod(methodName).hookAfter { param ->
+                    val color = param.result as? Int ?: return@hookAfter
+                    if (color == 0 || color == Color.TRANSPARENT) return@hookAfter
+                    val button = param.thisObject as? Any ?: return@hookAfter
+                    val view = runCatching { button.getObjectAs<View>("a") }.getOrNull()
+                    val context = view?.context ?: return@hookAfter
+                    param.result = withForcedAlpha(color, alphaProvider(context))
+                }
+            }
+
+            // Remove the lower dark slab under each self-drawn key.
+            imeButtonClass.getMethod("Y").hookReturnConstant(Color.TRANSPARENT)
+
+            Log.i("Success: Hook WeType self-draw key colors")
+        }.onFailure {
+            Log.i("Failed: Hook WeType self-draw key colors")
             Log.i(it)
         }
     }
@@ -828,6 +977,13 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         if (replacedColor == colorStateList.defaultColor) return colorStateList
         return ColorStateList.valueOf(replacedColor)
     }
+
+    private fun withForcedAlpha(color: Int, alpha: Int): Int = Color.argb(
+        alpha.coerceIn(0, 255),
+        Color.red(color),
+        Color.green(color),
+        Color.blue(color)
+    )
 
     private fun getModuleAssetManager(): AssetManager {
         moduleAssetManager?.let { return it }
