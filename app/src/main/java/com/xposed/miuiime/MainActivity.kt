@@ -1,6 +1,7 @@
 package com.xposed.miuiime
 
 import android.app.AppOpsManager
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -12,6 +13,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -20,13 +22,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -35,21 +39,31 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import com.kyant.capsule.ContinuousRectangle
 import com.kyant.capsule.ContinuousRoundedRectangle
+import com.xposed.miuiime.wetype.graphics.WeTypeBloomStrokeDrawable
+import com.xposed.miuiime.wetype.graphics.WeTypeCornerRadii
+import com.xposed.miuiime.wetype.graphics.createWeTypeContinuousRoundedPath
+import com.xposed.miuiime.wetype.settings.WeTypeSettings
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -190,7 +204,21 @@ private fun WeTypeSettingsApp(
 ) {
     val darkMode = isSystemInDarkTheme()
     MiuixTheme(colors = if (darkMode) darkColorScheme() else lightColorScheme()) {
+        SyncSystemBars(darkMode = darkMode)
         WeTypeSettingsScreen(onRestartWeType = onRestartWeType)
+    }
+}
+
+@Composable
+private fun SyncSystemBars(darkMode: Boolean) {
+    val view = LocalView.current
+    if (view.isInEditMode) return
+
+    SideEffect {
+        val window = (view.context as? Activity)?.window ?: return@SideEffect
+        val insetsController = WindowCompat.getInsetsController(window, view)
+        insetsController.isAppearanceLightStatusBars = !darkMode
+        insetsController.isAppearanceLightNavigationBars = !darkMode
     }
 }
 
@@ -208,7 +236,11 @@ private fun WeTypeSettingsScreen(
     var cornerRadius by rememberSaveable { mutableIntStateOf(snapshot.cornerRadius) }
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
+    var keyOpacity by rememberSaveable { mutableIntStateOf(snapshot.keyOpacity) }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
+    var colorInput by rememberSaveable {
+        mutableStateOf(formatRgb(if (currentModeIsDark) darkColor else lightColor))
+    }
     var alphaValue by rememberSaveable {
         mutableIntStateOf(Color.alpha(if (currentModeIsDark) darkColor else lightColor))
     }
@@ -217,6 +249,7 @@ private fun WeTypeSettingsScreen(
 
     fun syncEditorFromState() {
         alphaValue = Color.alpha(currentColor())
+        colorInput = formatRgb(currentColor())
     }
 
     fun updateColorFromArgb(argb: Int) {
@@ -231,7 +264,8 @@ private fun WeTypeSettingsScreen(
             blurRadius = blurRadius,
             cornerRadius = cornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity
+            edgeHighlightIntensity = edgeHighlightIntensity,
+            keyOpacity = keyOpacity
         )
         Toast.makeText(context, R.string.settings_saved, Toast.LENGTH_SHORT).show()
     }
@@ -258,6 +292,142 @@ private fun WeTypeSettingsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // 预览
+            item {
+                SmallTitle(
+                    text = stringResource(R.string.settings_preview_title)
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp),
+                    colors = CardDefaults.defaultColors(
+                        color = ComposeColor.Transparent
+                    )
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.natural_texture_004),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.matchParentSize()
+                        )
+                        Column {
+                            // 大预览卡片
+                            PreviewCard(
+                                color = previewColor,
+                                blurRadius = blurRadius,
+                                cornerRadius = cornerRadius,
+                                edgeHighlightEnabled = edgeHighlightEnabled,
+                                edgeHighlightIntensity = edgeHighlightIntensity,
+                                keyOpacity = keyOpacity,
+                                isDark = currentModeIsDark
+                            )
+                        }
+                    }
+                }
+            }
+            // 颜色分组
+            item {
+                SmallTitle(
+                    text = stringResource(R.string.settings_group_color)
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        // 模式切换 - 使用 TabRow
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.settings_section_mode),
+                                style = MiuixTheme.textStyles.main
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            val tabs = listOf(
+                                stringResource(R.string.settings_light_mode),
+                                stringResource(R.string.settings_dark_mode)
+                            )
+                            TabRowWithContour(
+                                tabs = tabs,
+                                selectedTabIndex = if (currentModeIsDark) 1 else 0,
+                                onTabSelected = { index ->
+                                    val newDarkMode = index == 1
+                                    if (newDarkMode != currentModeIsDark) {
+                                        currentModeIsDark = newDarkMode
+                                        syncEditorFromState()
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        // 透明度滑块
+                        SliderPreferenceItem(
+                            title = stringResource(R.string.settings_alpha_title),
+                            value = alphaValue,
+                            max = 255,
+                            onValueChange = {
+                                alphaValue = it
+                                val rgb = currentColor() and 0xFFFFFF
+                                updateColorFromArgb((alphaValue shl 24) or rgb)
+                                colorInput = formatRgb(currentColor())
+                            }
+                        )
+
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.settings_custom_color),
+                                style = MiuixTheme.textStyles.main
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = stringResource(R.string.settings_color_helper),
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                style = MiuixTheme.textStyles.body2
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            TextField(
+                                value = colorInput,
+                                onValueChange = { input ->
+                                    val trimmed = input.trim()
+                                    val hasPrefix = trimmed.startsWith("#")
+                                    val body = trimmed.removePrefix("#")
+                                    if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                        return@TextField
+                                    }
+
+                                    colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+
+                                    if (body.length == 6) {
+                                        runCatching {
+                                            val opaque = Color.parseColor("#$body")
+                                            val argb = Color.argb(
+                                                alphaValue.coerceIn(0, 255),
+                                                Color.red(opaque),
+                                                Color.green(opaque),
+                                                Color.blue(opaque)
+                                            )
+                                            updateColorFromArgb(argb)
+                                        }
+                                    }
+                                },
+                                label = stringResource(R.string.settings_color_label),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+
             // 外观分组
             item {
                 SmallTitle(
@@ -286,45 +456,6 @@ private fun WeTypeSettingsScreen(
 
                         HorizontalDivider()
 
-                        // 模式切换 - 使用 TabRow
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.settings_section_mode),
-                                style = MiuixTheme.textStyles.main
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            val tabs = listOf(
-                                stringResource(R.string.settings_light_mode),
-                                stringResource(R.string.settings_dark_mode)
-                            )
-                            TabRowWithContour(
-                                tabs = tabs,
-                                selectedTabIndex = if (currentModeIsDark) 1 else 0,
-                                onTabSelected = { index ->
-                                    val newDarkMode = index == 1
-                                    if (newDarkMode != currentModeIsDark) {
-                                        currentModeIsDark = newDarkMode
-                                        syncEditorFromState()
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        // 大预览卡片
-                        PreviewCard(
-                            color = previewColor,
-                            blurRadius = blurRadius,
-                            cornerRadius = cornerRadius,
-                            edgeHighlightEnabled = edgeHighlightEnabled,
-                            edgeHighlightIntensity = edgeHighlightIntensity,
-                            isDark = currentModeIsDark
-                        )
-
                         // 模糊滑块
                         SliderPreferenceItem(
                             title = stringResource(R.string.settings_blur_title),
@@ -337,68 +468,15 @@ private fun WeTypeSettingsScreen(
                         SliderPreferenceItem(
                             title = stringResource(R.string.settings_corner_title),
                             value = cornerRadius,
-                            max = 100,
+                            max = WeTypeSettings.MAX_CORNER_RADIUS,
                             onValueChange = { cornerRadius = it }
                         )
 
-                        // 透明度滑块
                         SliderPreferenceItem(
-                            title = stringResource(R.string.settings_alpha_title),
-                            value = alphaValue,
+                            title = stringResource(R.string.settings_key_opacity_title),
+                            value = keyOpacity,
                             max = 255,
-                            onValueChange = {
-                                alphaValue = it
-                                val rgb = currentColor() and 0xFFFFFF
-                                updateColorFromArgb((alphaValue shl 24) or rgb)
-                            }
-                        )
-                    }
-                }
-            }
-
-            // 颜色分组
-            item {
-                SmallTitle(
-                    text = stringResource(R.string.settings_group_color)
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    Column {
-                        Text(
-                            text = stringResource(R.string.settings_custom_color),
-                            style = MiuixTheme.textStyles.main
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = stringResource(R.string.settings_color_helper),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            style = MiuixTheme.textStyles.body2
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        TextField(
-                            value = formatRgb(currentColor()),
-                            onValueChange = { input ->
-                                val raw = input.trim()
-                                val body = raw.removePrefix("#").take(6)
-                                if (!body.matches(Regex("^[0-9a-fA-F]{0,6}$"))) return@TextField
-                                if (body.length == 6) {
-                                    runCatching {
-                                        val opaque = Color.parseColor("#$body")
-                                        val argb = Color.argb(
-                                            alphaValue.coerceIn(0, 255),
-                                            Color.red(opaque),
-                                            Color.green(opaque),
-                                            Color.blue(opaque)
-                                        )
-                                        updateColorFromArgb(argb)
-                                    }
-                                }
-                            },
-                            label = stringResource(R.string.settings_color_label),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
+                            onValueChange = { keyOpacity = it }
                         )
                     }
                 }
@@ -432,6 +510,7 @@ private fun WeTypeSettingsScreen(
                                 cornerRadius = WeTypeSettings.DEFAULT_CORNER_RADIUS
                                 edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
                                 edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
+                                keyOpacity = WeTypeSettings.DEFAULT_KEY_OPACITY
                                 syncEditorFromState()
                                 Toast.makeText(context, context.getString(R.string.settings_reset_toast), Toast.LENGTH_SHORT).show()
                             }
@@ -474,19 +553,24 @@ private fun PreviewCard(
     cornerRadius: Int,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
+    keyOpacity: Int,
     isDark: Boolean
 ) {
-    val previewCorner = cornerRadius.coerceIn(8, 32).dp
+    val previewCornerValue = cornerRadius.coerceIn(0, WeTypeSettings.MAX_CORNER_RADIUS)
+    val previewCorner = previewCornerValue.dp
+    val previewMinHeight = maxOf(88.dp, (previewCornerValue * 2).dp)
+    val previewShape = ContinuousRoundedRectangle(
+        topStart = CornerSize(previewCorner),
+        topEnd = CornerSize(previewCorner),
+        bottomEnd = CornerSize(0.dp),
+        bottomStart = CornerSize(0.dp)
+    )
+    val previewKeyShape = ContinuousRoundedRectangle(12.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(start = 16.dp, top = 20.dp, end = 16.dp)
     ) {
-        Text(
-            text = stringResource(R.string.settings_preview_title),
-            style = MiuixTheme.textStyles.main,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -494,7 +578,7 @@ private fun PreviewCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(4.dp)
+                    .defaultMinSize(minHeight = previewMinHeight)
                     .weTypePreviewBloom(
                         color = color,
                         cornerRadius = previewCorner,
@@ -502,12 +586,25 @@ private fun PreviewCard(
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         isDark = isDark
                     )
-                    .clip(ContinuousRoundedRectangle(previewCorner))
-                    .background(ComposeColor(color))
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .clip(previewShape)
             ) {
+                Image(
+                    painter = painterResource(R.drawable.natural_texture_004),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .blur((blurRadius / 3f).coerceAtLeast(0f).dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(ComposeColor(color))
+                )
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -517,11 +614,37 @@ private fun PreviewCard(
                             style = MiuixTheme.textStyles.body2
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = formatArgb(color),
-                            color = previewTextColor(color),
-                            style = MiuixTheme.textStyles.headline1
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(previewKeyShape)
+                                    .background(previewKeyBackgroundColor(isDark, keyOpacity))
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = formatArgb(color),
+                                    color = previewTextColor(color),
+                                    style = MiuixTheme.textStyles.headline1
+                                )
+                            }
+
+                            for (i in 0..2) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(previewKeyShape)
+                                        .background(previewKeyBackgroundColor(isDark, keyOpacity))
+                                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = i.toString(),
+                                        color = previewTextColor(color),
+                                        style = MiuixTheme.textStyles.headline1
+                                    )
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "${stringResource(R.string.settings_blur_label)} $blurRadius · ${stringResource(R.string.settings_corner_label)} $cornerRadius",
@@ -533,6 +656,18 @@ private fun PreviewCard(
             }
         }
     }
+}
+
+private fun previewKeyBackgroundColor(isDark: Boolean, keyOpacity: Int): ComposeColor {
+    val baseColor = if (isDark) 0xFF707070.toInt() else 0xFFFCFCFE.toInt()
+    return ComposeColor(
+        Color.argb(
+            keyOpacity.coerceIn(0, 255),
+            Color.red(baseColor),
+            Color.green(baseColor),
+            Color.blue(baseColor)
+        )
+    )
 }
 
 @Composable
@@ -550,20 +685,21 @@ private fun Modifier.weTypePreviewBloom(
     }
     val cornerRadiusPx = with(density) { cornerRadius.toPx() }
     return this.drawWithCache {
+        val previewCornerRadii = WeTypeCornerRadii(
+            topLeft = cornerRadiusPx,
+            topRight = cornerRadiusPx,
+            bottomRight = 0f,
+            bottomLeft = 0f
+        )
         val clipPath = createWeTypeContinuousRoundedPath(
             width = size.width,
             height = size.height,
-            cornerRadii = WeTypeCornerRadii.uniform(cornerRadiusPx)
+            cornerRadii = previewCornerRadii
         )
         val bloomDrawable = if (edgeHighlightEnabled) {
             WeTypeBloomStrokeDrawable(
                 context = previewContext,
-                cornerRadii = WeTypeCornerRadii(
-                    topLeft = cornerRadiusPx,
-                    topRight = cornerRadiusPx,
-                    bottomRight = cornerRadiusPx,
-                    bottomLeft = cornerRadiusPx
-                ),
+                cornerRadii = previewCornerRadii,
                 surfaceColor = color,
                 intensityScale = edgeHighlightIntensity / 100f
             )
@@ -605,7 +741,7 @@ private fun SliderPreferenceItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(16.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),

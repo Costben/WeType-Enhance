@@ -1,4 +1,4 @@
-package com.xposed.miuiime
+package com.xposed.miuiime.wetype.graphics
 
 import android.content.Context
 import android.content.res.Configuration

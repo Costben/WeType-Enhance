@@ -23,7 +23,7 @@
     <string name="settings_autostart_permission_warning">未授予自启动权限将影响自定义设置读取</string>
 
     <string name="settings_section_preview">预览</string>
-    <string name="settings_section_mode">外观模式</string>
+    <string name="settings_section_mode">颜色模式</string>
     <string name="settings_section_color">颜色与透明度</string>
     <string name="settings_section_effect">模糊与圆角</string>
     <string name="settings_section_actions">操作</string>
@@ -54,6 +54,7 @@
     <string name="settings_blur_title">模糊强度</string>
     <string name="settings_corner_title">圆角大小</string>
     <string name="settings_alpha_title">背景不透明度</string>
+    <string name="settings_key_opacity_title">按键不透明度</string>
     <string name="settings_custom_color">自定义颜色</string>
 
     <string name="settings_save_title">保存设置</string>
