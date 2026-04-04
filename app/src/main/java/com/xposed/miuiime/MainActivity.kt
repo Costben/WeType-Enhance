@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -46,6 +47,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.kyant.capsule.ContinuousRectangle
 import com.kyant.capsule.ContinuousRoundedRectangle
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -60,7 +63,6 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
@@ -441,6 +443,22 @@ private fun WeTypeSettingsScreen(
                             title = stringResource(R.string.settings_restart_title),
                             summary = stringResource(R.string.settings_restart_desc),
                             onClick = onRestartWeType
+                        )
+
+                        HorizontalDivider()
+
+                        BasicComponent(
+                            title = stringResource(R.string.settings_visit_github_title),
+                            titleColor = BasicComponentDefaults.titleColor(
+                                color = MiuixTheme.colorScheme.primary
+                            ),
+                            onClick = {
+                                val intent = Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://github.com/NEORUAA/MIUI_IME_Unlock")
+                                )
+                                context.startActivity(intent)
+                            }
                         )
                     }
                 }
