@@ -1,8 +1,12 @@
 package com.xposed.miuiime
 
+import android.app.AppOpsManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -70,6 +74,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             WeTypeSettingsApp(onRestartWeType = ::restartWeType)
         }
+        if (savedInstanceState == null) {
+            window.decorView.post {
+                checkAutoStartPermission()
+            }
+        }
     }
 
     private fun restartWeType() {
@@ -101,6 +110,74 @@ class MainActivity : ComponentActivity() {
             process.waitFor() == 0
         }.getOrDefault(false).also {
             process.destroy()
+        }
+    }
+
+    private fun checkAutoStartPermission() {
+        if (!isMiuiDevice()) return
+        if (hasAutoStartPermission()) return
+        val intent = createAutoStartSettingsIntent() ?: return
+        Toast.makeText(this, R.string.settings_autostart_permission_warning, Toast.LENGTH_LONG).show()
+        runCatching { startActivity(intent) }
+    }
+
+    private fun isMiuiDevice(): Boolean {
+        if (Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)) return true
+        return runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getDeclaredMethod("get", String::class.java, String::class.java)
+                .invoke(null, "ro.miui.ui.version.name", "") as String
+        }.getOrDefault("").isNotBlank()
+    }
+
+    private fun hasAutoStartPermission(): Boolean {
+        val appOps = getSystemService(AppOpsManager::class.java) ?: return true
+        val uid = applicationInfo.uid
+        val packageName = packageName
+
+        val autoStartOpString = runCatching {
+            AppOpsManager::class.java.getDeclaredField("OPSTR_AUTO_START").get(null) as String
+        }.getOrNull()
+        if (autoStartOpString != null) {
+            val mode = runCatching {
+                appOps.checkOpNoThrow(autoStartOpString, uid, packageName)
+            }.getOrNull()
+            if (mode != null) return mode == AppOpsManager.MODE_ALLOWED
+        }
+
+        val autoStartOpCode = runCatching {
+            AppOpsManager::class.java.getDeclaredField("OP_AUTO_START").getInt(null)
+        }.getOrElse { 10008 }
+        val mode = runCatching {
+            AppOpsManager::class.java.getMethod(
+                "checkOpNoThrow",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                String::class.java
+            ).invoke(appOps, autoStartOpCode, uid, packageName) as Int
+        }.getOrNull()
+        return mode == null || mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun createAutoStartSettingsIntent(): Intent? {
+        val intents = listOf(
+            Intent().apply {
+                component = ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity"
+                )
+                putExtra("package_name", packageName)
+            },
+            Intent().apply {
+                component = ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.permissions.PermissionsEditorActivity"
+                )
+                putExtra("extra_pkgname", packageName)
+            }
+        )
+        return intents.firstOrNull { intent ->
+            intent.resolveActivity(packageManager) != null
         }
     }
 }
