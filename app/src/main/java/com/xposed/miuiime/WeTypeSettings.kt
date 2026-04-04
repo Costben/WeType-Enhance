@@ -15,6 +15,7 @@ object WeTypeSettings {
     private const val KEY_BLUR_RADIUS = "blur_radius"
     private const val KEY_CORNER_RADIUS = "corner_radius"
     private const val KEY_EDGE_HIGHLIGHT_ENABLED = "edge_highlight_enabled"
+    private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
     private const val METHOD_GET_SETTINGS = "get_settings"
 
     const val DEFAULT_LIGHT_COLOR = 0xA0D1D3D8.toInt()
@@ -22,6 +23,7 @@ object WeTypeSettings {
     const val DEFAULT_BLUR_RADIUS = 60
     const val DEFAULT_CORNER_RADIUS = 28
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
+    const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 50
     const val PROVIDER_AUTHORITY = "$MODULE_PACKAGE_NAME.settings"
 
     data class Snapshot(
@@ -29,7 +31,8 @@ object WeTypeSettings {
         val darkColor: Int,
         val blurRadius: Int,
         val cornerRadius: Int,
-        val edgeHighlightEnabled: Boolean
+        val edgeHighlightEnabled: Boolean,
+        val edgeHighlightIntensity: Int
     )
 
     fun getLightColor(context: Context): Int = readSnapshot(context).lightColor
@@ -42,13 +45,16 @@ object WeTypeSettings {
 
     fun isEdgeHighlightEnabled(context: Context): Boolean = readSnapshot(context).edgeHighlightEnabled
 
+    fun getEdgeHighlightIntensity(context: Context): Int = readSnapshot(context).edgeHighlightIntensity
+
     fun save(
         context: Context,
         lightColor: Int,
         darkColor: Int,
         blurRadius: Int,
         cornerRadius: Int,
-        edgeHighlightEnabled: Boolean
+        edgeHighlightEnabled: Boolean,
+        edgeHighlightIntensity: Int
     ) {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
@@ -57,6 +63,7 @@ object WeTypeSettings {
             .putInt(KEY_BLUR_RADIUS, blurRadius.coerceIn(0, 100))
             .putInt(KEY_CORNER_RADIUS, cornerRadius.coerceIn(0, 100))
             .putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, edgeHighlightEnabled)
+            .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity.coerceIn(0, 200))
             .commit()
         val sharedPrefsDir = File(context.dataDir, "shared_prefs").apply {
             setReadable(true, false)
@@ -80,6 +87,9 @@ object WeTypeSettings {
     fun isEdgeHighlightEnabledXposed(context: Context): Boolean =
         readSnapshotXposed(context).edgeHighlightEnabled
 
+    fun getEdgeHighlightIntensityXposed(context: Context): Int =
+        readSnapshotXposed(context).edgeHighlightIntensity
+
     fun readSnapshot(context: Context): Snapshot {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         return Snapshot(
@@ -90,6 +100,10 @@ object WeTypeSettings {
             edgeHighlightEnabled = prefs.getBoolean(
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 DEFAULT_EDGE_HIGHLIGHT_ENABLED
+            ),
+            edgeHighlightIntensity = prefs.getInt(
+                KEY_EDGE_HIGHLIGHT_INTENSITY,
+                DEFAULT_EDGE_HIGHLIGHT_INTENSITY
             )
         )
     }
@@ -116,6 +130,10 @@ object WeTypeSettings {
             edgeHighlightEnabled = bundle.getBoolean(
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 DEFAULT_EDGE_HIGHLIGHT_ENABLED
+            ),
+            edgeHighlightIntensity = bundle.getInt(
+                KEY_EDGE_HIGHLIGHT_INTENSITY,
+                DEFAULT_EDGE_HIGHLIGHT_INTENSITY
             )
         )
     }
@@ -126,6 +144,7 @@ object WeTypeSettings {
         putInt(KEY_BLUR_RADIUS, snapshot.blurRadius)
         putInt(KEY_CORNER_RADIUS, snapshot.cornerRadius)
         putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, snapshot.edgeHighlightEnabled)
+        putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, snapshot.edgeHighlightIntensity)
     }
 
     private fun defaultSnapshot(): Snapshot = Snapshot(
@@ -133,6 +152,7 @@ object WeTypeSettings {
         darkColor = DEFAULT_DARK_COLOR,
         blurRadius = DEFAULT_BLUR_RADIUS,
         cornerRadius = DEFAULT_CORNER_RADIUS,
-        edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED
+        edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED,
+        edgeHighlightIntensity = DEFAULT_EDGE_HIGHLIGHT_INTENSITY
     )
 }

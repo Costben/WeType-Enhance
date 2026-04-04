@@ -54,7 +54,8 @@ private val glassStrokeSmallDark = floatArrayOf(
 internal class WeTypeBloomStrokeDrawable(
     private val context: Context,
     private val cornerRadii: WeTypeCornerRadii,
-    private val surfaceColor: Int
+    private val surfaceColor: Int,
+    private val intensityScale: Float = 1f
 ) : Drawable() {
     private val contentPath = Path()
     private val glowPath = Path()
@@ -126,7 +127,10 @@ internal class WeTypeBloomStrokeDrawable(
         val darkMode = isDarkMode()
         val spec = bloomStrokeSpec(darkMode)
         val bloomLayerAlphaScale = if (darkMode) 0.3f else 1f
-        val alphaScale = surfaceAlphaScale(surfaceColor) * (drawableAlpha / 255f) * bloomLayerAlphaScale
+        val alphaScale = surfaceAlphaScale(surfaceColor) *
+            (drawableAlpha / 255f) *
+            bloomLayerAlphaScale *
+            intensityScale.coerceAtLeast(0f)
         val hairlineAlphaScale = if (darkMode) 0.7f else 1f
         val contentRect = RectF(bounds).apply { inset(0.5f, 0.5f) }
 

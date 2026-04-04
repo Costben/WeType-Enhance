@@ -13,8 +13,8 @@ android {
         applicationId = "com.xposed.miuiime"
         minSdk = 31
         targetSdk = 37
-        versionCode = 15
-        versionName = "1.17"
+        versionCode = 16
+        versionName = "1.18"
     }
 
     buildTypes {

@@ -19,7 +19,7 @@
     <string name="settings_restart_done">WeType 已重启</string>
     <string name="settings_restart_failed">重启 WeType 失败</string>
     <string name="settings_section_preview">预览</string>
-    <string name="settings_section_mode">预览模式</string>
+    <string name="settings_section_mode">外观模式</string>
     <string name="settings_section_color">颜色与透明度</string>
     <string name="settings_section_effect">模糊与圆角</string>
     <string name="settings_section_actions">操作</string>
@@ -38,6 +38,7 @@
     <string name="settings_group_appearance">外观</string>
     <string name="settings_edge_highlight_title">开启边缘高光效果</string>
     <string name="settings_edge_highlight_desc">关闭后仅保留背景模糊与底色，不再绘制边缘高光。</string>
+    <string name="settings_edge_highlight_intensity_title">高光效果强度</string>
     <string name="settings_group_color">颜色</string>
     <string name="settings_group_actions">操作</string>
     <string name="settings_preview_title">效果预览</string>

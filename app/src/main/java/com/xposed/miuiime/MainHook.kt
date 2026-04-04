@@ -701,13 +701,21 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         val color = WeTypeSettings.getCurrentBackgroundColorXposed(context)
         val blurRadius = WeTypeSettings.getBlurRadiusXposed(context)
         val edgeHighlightEnabled = WeTypeSettings.isEdgeHighlightEnabledXposed(context)
+        val edgeHighlightIntensity = WeTypeSettings.getEdgeHighlightIntensityXposed(context)
         val tintDrawable = createWeTypeTintDrawable(color, cornerRadii)
         val blurDrawable = createInternalBackgroundBlurDrawable(targetView, blurRadius, cornerRadii)
         val layers = buildList {
             blurDrawable?.also(::add)
             add(tintDrawable)
             if (edgeHighlightEnabled) {
-                add(WeTypeBloomStrokeDrawable(context, cornerRadii, color))
+                add(
+                    WeTypeBloomStrokeDrawable(
+                        context = context,
+                        cornerRadii = cornerRadii,
+                        surfaceColor = color,
+                        intensityScale = edgeHighlightIntensity / 100f
+                    )
+                )
             }
         }
         return if (layers.size == 1) layers.first() else LayerDrawable(layers.toTypedArray())

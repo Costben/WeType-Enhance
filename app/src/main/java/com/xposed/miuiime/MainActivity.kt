@@ -128,6 +128,7 @@ private fun WeTypeSettingsScreen(
     var blurRadius by rememberSaveable { mutableIntStateOf(snapshot.blurRadius) }
     var cornerRadius by rememberSaveable { mutableIntStateOf(snapshot.cornerRadius) }
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
+    var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
     var alphaValue by rememberSaveable {
         mutableIntStateOf(Color.alpha(if (currentModeIsDark) darkColor else lightColor))
@@ -150,7 +151,8 @@ private fun WeTypeSettingsScreen(
             darkColor = darkColor,
             blurRadius = blurRadius,
             cornerRadius = cornerRadius,
-            edgeHighlightEnabled = edgeHighlightEnabled
+            edgeHighlightEnabled = edgeHighlightEnabled,
+            edgeHighlightIntensity = edgeHighlightIntensity
         )
         Toast.makeText(context, R.string.settings_saved, Toast.LENGTH_SHORT).show()
     }
@@ -194,6 +196,15 @@ private fun WeTypeSettingsScreen(
                             onCheckedChange = { edgeHighlightEnabled = it }
                         )
 
+                        if (edgeHighlightEnabled) {
+                            SliderPreferenceItem(
+                                title = stringResource(R.string.settings_edge_highlight_intensity_title),
+                                value = edgeHighlightIntensity,
+                                max = 200,
+                                onValueChange = { edgeHighlightIntensity = it }
+                            )
+                        }
+
                         HorizontalDivider()
 
                         // 模式切换 - 使用 TabRow
@@ -225,18 +236,15 @@ private fun WeTypeSettingsScreen(
                             )
                         }
 
-                        HorizontalDivider()
-
                         // 大预览卡片
                         PreviewCard(
                             color = previewColor,
                             blurRadius = blurRadius,
                             cornerRadius = cornerRadius,
                             edgeHighlightEnabled = edgeHighlightEnabled,
+                            edgeHighlightIntensity = edgeHighlightIntensity,
                             isDark = currentModeIsDark
                         )
-
-                        HorizontalDivider()
 
                         // 模糊滑块
                         SliderPreferenceItem(
@@ -246,8 +254,6 @@ private fun WeTypeSettingsScreen(
                             onValueChange = { blurRadius = it }
                         )
 
-                        HorizontalDivider()
-
                         // 圆角滑块
                         SliderPreferenceItem(
                             title = stringResource(R.string.settings_corner_title),
@@ -255,8 +261,6 @@ private fun WeTypeSettingsScreen(
                             max = 100,
                             onValueChange = { cornerRadius = it }
                         )
-
-                        HorizontalDivider()
 
                         // 透明度滑块
                         SliderPreferenceItem(
@@ -348,6 +352,7 @@ private fun WeTypeSettingsScreen(
                                 blurRadius = WeTypeSettings.DEFAULT_BLUR_RADIUS
                                 cornerRadius = WeTypeSettings.DEFAULT_CORNER_RADIUS
                                 edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
+                                edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
                                 syncEditorFromState()
                                 Toast.makeText(context, context.getString(R.string.settings_reset_toast), Toast.LENGTH_SHORT).show()
                             }
@@ -373,6 +378,7 @@ private fun PreviewCard(
     blurRadius: Int,
     cornerRadius: Int,
     edgeHighlightEnabled: Boolean,
+    edgeHighlightIntensity: Int,
     isDark: Boolean
 ) {
     val previewCorner = cornerRadius.coerceIn(8, 32).dp
@@ -398,6 +404,7 @@ private fun PreviewCard(
                         color = color,
                         cornerRadius = previewCorner,
                         edgeHighlightEnabled = edgeHighlightEnabled,
+                        edgeHighlightIntensity = edgeHighlightIntensity,
                         isDark = isDark
                     )
                     .clip(ContinuousRoundedRectangle(previewCorner))
@@ -438,6 +445,7 @@ private fun Modifier.weTypePreviewBloom(
     color: Int,
     cornerRadius: androidx.compose.ui.unit.Dp,
     edgeHighlightEnabled: Boolean,
+    edgeHighlightIntensity: Int,
     isDark: Boolean
 ): Modifier {
     val context = LocalContext.current
@@ -461,7 +469,8 @@ private fun Modifier.weTypePreviewBloom(
                     bottomRight = cornerRadiusPx,
                     bottomLeft = cornerRadiusPx
                 ),
-                surfaceColor = color
+                surfaceColor = color,
+                intensityScale = edgeHighlightIntensity / 100f
             )
         } else {
             null
