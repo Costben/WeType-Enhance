@@ -6,7 +6,7 @@ import android.content.res.Configuration
 import de.robv.android.xposed.XSharedPreferences
 
 object WeTypeSettings {
-    private const val MODULE_PACKAGE_NAME = "com.xposed.miuiime"
+    private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
     private const val PREF_NAME = "wetype_settings"
     private const val KEY_LIGHT_COLOR = "light_color"
     private const val KEY_DARK_COLOR = "dark_color"
@@ -17,7 +17,7 @@ object WeTypeSettings {
     private const val KEY_KEY_OPACITY = "key_opacity"
 
     const val DEFAULT_LIGHT_COLOR = 0xA0D1D3D8.toInt()
-    const val DEFAULT_DARK_COLOR = 0x90202020.toInt()
+    const val DEFAULT_DARK_COLOR = 0x90101010.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
     const val DEFAULT_CORNER_RADIUS = 28
     const val MAX_CORNER_RADIUS = DEFAULT_CORNER_RADIUS * 2
