@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -167,6 +168,9 @@ private fun WeTypeSettingsScreen(
 ) {
     val context = LocalContext.current
     val snapshot = remember { WeTypeSettings.readSnapshot(context) }
+    var activationStatus by remember {
+        mutableStateOf(ModuleActivationTracker.readStatus(context))
+    }
     val systemDarkMode = isSystemInDarkTheme()
     val appearanceGroups = remember { WeTypeAppearanceColorGroups.groups }
     val appearanceSectionGroups = remember(appearanceGroups) {
@@ -268,6 +272,15 @@ private fun WeTypeSettingsScreen(
         saveSettings(showSavedToast = false)
     }
 
+    DisposableEffect(context) {
+        val listener = ModuleActivationTracker.registerStatusListener(context) {
+            activationStatus = it
+        }
+        onDispose {
+            ModuleActivationTracker.unregisterStatusListener(context, listener)
+        }
+    }
+
     val previewColor = currentColor()
     val scrollBehavior = MiuixScrollBehavior(state = rememberTopAppBarState())
 
@@ -276,6 +289,11 @@ private fun WeTypeSettingsScreen(
             TopAppBar(
                 title = stringResource(R.string.settings_title),
                 scrollBehavior = scrollBehavior,
+                navigationIcon = {
+                    ModuleActivationTag(
+                        status = activationStatus,
+                    )
+                },
                 actions = {
                     IconButton(
                         onClick = ::restoreDefaults
@@ -542,6 +560,36 @@ private fun WeTypeSettingsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ModuleActivationTag(
+    status: ModuleActivationTracker.ActivationStatus,
+    modifier: Modifier = Modifier
+) {
+    val backgroundColor = if (status.isActive) {
+        ComposeColor(0xFF4F9A71)
+    } else {
+        ComposeColor(0xFFC86F67)
+    }
+    val label = if (status.isActive) {
+        stringResource(R.string.settings_module_active_tag)
+    } else {
+        stringResource(R.string.settings_module_inactive_tag)
+    }
+    Box(
+        modifier = modifier
+            .clip(ContinuousRoundedRectangle(999.dp))
+            .background(backgroundColor)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = ComposeColor.White,
+            style = MiuixTheme.textStyles.body2
+        )
     }
 }
 

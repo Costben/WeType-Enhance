@@ -70,6 +70,8 @@
     <string name="settings_restart_title">重启 WeType</string>
     <string name="settings_restart_desc">重启输入法以应用更改</string>
     <string name="settings_visit_github_title">前往 GitHub</string>
+    <string name="settings_module_active_tag">已启用</string>
+    <string name="settings_module_inactive_tag">未启用</string>
 
     <string name="settings_color_dialog_title">选择颜色</string>
     <string name="settings_cancel">取消</string>

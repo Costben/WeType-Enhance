@@ -70,6 +70,8 @@
     <string name="settings_restart_title">Restart WeType</string>
     <string name="settings_restart_desc">Restart the input method to apply changes</string>
     <string name="settings_visit_github_title">Visit GitHub</string>
+    <string name="settings_module_active_tag">Active</string>
+    <string name="settings_module_inactive_tag">Inactive</string>
 
     <string name="settings_color_dialog_title">Choose color</string>
     <string name="settings_cancel">Cancel</string>

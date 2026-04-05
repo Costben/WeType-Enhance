@@ -1,5 +1,6 @@
 package com.xposed.wetypehook
 
+import android.content.Context
 import android.content.IntentFilter
 import android.content.res.AssetManager
 import android.content.res.Configuration
@@ -80,6 +81,9 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam) {
         val isWeType = lpparam.packageName == WETYPE_PACKAGE
+        if (isWeType || miuiImeList.contains(lpparam.packageName)) {
+            hookActivationHeartbeat(lpparam.packageName)
+        }
         if (isWeType) {
             WeTypeSettings.initXposed()
             hookWeTypeFont()
@@ -135,6 +139,21 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         }
 
         Log.i("Hook MIUI IME Done!")
+    }
+
+    private fun hookActivationHeartbeat(sourcePackage: String) {
+        findMethod("android.app.Application") {
+            name == "attach" && parameterTypes.sameAs(Context::class.java)
+        }.hookAfter { param ->
+            val context = param.args[0] as? Context ?: return@hookAfter
+            ModuleActivationTracker.notifyActivationFromHook(
+                context = context,
+                sourcePackage = sourcePackage,
+                sourceProcess = runCatching {
+                    context.applicationInfo.processName ?: context.packageName
+                }.getOrNull()
+            )
+        }
     }
 
     private fun hookWeTypeFont() {

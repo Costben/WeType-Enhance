@@ -8,29 +8,33 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:supportsRtl="true">
-    <activity
-        android:name=".MainActivity"
-        android:exported="true"
-        android:windowSoftInputMode="adjustResize">
-        <intent-filter>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent-filter>
-    </activity>
-    <meta-data
-        android:name="xposedmodule"
-        android:value="true" />
-    <meta-data
-        android:name="xposedsharedprefs"
-        android:value="true" />
-    <meta-data
-        android:name="xposeddescription"
-        android:value="@string/xposeddescription" />
-    <meta-data
-        android:name="xposedminversion"
-        android:value="93" />
-    <meta-data
-        android:name="xposedscope"
-        android:resource="@array/HookList" />
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <receiver
+            android:name=".ModuleActivationReceiver"
+            android:enabled="true"
+            android:exported="true" />
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="@string/xposeddescription" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/HookList" />
     </application>
 </manifest>
