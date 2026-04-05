@@ -23,7 +23,7 @@ object WeTypeSettings {
     const val MAX_CORNER_RADIUS = DEFAULT_CORNER_RADIUS * 2
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 50
-    const val DEFAULT_KEY_OPACITY = 180
+    const val DEFAULT_KEY_OPACITY = 200
 
     private val xposedPrefsLock = Any()
 

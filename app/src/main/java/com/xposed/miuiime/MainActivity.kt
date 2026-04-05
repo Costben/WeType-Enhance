@@ -49,6 +49,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.kyant.capsule.ContinuousRectangle
@@ -106,7 +108,7 @@ class MainActivity : ComponentActivity() {
             var restarted = false
             while (!restarted) {
                 restarted = runRootCommand(
-                    "killall com.tencent.wetype || pkill -f com.tencent.wetype || am force-stop com.tencent.wetype"
+                    "am force-stop com.tencent.wetype && sleep 1 && monkey -p com.tencent.wetype 1"
                 )
                 if (!restarted) {
                     Thread.sleep(300)
@@ -511,6 +513,15 @@ private fun PreviewCard(
     keyOpacity: Int,
     isDark: Boolean
 ) {
+    val context = LocalContext.current
+    val weTypeFontFamily = remember(context) {
+        FontFamily(
+            Font(
+                path = "WE-Regular.ttf",
+                assetManager = context.assets
+            )
+        )
+    }
     val previewCornerValue = cornerRadius.coerceIn(0, WeTypeSettings.MAX_CORNER_RADIUS)
     val previewCorner = previewCornerValue.dp
     val previewMinHeight = maxOf(88.dp, (previewCornerValue * 2).dp)
@@ -581,11 +592,12 @@ private fun PreviewCard(
                                 Text(
                                     text = formatArgb(color),
                                     color = previewTextColor(color),
-                                    style = MiuixTheme.textStyles.headline1
+                                    style = MiuixTheme.textStyles.headline1,
+                                    fontFamily = weTypeFontFamily
                                 )
                             }
 
-                            for (i in 0..2) {
+                            for (i in 'A'..'C') {
                                 Box(
                                     modifier = Modifier
                                         .clip(previewKeyShape)
@@ -595,7 +607,8 @@ private fun PreviewCard(
                                     Text(
                                         text = i.toString(),
                                         color = previewTextColor(color),
-                                        style = MiuixTheme.textStyles.headline1
+                                        style = MiuixTheme.textStyles.headline1,
+                                        fontFamily = weTypeFontFamily
                                     )
                                 }
                             }
