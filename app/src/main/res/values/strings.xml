@@ -54,7 +54,14 @@
     <string name="settings_corner_title">Corner radius</string>
     <string name="settings_alpha_title">Background opacity</string>
     <string name="settings_key_opacity_title">Key opacity</string>
-    <string name="settings_custom_color">Custom color</string>
+    <string name="settings_key_color_hook_alpha_title">Candidate background opacity</string>
+    <string name="settings_custom_color">Custom background color</string>
+    <string name="settings_appearance_color_group_summary">%1$d mapped entries · default %2$s</string>
+    <string name="settings_appearance_color_input_label">Group color</string>
+    <string name="settings_light_key_color_title">Light mode key color</string>
+    <string name="settings_dark_key_color_title">Dark mode key color</string>
+    <string name="settings_key_color_group_summary">Use the slider below to adjust opacity · %1$d / 255 opacity · %2$d mapped entries</string>
+    <string name="settings_key_color_input_label">Key color</string>
 
     <string name="settings_save_title">Save settings</string>
     <string name="settings_save_desc">Write the current configuration to the module</string>

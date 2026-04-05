@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,14 +25,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,6 +62,9 @@ import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
+import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
+import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
+import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
@@ -160,6 +168,10 @@ private fun WeTypeSettingsScreen(
     val context = LocalContext.current
     val snapshot = remember { WeTypeSettings.readSnapshot(context) }
     val systemDarkMode = isSystemInDarkTheme()
+    val appearanceGroups = remember { WeTypeAppearanceColorGroups.groups }
+    val appearanceSectionGroups = remember(appearanceGroups) {
+        appearanceGroups.filterNot { it.isKeyColorGroup }
+    }
 
     var lightColor by rememberSaveable { mutableIntStateOf(snapshot.lightColor) }
     var darkColor by rememberSaveable { mutableIntStateOf(snapshot.darkColor) }
@@ -168,6 +180,19 @@ private fun WeTypeSettingsScreen(
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
     var keyOpacity by rememberSaveable { mutableIntStateOf(snapshot.keyOpacity) }
+    var keyColorHookAlpha by rememberSaveable { mutableIntStateOf(snapshot.keyColorHookAlpha) }
+    val appearanceGroupColors = rememberSaveable(
+        saver = listSaver(
+            save = { it.toList() },
+            restore = { restored -> mutableStateListOf(*restored.toTypedArray()) }
+        )
+    ) {
+        mutableStateListOf(
+            *appearanceGroups.map { group ->
+                snapshot.appearanceColors[group.id] ?: group.defaultColor
+            }.toTypedArray()
+        )
+    }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
     var colorInput by rememberSaveable {
         mutableStateOf(formatRgb(if (currentModeIsDark) darkColor else lightColor))
@@ -187,6 +212,26 @@ private fun WeTypeSettingsScreen(
         if (currentModeIsDark) darkColor = argb else lightColor = argb
     }
 
+    fun currentAppearanceColors(): Map<String, Int> = appearanceGroups.mapIndexed { index, group ->
+        group.id to appearanceGroupColors[index]
+    }.toMap()
+
+    fun groupIndex(groupId: String): Int =
+        appearanceGroups.indexOfFirst { it.id == groupId }
+
+    fun keyColorGroup(isDark: Boolean) = appearanceGroups.first {
+        it.id == if (isDark) {
+            DARK_KEY_COLOR_GROUP_ID
+        } else {
+            LIGHT_KEY_COLOR_GROUP_ID
+        }
+    }
+
+    fun keyColorValue(isDark: Boolean): Int {
+        val group = keyColorGroup(isDark)
+        return appearanceGroupColors[groupIndex(group.id)]
+    }
+
     fun saveSettings(showSavedToast: Boolean = true) {
         WeTypeSettings.save(
             context = context,
@@ -196,7 +241,9 @@ private fun WeTypeSettingsScreen(
             cornerRadius = cornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
-            keyOpacity = keyOpacity
+            keyOpacity = keyOpacity,
+            keyColorHookAlpha = keyColorHookAlpha,
+            appearanceColors = currentAppearanceColors()
         )
         if (showSavedToast) {
             Toast.makeText(context, R.string.settings_saved, Toast.LENGTH_SHORT).show()
@@ -212,6 +259,10 @@ private fun WeTypeSettingsScreen(
         edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
         edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
         keyOpacity = WeTypeSettings.DEFAULT_KEY_OPACITY
+        keyColorHookAlpha = WeTypeSettings.DEFAULT_KEY_COLOR_HOOK_ALPHA
+        appearanceGroups.forEachIndexed { index, group ->
+            appearanceGroupColors[index] = group.defaultColor
+        }
         syncEditorFromState()
         Toast.makeText(context, context.getString(R.string.settings_reset_toast), Toast.LENGTH_SHORT).show()
         saveSettings(showSavedToast = false)
@@ -243,6 +294,8 @@ private fun WeTypeSettingsScreen(
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         keyOpacity = keyOpacity,
+                        lightKeyColor = keyColorValue(false),
+                        darkKeyColor = keyColorValue(true),
                         isDark = currentModeIsDark
                     )
                 }
@@ -356,6 +409,24 @@ private fun WeTypeSettingsScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
+
+                        val currentKeyGroup = keyColorGroup(currentModeIsDark)
+                        val currentKeyGroupIndex = groupIndex(currentKeyGroup.id)
+
+                        KeyColorEditor(
+                            title = if (currentModeIsDark) {
+                                stringResource(R.string.settings_dark_key_color_title)
+                            } else {
+                                stringResource(R.string.settings_light_key_color_title)
+                            },
+                            summary = stringResource(
+                                R.string.settings_key_color_group_summary,
+                                keyOpacity,
+                                currentKeyGroup.entryCount
+                            ),
+                            color = appearanceGroupColors[currentKeyGroupIndex],
+                            onColorChange = { appearanceGroupColors[currentKeyGroupIndex] = it }
+                        )
                     }
                 }
             }
@@ -410,6 +481,28 @@ private fun WeTypeSettingsScreen(
                             max = 255,
                             onValueChange = { keyOpacity = it }
                         )
+
+                        SliderPreferenceItem(
+                            title = stringResource(R.string.settings_key_color_hook_alpha_title),
+                            value = keyColorHookAlpha,
+                            max = 255,
+                            onValueChange = { keyColorHookAlpha = it }
+                        )
+
+
+                        appearanceSectionGroups.forEach { group ->
+                            val index = groupIndex(group.id)
+                            AppearanceColorGroupEditor(
+                                title = group.displayName,
+                                summary = stringResource(
+                                    R.string.settings_appearance_color_group_summary,
+                                    group.entryCount,
+                                    formatArgb(group.defaultColor)
+                                ),
+                                color = appearanceGroupColors[index],
+                                onColorChange = { appearanceGroupColors[index] = it }
+                            )
+                        }
                     }
                 }
             }
@@ -460,6 +553,8 @@ private fun PreviewSection(
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
     keyOpacity: Int,
+    lightKeyColor: Int,
+    darkKeyColor: Int,
     isDark: Boolean
 ) {
     Column(
@@ -492,6 +587,8 @@ private fun PreviewSection(
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         keyOpacity = keyOpacity,
+                        lightKeyColor = lightKeyColor,
+                        darkKeyColor = darkKeyColor,
                         isDark = isDark
                     )
                 }
@@ -508,6 +605,8 @@ private fun PreviewCard(
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
     keyOpacity: Int,
+    lightKeyColor: Int,
+    darkKeyColor: Int,
     isDark: Boolean
 ) {
     val context = LocalContext.current
@@ -528,6 +627,7 @@ private fun PreviewCard(
         bottomEnd = CornerSize(0.dp),
         bottomStart = CornerSize(0.dp)
     )
+    val previewKeyColor = if (isDark) darkKeyColor else lightKeyColor
     val previewKeyShape = ContinuousRoundedRectangle(12.dp)
     Column(
         modifier = Modifier
@@ -583,7 +683,7 @@ private fun PreviewCard(
                             Box(
                                 modifier = Modifier
                                     .clip(previewKeyShape)
-                                    .background(previewKeyBackgroundColor(isDark, keyOpacity))
+                                    .background(previewKeyBackgroundColor(previewKeyColor, keyOpacity))
                                     .padding(horizontal = 14.dp, vertical = 8.dp)
                             ) {
                                 Text(
@@ -598,7 +698,7 @@ private fun PreviewCard(
                                 Box(
                                     modifier = Modifier
                                         .clip(previewKeyShape)
-                                        .background(previewKeyBackgroundColor(isDark, keyOpacity))
+                                        .background(previewKeyBackgroundColor(previewKeyColor, keyOpacity))
                                         .padding(horizontal = 14.dp, vertical = 8.dp)
                                 ) {
                                     Text(
@@ -623,8 +723,7 @@ private fun PreviewCard(
     }
 }
 
-private fun previewKeyBackgroundColor(isDark: Boolean, keyOpacity: Int): ComposeColor {
-    val baseColor = if (isDark) 0xFF707070.toInt() else 0xFFFCFCFE.toInt()
+private fun previewKeyBackgroundColor(baseColor: Int, keyOpacity: Int): ComposeColor {
     return ComposeColor(
         Color.argb(
             keyOpacity.coerceIn(0, 255),
@@ -697,6 +796,117 @@ private fun createPreviewContext(baseContext: Context, isDark: Boolean): Context
 }
 
 @Composable
+private fun AppearanceColorGroupEditor(
+    title: String,
+    summary: String,
+    color: Int,
+    onColorChange: (Int) -> Unit
+) {
+    var input by rememberSaveable(title) { mutableStateOf(formatArgb(color)) }
+
+    LaunchedEffect(color) {
+        val formatted = formatArgb(color)
+        if (!input.equals(formatted, ignoreCase = true) && parseHexColor(input) != color) {
+            input = formatted
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(32.dp)
+                    .height(32.dp)
+                    .clip(ContinuousRoundedRectangle(999.dp))
+                    .background(ComposeColor(color))
+                    .border(1.dp, MiuixTheme.colorScheme.outline, ContinuousRoundedRectangle(999.dp))
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = title,
+                    style = MiuixTheme.textStyles.main
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = summary,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.body2
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextField(
+            value = input,
+            onValueChange = { raw ->
+                val sanitized = sanitizeHexColorInput(raw) ?: return@TextField
+                input = sanitized
+                parseHexColor(sanitized)?.let(onColorChange)
+            },
+            label = stringResource(R.string.settings_appearance_color_input_label),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun KeyColorEditor(
+    title: String,
+    summary: String,
+    color: Int,
+    onColorChange: (Int) -> Unit
+) {
+    var input by rememberSaveable(title) { mutableStateOf(formatRgb(color)) }
+
+    LaunchedEffect(color) {
+        val formatted = formatRgb(color)
+        val normalizedColor = Color.rgb(Color.red(color), Color.green(color), Color.blue(color))
+        if (!input.equals(formatted, ignoreCase = true) && parseRgbColor(input) != normalizedColor) {
+            input = formatted
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = title,
+            style = MiuixTheme.textStyles.main
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = summary,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MiuixTheme.textStyles.body2
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        TextField(
+            value = input,
+            onValueChange = { raw ->
+                val sanitized = sanitizeRgbColorInput(raw) ?: return@TextField
+                input = sanitized
+                parseRgbColor(sanitized)?.let(onColorChange)
+            },
+            label = stringResource(R.string.settings_key_color_input_label),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
 private fun SliderPreferenceItem(
     title: String,
     value: Int,
@@ -763,6 +973,40 @@ private fun previewTextColor(color: Int): ComposeColor =
 private fun formatRgb(color: Int): String = String.format("#%06X", color and 0xFFFFFF)
 
 private fun formatArgb(color: Int): String = String.format("#%08X", color)
+
+private fun sanitizeHexColorInput(input: String): String? {
+    val trimmed = input.trim()
+    val hasPrefix = trimmed.startsWith("#")
+    val body = trimmed.removePrefix("#")
+    if (body.length > 8 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+        return null
+    }
+    return if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+}
+
+private fun sanitizeRgbColorInput(input: String): String? {
+    val trimmed = input.trim()
+    val hasPrefix = trimmed.startsWith("#")
+    val body = trimmed.removePrefix("#")
+    if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+        return null
+    }
+    return if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+}
+
+private fun parseHexColor(input: String): Int? {
+    val body = input.trim().removePrefix("#")
+    return when (body.length) {
+        6, 8 -> runCatching { Color.parseColor("#$body") }.getOrNull()
+        else -> null
+    }
+}
+
+private fun parseRgbColor(input: String): Int? {
+    val body = input.trim().removePrefix("#")
+    if (body.length != 6) return null
+    return runCatching { Color.parseColor("#$body") }.getOrNull()
+}
 
 private fun isLightColor(color: Int): Boolean {
     val luminance =

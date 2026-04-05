@@ -153,7 +153,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun hookWeTypeTransparentColors() {
-        WeTypeResourceHooks.hookTransparentColors(WETYPE_COLOR_REPLACEMENTS)
+        WeTypeResourceHooks.hookAppearanceColors(WETYPE_COLOR_REPLACEMENTS)
     }
 
     private fun hookWeTypeSelfDrawKeyColors() {

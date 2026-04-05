@@ -15,6 +15,8 @@ object WeTypeSettings {
     private const val KEY_EDGE_HIGHLIGHT_ENABLED = "edge_highlight_enabled"
     private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
     private const val KEY_KEY_OPACITY = "key_opacity"
+    private const val KEY_KEY_COLOR_HOOK_ALPHA = "key_color_hook_alpha"
+    private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
 
     const val DEFAULT_LIGHT_COLOR = 0xA0D1D3D8.toInt()
     const val DEFAULT_DARK_COLOR = 0x90101010.toInt()
@@ -24,6 +26,7 @@ object WeTypeSettings {
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 50
     const val DEFAULT_KEY_OPACITY = 200
+    const val DEFAULT_KEY_COLOR_HOOK_ALPHA = 255
 
     private val xposedPrefsLock = Any()
 
@@ -41,7 +44,9 @@ object WeTypeSettings {
         val cornerRadius: Int,
         val edgeHighlightEnabled: Boolean,
         val edgeHighlightIntensity: Int,
-        val keyOpacity: Int
+        val keyOpacity: Int,
+        val keyColorHookAlpha: Int,
+        val appearanceColors: Map<String, Int>
     )
 
     fun getLightColor(context: Context): Int = readSnapshot(context).lightColor
@@ -58,6 +63,10 @@ object WeTypeSettings {
 
     fun getKeyOpacity(context: Context): Int = readSnapshot(context).keyOpacity
 
+    fun getKeyColorHookAlpha(context: Context): Int = readSnapshot(context).keyColorHookAlpha
+
+    fun getAppearanceColors(context: Context): Map<String, Int> = readSnapshot(context).appearanceColors
+
     fun initXposed() {
         getXposedPrefs()?.reload()
     }
@@ -70,9 +79,11 @@ object WeTypeSettings {
         cornerRadius: Int,
         edgeHighlightEnabled: Boolean,
         edgeHighlightIntensity: Int,
-        keyOpacity: Int
+        keyOpacity: Int,
+        keyColorHookAlpha: Int,
+        appearanceColors: Map<String, Int>
     ) {
-        appPreferences(context)
+        val editor = appPreferences(context)
             .edit()
             .putInt(KEY_LIGHT_COLOR, lightColor)
             .putInt(KEY_DARK_COLOR, darkColor)
@@ -81,7 +92,17 @@ object WeTypeSettings {
             .putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, edgeHighlightEnabled)
             .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity.coerceIn(0, 200))
             .putInt(KEY_KEY_OPACITY, keyOpacity.coerceIn(0, 255))
-            .commit()
+            .putInt(KEY_KEY_COLOR_HOOK_ALPHA, keyColorHookAlpha.coerceIn(0, 255))
+        WeTypeAppearanceColorGroups.groups.forEach { group ->
+            editor.putInt(
+                "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
+                appearanceColors[group.id] ?: group.defaultColor
+            )
+        }
+        WeTypeAppearanceColorGroups.obsoleteGroupIds.forEach { groupId ->
+            editor.remove("$KEY_APPEARANCE_COLOR_PREFIX$groupId")
+        }
+        editor.commit()
     }
 
     fun getCurrentBackgroundColorXposed(context: Context): Int {
@@ -103,6 +124,13 @@ object WeTypeSettings {
         readSnapshotXposed().edgeHighlightIntensity
 
     fun getKeyOpacityXposed(context: Context): Int = readSnapshotXposed().keyOpacity
+
+    fun getKeyColorHookAlphaXposed(): Int = readSnapshotXposed().keyColorHookAlpha
+
+    fun getAppearanceColorXposed(groupId: String): Int =
+        readSnapshotXposed().appearanceColors[groupId]
+            ?: WeTypeAppearanceColorGroups.findById(groupId)?.defaultColor
+            ?: 0
 
     fun readSnapshot(context: Context): Snapshot {
         val prefs = appPreferences(context)
@@ -157,7 +185,14 @@ object WeTypeSettings {
                 KEY_EDGE_HIGHLIGHT_INTENSITY,
                 DEFAULT_EDGE_HIGHLIGHT_INTENSITY
             ),
-            keyOpacity = getInt(KEY_KEY_OPACITY, DEFAULT_KEY_OPACITY)
+            keyOpacity = getInt(KEY_KEY_OPACITY, DEFAULT_KEY_OPACITY),
+            keyColorHookAlpha = getInt(KEY_KEY_COLOR_HOOK_ALPHA, DEFAULT_KEY_COLOR_HOOK_ALPHA),
+            appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
+                group.id to getInt(
+                    "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
+                    group.defaultColor
+                )
+            }
         )
     }
 
@@ -168,6 +203,8 @@ object WeTypeSettings {
         cornerRadius = DEFAULT_CORNER_RADIUS,
         edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED,
         edgeHighlightIntensity = DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
-        keyOpacity = DEFAULT_KEY_OPACITY
+        keyOpacity = DEFAULT_KEY_OPACITY,
+        keyColorHookAlpha = DEFAULT_KEY_COLOR_HOOK_ALPHA,
+        appearanceColors = WeTypeAppearanceColorGroups.defaultColors()
     )
 }

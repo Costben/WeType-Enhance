@@ -54,7 +54,14 @@
     <string name="settings_corner_title">圆角大小</string>
     <string name="settings_alpha_title">背景不透明度</string>
     <string name="settings_key_opacity_title">按键不透明度</string>
-    <string name="settings_custom_color">自定义颜色</string>
+    <string name="settings_key_color_hook_alpha_title">候选词背景透明度</string>
+    <string name="settings_custom_color">自定义背景颜色</string>
+    <string name="settings_appearance_color_group_summary">%1$d 个映射项 · 默认 %2$s</string>
+    <string name="settings_appearance_color_input_label">分组颜色</string>
+    <string name="settings_light_key_color_title">浅色模式按键色</string>
+    <string name="settings_dark_key_color_title">深色模式按键色</string>
+    <string name="settings_key_color_group_summary">透明度请用下方滑块调整 · 当前 %1$d / 255 · %2$d 个映射项</string>
+    <string name="settings_key_color_input_label">按键颜色</string>
 
     <string name="settings_save_title">保存设置</string>
     <string name="settings_save_desc">将当前配置写入模块</string>
