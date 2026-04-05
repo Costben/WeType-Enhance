@@ -2,6 +2,7 @@ package com.xposed.wetypehook
 
 import android.content.IntentFilter
 import android.content.res.AssetManager
+import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Color
 import android.view.inputmethod.InputMethodManager
@@ -269,14 +270,13 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
      */
     private fun customizeBottomViewColor(clazz: Class<*>, forceTransparent: Boolean) {
         if (forceTransparent) {
-            val sourceColor = bottomViewSourceColor ?: navBarColor ?: Color.BLACK
-            val contentColor = -0x1 - sourceColor
+            val contentColor = resolveTransparentBottomViewContentColor()
             clazz.invokeStaticMethodAuto(
                 "customizeBottomViewColor",
                 true,
                 Color.TRANSPARENT,
-                contentColor or -0x1000000,
-                contentColor or 0x66000000
+                contentColor,
+                withAlpha(contentColor, 0x66)
             )
             return
         }
@@ -289,6 +289,19 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             )
         }
     }
+
+    private fun resolveTransparentBottomViewContentColor(): Int {
+        val isDarkMode = Resources.getSystem().configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        return if (isDarkMode) Color.parseColor("#FFF5F5F5") else Color.parseColor("#FF202020")
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int = Color.argb(
+        alpha.coerceIn(0, 255),
+        Color.red(color),
+        Color.green(color),
+        Color.blue(color)
+    )
 
     /**
      * 针对A10的修复切换输入法列表

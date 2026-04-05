@@ -8,6 +8,7 @@ import android.content.res.TypedArray
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
+import android.util.TypedValue
 import com.github.kyuubiran.ezxhelper.utils.Log
 import com.github.kyuubiran.ezxhelper.utils.getObjectAs
 import com.github.kyuubiran.ezxhelper.utils.hookAfter
@@ -105,6 +106,7 @@ internal object WeTypeResourceHooks {
 
     fun hookTransparentColors(colorReplacements: Map<String, Int>) {
         runCatching {
+            hookColorValueAccess(colorReplacements)
             Resources::class.java.getMethod("getColor", Int::class.javaPrimitiveType)
                 .hookAfter { param ->
                     val resources = param.thisObject as? Resources ?: return@hookAfter
@@ -177,6 +179,61 @@ internal object WeTypeResourceHooks {
         }
     }
 
+    private fun hookColorValueAccess(colorReplacements: Map<String, Int>) {
+        Resources::class.java.getMethod(
+            "getValue",
+            Int::class.javaPrimitiveType,
+            TypedValue::class.java,
+            Boolean::class.javaPrimitiveType
+        ).hookAfter { param ->
+            val resources = param.thisObject as? Resources ?: return@hookAfter
+            val outValue = param.args[1] as? TypedValue ?: return@hookAfter
+            replaceTypedValue(resources, outValue, colorReplacements)
+        }
+        runCatching {
+            Resources::class.java.getMethod(
+                "getValueForDensity",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                TypedValue::class.java,
+                Boolean::class.javaPrimitiveType
+            ).hookAfter { param ->
+                val resources = param.thisObject as? Resources ?: return@hookAfter
+                val outValue = param.args[2] as? TypedValue ?: return@hookAfter
+                replaceTypedValue(resources, outValue, colorReplacements)
+            }
+        }
+        TypedArray::class.java.getMethod(
+            "getValue",
+            Int::class.javaPrimitiveType,
+            TypedValue::class.java
+        ).hookAfter { param ->
+            if (param.result != true) return@hookAfter
+            val typedArray = param.thisObject as? TypedArray ?: return@hookAfter
+            val outValue = param.args[1] as? TypedValue ?: return@hookAfter
+            replaceTypedValue(typedArray.resources, outValue, colorReplacements)
+        }
+        TypedArray::class.java.getMethod("peekValue", Int::class.javaPrimitiveType)
+            .hookAfter { param ->
+                val typedArray = param.thisObject as? TypedArray ?: return@hookAfter
+                val outValue = param.result as? TypedValue ?: return@hookAfter
+                replaceTypedValue(typedArray.resources, outValue, colorReplacements)
+            }
+        runCatching {
+            Resources.Theme::class.java.getMethod(
+                "resolveAttribute",
+                Int::class.javaPrimitiveType,
+                TypedValue::class.java,
+                Boolean::class.javaPrimitiveType
+            ).hookAfter { param ->
+                if (param.result != true) return@hookAfter
+                val theme = param.thisObject as? Resources.Theme ?: return@hookAfter
+                val outValue = param.args[1] as? TypedValue ?: return@hookAfter
+                replaceTypedValue(theme.resources, outValue, colorReplacements)
+            }
+        }
+    }
+
     fun hookSelfDrawKeyColors() {
         runCatching {
             val imeButtonClass = loadClassOrNull("com.tencent.wetype.plugin.hld.keyboard.selfdraw.j")
@@ -212,8 +269,30 @@ internal object WeTypeResourceHooks {
         color: Int,
         colorReplacements: Map<String, Int>
     ): Int {
+        val resourceType = runCatching { resources.getResourceTypeName(colorResId) }.getOrNull() ?: return color
+        if (resourceType != "color") return color
         val colorName = runCatching { resources.getResourceEntryName(colorResId) }.getOrNull() ?: return color
         return colorReplacements[colorName] ?: color
+    }
+
+    private fun replaceTypedValue(
+        resources: Resources,
+        typedValue: TypedValue,
+        colorReplacements: Map<String, Int>
+    ): Boolean {
+        val colorResId = typedValue.resourceId.takeIf { it != 0 } ?: return false
+        val replacementColor = replaceColor(resources, colorResId, Int.MIN_VALUE, colorReplacements)
+        if (replacementColor == Int.MIN_VALUE) return false
+
+        typedValue.type = when (Color.alpha(replacementColor)) {
+            0xFF -> TypedValue.TYPE_INT_COLOR_RGB8
+            else -> TypedValue.TYPE_INT_COLOR_ARGB8
+        }
+        typedValue.data = replacementColor
+        typedValue.assetCookie = 0
+        typedValue.resourceId = 0
+        typedValue.string = null
+        return true
     }
 
     private fun replaceDrawable(
