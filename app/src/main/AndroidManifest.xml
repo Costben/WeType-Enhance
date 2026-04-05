@@ -16,12 +16,11 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
     </activity>
-    <provider
-        android:name=".wetype.settings.WeTypeSettingsProvider"
-        android:authorities="com.xposed.miuiime.settings"
-        android:exported="true" />
     <meta-data
         android:name="xposedmodule"
+        android:value="true" />
+    <meta-data
+        android:name="xposedsharedprefs"
         android:value="true" />
     <meta-data
         android:name="xposeddescription"

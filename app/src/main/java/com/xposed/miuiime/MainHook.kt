@@ -19,6 +19,7 @@ import com.github.kyuubiran.ezxhelper.utils.invokeStaticMethodAuto
 import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
 import com.github.kyuubiran.ezxhelper.utils.putStaticObject
 import com.github.kyuubiran.ezxhelper.utils.sameAs
+import com.xposed.miuiime.wetype.settings.WeTypeSettings
 import com.xposed.miuiime.wetype.hook.WeTypeResourceHooks
 import com.xposed.miuiime.wetype.hook.WeTypeWindowHooks
 import de.robv.android.xposed.IXposedHookLoadPackage
@@ -104,6 +105,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam) {
         val isWeType = lpparam.packageName == WETYPE_PACKAGE
         if (isWeType) {
+            WeTypeSettings.initXposed()
             hookWeTypeFont()
             hookWeTypeTransparentColors()
             hookWeTypeXmlDrawables()
