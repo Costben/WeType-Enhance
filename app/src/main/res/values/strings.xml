@@ -20,7 +20,6 @@
     <string name="settings_root_required">Root permission is required</string>
     <string name="settings_restart_done">WeType restarted</string>
     <string name="settings_restart_failed">Failed to restart WeType</string>
-    <string name="settings_autostart_permission_warning">Missing auto-start permission may affect custom setting reads</string>
 
     <string name="settings_section_preview">Preview</string>
     <string name="settings_section_mode">Color mode</string>
