@@ -1,11 +1,13 @@
 package com.xposed.wetypehook
 
+import android.app.Activity
 import android.content.Context
 import android.content.IntentFilter
 import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Color
+import android.view.View
 import android.view.inputmethod.InputMethodManager
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
@@ -30,6 +32,9 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 private const val TAG = "miuiime"
 private const val WETYPE_PACKAGE = "com.tencent.wetype"
+private const val WETYPE_ABOUT_ACTIVITY = "com.tencent.wetype.plugin.hld.ui.ImeAboutActivity"
+private const val WETYPE_ABOUT_LOGO_ID_NAME = "ch"
+private const val WETYPE_ABOUT_LOGO_TAG_KEY = 0x4D495549
 private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
 private const val MODULE_WETYPE_FONT_ASSET = "WE-Regular.ttf"
 private val WETYPE_COLOR_REPLACEMENTS = mapOf(
@@ -63,6 +68,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam) {
         modulePath = startupParam.modulePath
+        ModuleRuntime.updateModuleApkPath(startupParam.modulePath)
     }
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
@@ -81,10 +87,11 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam) {
         val isWeType = lpparam.packageName == WETYPE_PACKAGE
-        if (isWeType || miuiImeList.contains(lpparam.packageName)) {
+        if (isWeType) {
             hookActivationHeartbeat(lpparam.packageName)
         }
         if (isWeType) {
+            WeTypeSettings.configureStorage(lpparam.packageName)
             WeTypeSettings.initXposed()
             hookWeTypeFont()
             hookWeTypeTransparentColors()
@@ -94,6 +101,8 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             hookWeTypeCandidatePinyinLeftMargin()
             hookWeTypeWindowBlur()
             hookWeTypeWindowCorner()
+            hookWeTypeIntentEntry()
+            hookWeTypeAboutLogoEntry()
         }
 
         // 检查是否为小米定制输入法
@@ -197,12 +206,93 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         WeTypeWindowHooks.hookWindowBlur()
     }
 
+    private fun hookWeTypeIntentEntry() {
+        kotlin.runCatching {
+            findMethod("android.app.Activity") {
+                name == "onResume" && parameterTypes.isEmpty()
+            }.hookAfter { param ->
+                val activity = param.thisObject as? Activity ?: return@hookAfter
+                val intent = activity.intent ?: return@hookAfter
+                if (!intent.getBooleanExtra(EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS, false)) return@hookAfter
+                intent.removeExtra(EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS)
+                activity.window?.decorView?.post {
+                    WeTypeHostLauncher.show(activity)
+                }
+            }
+        }.onFailure {
+            Log.e("Failed:Hook WeType intent entry")
+            Log.i(it)
+        }
+    }
+
+    private fun hookWeTypeAboutLogoEntry() {
+        kotlin.runCatching {
+            findMethod(WETYPE_ABOUT_ACTIVITY) {
+                name == "onResume" && parameterTypes.isEmpty()
+            }.hookAfter { param ->
+                val activity = param.thisObject as? Activity ?: return@hookAfter
+                activity.window?.decorView?.post {
+                    hookWeTypeAboutLogoClick(activity)
+                }
+            }
+        }.onFailure {
+            Log.e("Failed:Hook WeType about logo entry")
+            Log.i(it)
+        }
+    }
+
+    private fun hookWeTypeAboutLogoClick(activity: Activity) {
+        kotlin.runCatching {
+            val logoResId = activity.resources.getIdentifier(
+                WETYPE_ABOUT_LOGO_ID_NAME,
+                "id",
+                WETYPE_PACKAGE
+            )
+            if (logoResId == 0) return
+
+            val logoView = activity.findViewById<View>(logoResId) ?: return
+            if (logoView.getTag(WETYPE_ABOUT_LOGO_TAG_KEY) == true) return
+
+            val originalClickListener = resolveOnClickListener(logoView)
+            logoView.isClickable = true
+            logoView.setTag(WETYPE_ABOUT_LOGO_TAG_KEY, true)
+            logoView.setOnClickListener { view ->
+                runCatching {
+                    originalClickListener?.onClick(view)
+                }.onFailure {
+                    Log.e("Failed:Invoke original WeType about logo listener")
+                    Log.i(it)
+                }
+                WeTypeHostLauncher.show(activity)
+            }
+        }.onFailure {
+            Log.e("Failed:Attach WeType about logo click hook")
+            Log.i(it)
+        }
+    }
+
+    private fun resolveOnClickListener(view: View): View.OnClickListener? {
+        return runCatching {
+            val listenerInfoField = View::class.java.getDeclaredField("mListenerInfo").apply {
+                isAccessible = true
+            }
+            val listenerInfo = listenerInfoField.get(view) ?: return null
+            val onClickListenerField = listenerInfo.javaClass.getDeclaredField("mOnClickListener").apply {
+                isAccessible = true
+            }
+            onClickListenerField.get(listenerInfo) as? View.OnClickListener
+        }.getOrNull()
+    }
+
     private fun getModuleAssetManager(): AssetManager {
         moduleAssetManager?.let { return it }
+        val resolvedModulePath = ModuleRuntime.resolveModuleApkPath()
+            ?: modulePath.takeIf { ::modulePath.isInitialized }
+            ?: error("Module apk path is unavailable")
         val assetManager = AssetManager::class.java.getDeclaredConstructor().newInstance()
         val addAssetPath = AssetManager::class.java.getMethod("addAssetPath", String::class.java)
-        check(addAssetPath.invoke(assetManager, modulePath) as Int != 0) {
-            "Failed to add module asset path: $modulePath"
+        check(addAssetPath.invoke(assetManager, resolvedModulePath) as Int != 0) {
+            "Failed to add module asset path: $resolvedModulePath"
         }
         moduleAssetManager = assetManager
         return assetManager

@@ -19,7 +19,6 @@ object WeTypeSettings {
     private const val KEY_CANDIDATE_BACKGROUND_CORNER = "candidate_background_corner"
     private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
-
     const val DEFAULT_LIGHT_COLOR = 0xA0D1D3D8.toInt()
     const val DEFAULT_DARK_COLOR = 0x90101010.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
@@ -37,6 +36,8 @@ object WeTypeSettings {
 
     @Volatile
     private var xposedPrefs: XSharedPreferences? = null
+    @Volatile
+    private var xposedPrefsPackageName: String = MODULE_PACKAGE_NAME
 
     private val xposedPrefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         runCatching { xposedPrefs?.reload() }
@@ -81,10 +82,118 @@ object WeTypeSettings {
     fun getAppearanceColors(context: Context): Map<String, Int> = readSnapshot(context).appearanceColors
 
     fun initXposed() {
-        getXposedPrefs()?.reload()
+        getXposedPrefs(xposedPrefsPackageName)?.reload()
+    }
+
+    fun configureStorage(hostPackageName: String) {
+        if (hostPackageName.isBlank() || xposedPrefsPackageName == hostPackageName) return
+        synchronized(xposedPrefsLock) {
+            if (xposedPrefsPackageName == hostPackageName) return
+            xposedPrefsPackageName = hostPackageName
+            xposedPrefs = null
+        }
     }
 
     fun save(
+        context: Context,
+        lightColor: Int,
+        darkColor: Int,
+        blurRadius: Int,
+        cornerRadius: Int,
+        edgeHighlightEnabled: Boolean,
+        edgeHighlightIntensity: Int,
+        keyOpacity: Int,
+        keyColorHookAlpha: Int,
+        candidateBackgroundCorner: Float,
+        candidatePinyinLeftMarginDp: Int,
+        appearanceColors: Map<String, Int>
+    ) {
+        val sanitizedAppearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
+            group.id to (appearanceColors[group.id] ?: group.defaultColor)
+        }
+        saveDirect(
+            context = context,
+            lightColor = lightColor,
+            darkColor = darkColor,
+            blurRadius = blurRadius,
+            cornerRadius = cornerRadius,
+            edgeHighlightEnabled = edgeHighlightEnabled,
+            edgeHighlightIntensity = edgeHighlightIntensity,
+            keyOpacity = keyOpacity,
+            keyColorHookAlpha = keyColorHookAlpha,
+            candidateBackgroundCorner = candidateBackgroundCorner,
+            candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
+            appearanceColors = sanitizedAppearanceColors
+        )
+    }
+
+    fun getCurrentBackgroundColorXposed(context: Context): Int {
+        val snapshot = readSnapshotXposed()
+        val isDarkMode =
+            context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+                Configuration.UI_MODE_NIGHT_YES
+        return if (isDarkMode) snapshot.darkColor else snapshot.lightColor
+    }
+
+    fun getBlurRadiusXposed(context: Context): Int = readSnapshotXposed().blurRadius
+
+    fun getCornerRadiusXposed(context: Context): Int = readSnapshotXposed().cornerRadius
+
+    fun isEdgeHighlightEnabledXposed(context: Context): Boolean =
+        readSnapshotXposed().edgeHighlightEnabled
+
+    fun getEdgeHighlightIntensityXposed(context: Context): Int =
+        readSnapshotXposed().edgeHighlightIntensity
+
+    fun getKeyOpacityXposed(context: Context): Int = readSnapshotXposed().keyOpacity
+
+    fun getKeyColorHookAlphaXposed(): Int = readSnapshotXposed().keyColorHookAlpha
+
+    fun getCandidateBackgroundCornerXposed(): Float =
+        readSnapshotXposed().candidateBackgroundCorner
+
+    fun getCandidatePinyinLeftMarginDpXposed(): Int =
+        readSnapshotXposed().candidatePinyinLeftMarginDp
+
+    fun getAppearanceColorXposed(groupId: String): Int =
+        readSnapshotXposed().appearanceColors[groupId]
+            ?: WeTypeAppearanceColorGroups.findById(groupId)?.defaultColor
+            ?: 0
+
+    fun readSnapshot(context: Context): Snapshot {
+        val prefs = appPreferences(context)
+        return prefs.toSnapshotOrNull() ?: readSnapshotXposed()
+    }
+
+    private fun readSnapshotXposed(): Snapshot {
+        val hostPrefs = getXposedPrefs(xposedPrefsPackageName)
+        runCatching { hostPrefs?.reload() }
+        hostPrefs?.toSnapshotOrNull()?.let { snapshot ->
+            return snapshot.copy(
+                cornerRadius = hostPrefs.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+                    .coerceIn(0, MAX_CORNER_RADIUS)
+            )
+        }
+
+        val modulePrefs = getXposedPrefs(MODULE_PACKAGE_NAME) ?: return defaultSnapshot()
+        runCatching { modulePrefs.reload() }
+        return modulePrefs.toSnapshot().copy(
+            cornerRadius = modulePrefs.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
+                .coerceIn(0, MAX_CORNER_RADIUS)
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun appPreferences(context: Context): SharedPreferences {
+        val appContext = context.applicationContext ?: context
+        return try {
+            appContext.getSharedPreferences(PREF_NAME, Context.MODE_WORLD_READABLE)
+        } catch (_: SecurityException) {
+            appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        }
+    }
+
+    private fun saveDirect(
         context: Context,
         lightColor: Int,
         darkColor: Int,
@@ -126,74 +235,25 @@ object WeTypeSettings {
             editor.remove("$KEY_APPEARANCE_COLOR_PREFIX$groupId")
         }
         editor.commit()
-    }
-
-    fun getCurrentBackgroundColorXposed(context: Context): Int {
-        val snapshot = readSnapshotXposed()
-        val isDarkMode =
-            context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-                Configuration.UI_MODE_NIGHT_YES
-        return if (isDarkMode) snapshot.darkColor else snapshot.lightColor
-    }
-
-    fun getBlurRadiusXposed(context: Context): Int = readSnapshotXposed().blurRadius
-
-    fun getCornerRadiusXposed(context: Context): Int = readSnapshotXposed().cornerRadius
-
-    fun isEdgeHighlightEnabledXposed(context: Context): Boolean =
-        readSnapshotXposed().edgeHighlightEnabled
-
-    fun getEdgeHighlightIntensityXposed(context: Context): Int =
-        readSnapshotXposed().edgeHighlightIntensity
-
-    fun getKeyOpacityXposed(context: Context): Int = readSnapshotXposed().keyOpacity
-
-    fun getKeyColorHookAlphaXposed(): Int = readSnapshotXposed().keyColorHookAlpha
-
-    fun getCandidateBackgroundCornerXposed(): Float =
-        readSnapshotXposed().candidateBackgroundCorner
-
-    fun getCandidatePinyinLeftMarginDpXposed(): Int =
-        readSnapshotXposed().candidatePinyinLeftMarginDp
-
-    fun getAppearanceColorXposed(groupId: String): Int =
-        readSnapshotXposed().appearanceColors[groupId]
-            ?: WeTypeAppearanceColorGroups.findById(groupId)?.defaultColor
-            ?: 0
-
-    fun readSnapshot(context: Context): Snapshot {
-        val prefs = appPreferences(context)
-        return prefs.toSnapshot()
-    }
-
-    private fun readSnapshotXposed(): Snapshot {
-        val prefs = getXposedPrefs() ?: return defaultSnapshot()
-        return prefs.toSnapshot().copy(
-            cornerRadius = prefs.getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
-                .coerceIn(0, MAX_CORNER_RADIUS)
-        )
+        runCatching { xposedPrefs?.reload() }
     }
 
     @Suppress("DEPRECATION")
-    private fun appPreferences(context: Context): SharedPreferences {
-        val appContext = context.applicationContext ?: context
-        return try {
-            appContext.getSharedPreferences(PREF_NAME, Context.MODE_WORLD_READABLE)
-        } catch (_: SecurityException) {
-            appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun getXposedPrefs(): XSharedPreferences? {
-        xposedPrefs?.let { return it }
-        synchronized(xposedPrefsLock) {
+    private fun getXposedPrefs(packageName: String): XSharedPreferences? {
+        if (packageName == xposedPrefsPackageName) {
             xposedPrefs?.let { return it }
+        }
+        synchronized(xposedPrefsLock) {
+            if (packageName == xposedPrefsPackageName) {
+                xposedPrefs?.let { return it }
+            }
             return runCatching {
-                XSharedPreferences(MODULE_PACKAGE_NAME, PREF_NAME).also { prefs ->
+                XSharedPreferences(packageName, PREF_NAME).also { prefs ->
                     prefs.reload()
-                    prefs.registerOnSharedPreferenceChangeListener(xposedPrefChangeListener)
-                    xposedPrefs = prefs
+                    if (packageName == xposedPrefsPackageName) {
+                        prefs.registerOnSharedPreferenceChangeListener(xposedPrefChangeListener)
+                        xposedPrefs = prefs
+                    }
                 }
             }.getOrNull()
         }
@@ -231,6 +291,26 @@ object WeTypeSettings {
                 )
             }
         )
+    }
+
+    private fun SharedPreferences.toSnapshotOrNull(): Snapshot? {
+        if (!contains(KEY_LIGHT_COLOR) &&
+            !contains(KEY_DARK_COLOR) &&
+            !contains(KEY_BLUR_RADIUS) &&
+            !contains(KEY_CORNER_RADIUS) &&
+            !contains(KEY_EDGE_HIGHLIGHT_ENABLED) &&
+            !contains(KEY_EDGE_HIGHLIGHT_INTENSITY) &&
+            !contains(KEY_KEY_OPACITY) &&
+            !contains(KEY_KEY_COLOR_HOOK_ALPHA) &&
+            !contains(KEY_CANDIDATE_BACKGROUND_CORNER) &&
+            !contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) &&
+            WeTypeAppearanceColorGroups.groups.none { group ->
+                contains("$KEY_APPEARANCE_COLOR_PREFIX${group.id}")
+            }
+        ) {
+            return null
+        }
+        return toSnapshot()
     }
 
     private fun defaultSnapshot(): Snapshot = Snapshot(

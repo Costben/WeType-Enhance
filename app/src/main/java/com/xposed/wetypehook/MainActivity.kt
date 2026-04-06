@@ -1,8 +1,10 @@
 package com.xposed.wetypehook
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
@@ -57,6 +59,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.kyant.capsule.ContinuousRoundedRectangle
@@ -86,6 +89,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
@@ -93,59 +97,212 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import kotlin.math.roundToInt
 
+const val EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS = "com.xposed.wetypehook.extra.OPEN_WETYPE_EMBEDDED_SETTINGS"
+
 class MainActivity : ComponentActivity() {
+    private var hasAttemptedEmbeddedLaunch = false
+    private var activationStatusListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private var activationStatus by mutableStateOf(
+        ModuleActivationTracker.ActivationStatus(
+            isActive = false,
+            sourcePackage = null,
+            sourceProcess = null,
+            lastActivatedAt = 0L
+        )
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            WeTypeSettingsApp(onRestartWeType = ::restartWeType)
-        }
-    }
-
-    private fun restartWeType() {
-        Thread {
-            val hasRoot = runRootCommand("id")
-            if (!hasRoot) {
-                runOnUiThread {
-                    Toast.makeText(this, R.string.settings_root_required, Toast.LENGTH_SHORT).show()
-                }
-                return@Thread
-            }
-
-            var restarted = false
-            while (!restarted) {
-                restarted = runRootCommand(
-                    "am force-stop com.tencent.wetype && sleep 1 && monkey -p com.tencent.wetype 1"
-                )
-                if (!restarted) {
-                    Thread.sleep(300)
-                }
-            }
+        activationStatus = ModuleActivationTracker.readStatus(this)
+        activationStatusListener = ModuleActivationTracker.registerStatusListener(this) { status ->
+            activationStatus = status
+            if (!status.isActive) return@registerStatusListener
             runOnUiThread {
-                Toast.makeText(this, R.string.settings_restart_done, Toast.LENGTH_SHORT).show()
+                launchEmbeddedSettingsAndFinish()
             }
-        }.start()
+        }
+        setContent {
+            ActivationEntryApp(
+                isActive = activationStatus.isActive,
+                onOpenEmbeddedSettings = ::launchEmbeddedSettingsAndFinish
+            )
+        }
+        launchEmbeddedSettingsIfActive()
     }
 
-    private fun runRootCommand(command: String): Boolean {
-        val process = runCatching {
-            Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-        }.getOrNull() ?: return false
-        return runCatching {
-            process.waitFor() == 0
-        }.getOrDefault(false).also {
-            process.destroy()
+    override fun onResume() {
+        super.onResume()
+        activationStatus = ModuleActivationTracker.readStatus(this)
+        launchEmbeddedSettingsIfActive()
+    }
+
+    override fun onDestroy() {
+        activationStatusListener?.let {
+            ModuleActivationTracker.unregisterStatusListener(this, it)
+            activationStatusListener = null
+        }
+        super.onDestroy()
+    }
+
+    private fun launchEmbeddedSettingsIfActive(): Boolean {
+        if (!hasAttemptedEmbeddedLaunch && activationStatus.isActive) {
+            return launchEmbeddedSettingsAndFinish()
+        }
+        return false
+    }
+
+    private fun launchEmbeddedSettingsAndFinish(): Boolean {
+        if (hasAttemptedEmbeddedLaunch) return false
+        hasAttemptedEmbeddedLaunch = true
+        val launched = openEmbeddedWeTypeSettings()
+        if (launched) {
+            finish()
+        } else {
+            hasAttemptedEmbeddedLaunch = false
+        }
+        return launched
+    }
+
+    private fun openEmbeddedWeTypeSettings(): Boolean {
+        val launchIntents = listOfNotNull(
+            packageManager.getLaunchIntentForPackage("com.tencent.wetype")?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS, true)
+            },
+            Intent(Intent.ACTION_MAIN).apply {
+                setPackage("com.tencent.wetype")
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS, true)
+            },
+            Intent().apply {
+                component = ComponentName(
+                    "com.tencent.wetype",
+                    "com.tencent.wetype.plugin.hld.ui.ImeAboutActivity"
+                )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS, true)
+            }
+        )
+
+        for (intent in launchIntents) {
+            val launched = runCatching {
+                startActivity(intent)
+                true
+            }.getOrElse { false }
+            if (launched) return true
+        }
+
+        Toast.makeText(this, "Failed to open WeType", Toast.LENGTH_SHORT).show()
+        return false
+    }
+}
+
+@Composable
+private fun ActivationEntryApp(
+    isActive: Boolean,
+    onOpenEmbeddedSettings: () -> Unit
+) {
+    val darkMode = isSystemInDarkTheme()
+    MiuixTheme(colors = if (darkMode) darkColorScheme() else lightColorScheme()) {
+        SyncSystemBars(darkMode = darkMode)
+        ActivationEntryScreen(
+            isActive = isActive,
+            onOpenEmbeddedSettings = onOpenEmbeddedSettings
+        )
+    }
+}
+
+@Composable
+private fun ActivationEntryScreen(
+    isActive: Boolean,
+    onOpenEmbeddedSettings: () -> Unit
+) {
+    val backgroundColor = if (isSystemInDarkTheme()) {
+        ComposeColor.Black
+    } else {
+        ComposeColor(0xFFF7F7F7)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backgroundColor)
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = MiuixIcons.Info,
+                    contentDescription = null,
+                    tint = MiuixTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .width(72.dp)
+                        .height(72.dp)
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = stringResource(
+                        if (isActive) {
+                            R.string.activation_active_title
+                        } else {
+                            R.string.activation_required_title
+                        }
+                    ),
+                    style = MiuixTheme.textStyles.headline1,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = stringResource(
+                        if (isActive) {
+                            R.string.activation_active_summary
+                        } else {
+                            R.string.activation_required_summary
+                        }
+                    ),
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.main,
+                    textAlign = TextAlign.Center
+                )
+                if (isActive) {
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        insideMargin = PaddingValues(0.dp)
+                    ) {
+                        BasicComponent(
+                            title = stringResource(R.string.activation_open_embedded_settings),
+                            titleColor = BasicComponentDefaults.titleColor(
+                                color = MiuixTheme.colorScheme.primary
+                            ),
+                            onClick = onOpenEmbeddedSettings
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun WeTypeSettingsApp(
-    onRestartWeType: () -> Unit
+internal fun WeTypeSettingsApp(
+    settingsContext: Context
 ) {
     val darkMode = isSystemInDarkTheme()
     MiuixTheme(colors = if (darkMode) darkColorScheme() else lightColorScheme()) {
         SyncSystemBars(darkMode = darkMode)
-        WeTypeSettingsScreen(onRestartWeType = onRestartWeType)
+        WeTypeSettingsScreen(
+            settingsContext = settingsContext
+        )
     }
 }
 
@@ -156,6 +313,9 @@ private fun SyncSystemBars(darkMode: Boolean) {
 
     SideEffect {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
+        val systemBarColor = if (darkMode) Color.BLACK else Color.parseColor("#F7F7F7")
+        window.statusBarColor = systemBarColor
+        window.navigationBarColor = systemBarColor
         val insetsController = WindowCompat.getInsetsController(window, view)
         insetsController.isAppearanceLightStatusBars = !darkMode
         insetsController.isAppearanceLightNavigationBars = !darkMode
@@ -164,12 +324,27 @@ private fun SyncSystemBars(darkMode: Boolean) {
 
 @Composable
 private fun WeTypeSettingsScreen(
-    onRestartWeType: () -> Unit
+    settingsContext: Context
 ) {
     val context = LocalContext.current
-    val snapshot = remember { WeTypeSettings.readSnapshot(context) }
+    val preferencesContext = remember(settingsContext) { settingsContext }
+    val isEmbeddedHost = remember(settingsContext) {
+        (context.applicationContext ?: context).packageName != "com.xposed.wetypehook"
+    }
+    val snapshot = remember(preferencesContext) { WeTypeSettings.readSnapshot(preferencesContext) }
     var activationStatus by remember {
-        mutableStateOf(ModuleActivationTracker.readStatus(context))
+        mutableStateOf(
+            if (isEmbeddedHost) {
+                ModuleActivationTracker.ActivationStatus(
+                    isActive = true,
+                    sourcePackage = null,
+                    sourceProcess = null,
+                    lastActivatedAt = System.currentTimeMillis()
+                )
+            } else {
+                ModuleActivationTracker.readStatus(preferencesContext)
+            }
+        )
     }
     val systemDarkMode = isSystemInDarkTheme()
     val appearanceGroups = remember { WeTypeAppearanceColorGroups.groups }
@@ -244,7 +419,7 @@ private fun WeTypeSettingsScreen(
 
     fun saveSettings(showSavedToast: Boolean = true) {
         WeTypeSettings.save(
-            context = context,
+            context = preferencesContext,
             lightColor = lightColor,
             darkColor = darkColor,
             blurRadius = blurRadius,
@@ -261,7 +436,6 @@ private fun WeTypeSettingsScreen(
         if (showSavedToast) {
             Toast.makeText(context, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         }
-        onRestartWeType()
     }
 
     fun restoreDefaults() {
@@ -283,12 +457,14 @@ private fun WeTypeSettingsScreen(
         saveSettings(showSavedToast = false)
     }
 
-    DisposableEffect(context) {
-        val listener = ModuleActivationTracker.registerStatusListener(context) {
-            activationStatus = it
-        }
-        onDispose {
-            ModuleActivationTracker.unregisterStatusListener(context, listener)
+    if (!isEmbeddedHost) {
+        DisposableEffect(preferencesContext) {
+            val listener = ModuleActivationTracker.registerStatusListener(preferencesContext) {
+                activationStatus = it
+            }
+            onDispose {
+                ModuleActivationTracker.unregisterStatusListener(preferencesContext, listener)
+            }
         }
     }
 
@@ -296,6 +472,9 @@ private fun WeTypeSettingsScreen(
     val scrollBehavior = MiuixScrollBehavior(state = rememberTopAppBarState())
 
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MiuixTheme.colorScheme.background),
         topBar = {
             TopAppBar(
                 title = stringResource(R.string.settings_title),
