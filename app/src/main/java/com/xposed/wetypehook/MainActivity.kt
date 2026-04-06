@@ -185,6 +185,12 @@ private fun WeTypeSettingsScreen(
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
     var keyOpacity by rememberSaveable { mutableIntStateOf(snapshot.keyOpacity) }
     var keyColorHookAlpha by rememberSaveable { mutableIntStateOf(snapshot.keyColorHookAlpha) }
+    var candidateBackgroundCorner by rememberSaveable {
+        mutableIntStateOf(snapshot.candidateBackgroundCorner.roundToInt())
+    }
+    var candidatePinyinLeftMarginDp by rememberSaveable {
+        mutableStateOf(snapshot.candidatePinyinLeftMarginDp.toString())
+    }
     val appearanceGroupColors = rememberSaveable(
         saver = listSaver(
             save = { it.toList() },
@@ -247,6 +253,9 @@ private fun WeTypeSettingsScreen(
             edgeHighlightIntensity = edgeHighlightIntensity,
             keyOpacity = keyOpacity,
             keyColorHookAlpha = keyColorHookAlpha,
+            candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
+            candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.toIntOrNull()
+                ?: WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
             appearanceColors = currentAppearanceColors()
         )
         if (showSavedToast) {
@@ -264,6 +273,8 @@ private fun WeTypeSettingsScreen(
         edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
         keyOpacity = WeTypeSettings.DEFAULT_KEY_OPACITY
         keyColorHookAlpha = WeTypeSettings.DEFAULT_KEY_COLOR_HOOK_ALPHA
+        candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
+        candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
         appearanceGroups.forEachIndexed { index, group ->
             appearanceGroupColors[index] = group.defaultColor
         }
@@ -500,14 +511,6 @@ private fun WeTypeSettingsScreen(
                             onValueChange = { keyOpacity = it }
                         )
 
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_key_color_hook_alpha_title),
-                            value = keyColorHookAlpha,
-                            max = 255,
-                            onValueChange = { keyColorHookAlpha = it }
-                        )
-
-
                         appearanceSectionGroups.forEach { group ->
                             val index = groupIndex(group.id)
                             AppearanceColorGroupEditor(
@@ -521,6 +524,31 @@ private fun WeTypeSettingsScreen(
                                 onColorChange = { appearanceGroupColors[index] = it }
                             )
                         }
+
+                        NumericTextSettingItem(
+                            title = stringResource(R.string.settings_candidate_pinyin_margin_title),
+                            summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
+                            value = candidatePinyinLeftMarginDp,
+                            onValueChange = { input ->
+                                if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                                    candidatePinyinLeftMarginDp = input
+                                }
+                            }
+                        )
+
+                        SliderPreferenceItem(
+                            title = stringResource(R.string.settings_key_color_hook_alpha_title),
+                            value = keyColorHookAlpha,
+                            max = 255,
+                            onValueChange = { keyColorHookAlpha = it }
+                        )
+
+                        SliderPreferenceItem(
+                            title = stringResource(R.string.settings_candidate_corner_title),
+                            value = candidateBackgroundCorner,
+                            max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
+                            onValueChange = { candidateBackgroundCorner = it }
+                        )
                     }
                 }
             }
@@ -955,6 +983,39 @@ private fun KeyColorEditor(
 }
 
 @Composable
+private fun NumericTextSettingItem(
+    title: String,
+    summary: String,
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = title,
+            style = MiuixTheme.textStyles.main
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = summary,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MiuixTheme.textStyles.body2
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        TextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            label = "DP"
+        )
+    }
+}
+
+@Composable
 private fun SliderPreferenceItem(
     title: String,
     value: Int,
@@ -1054,6 +1115,13 @@ private fun parseRgbColor(input: String): Int? {
     val body = input.trim().removePrefix("#")
     if (body.length != 6) return null
     return runCatching { Color.parseColor("#$body") }.getOrNull()
+}
+
+private fun sanitizeIntegerInput(input: String, maxLength: Int): String? {
+    val trimmed = input.trim()
+    if (trimmed.length > maxLength) return null
+    if (trimmed.isNotEmpty() && !trimmed.matches(Regex("^\\d*$"))) return null
+    return trimmed
 }
 
 private fun isLightColor(color: Int): Boolean {

@@ -62,6 +62,10 @@
     <string name="settings_dark_key_color_title">Dark mode key color</string>
     <string name="settings_key_color_group_summary">Use the slider below to adjust opacity · %1$d / 255 opacity · %2$d mapped entries</string>
     <string name="settings_key_color_input_label">Key color</string>
+    <string name="settings_candidate_corner_title">Candidate background corner</string>
+    <string name="settings_candidate_corner_desc">Edit the first candidate background corner radius.</string>
+    <string name="settings_candidate_pinyin_margin_title">Candidate pinyin left margin</string>
+    <string name="settings_candidate_pinyin_margin_desc">Edit the left padding of the pinyin area.</string>
 
     <string name="settings_save_title">Save settings</string>
     <string name="settings_save_desc">Write the current configuration to the module</string>

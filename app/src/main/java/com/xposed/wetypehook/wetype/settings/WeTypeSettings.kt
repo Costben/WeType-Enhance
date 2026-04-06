@@ -16,6 +16,8 @@ object WeTypeSettings {
     private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
     private const val KEY_KEY_OPACITY = "key_opacity"
     private const val KEY_KEY_COLOR_HOOK_ALPHA = "key_color_hook_alpha"
+    private const val KEY_CANDIDATE_BACKGROUND_CORNER = "candidate_background_corner"
+    private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
 
     const val DEFAULT_LIGHT_COLOR = 0xA0D1D3D8.toInt()
@@ -27,6 +29,9 @@ object WeTypeSettings {
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 50
     const val DEFAULT_KEY_OPACITY = 200
     const val DEFAULT_KEY_COLOR_HOOK_ALPHA = 255
+    const val DEFAULT_CANDIDATE_BACKGROUND_CORNER = 60f
+    const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
+    const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
 
     private val xposedPrefsLock = Any()
 
@@ -46,6 +51,8 @@ object WeTypeSettings {
         val edgeHighlightIntensity: Int,
         val keyOpacity: Int,
         val keyColorHookAlpha: Int,
+        val candidateBackgroundCorner: Float,
+        val candidatePinyinLeftMarginDp: Int,
         val appearanceColors: Map<String, Int>
     )
 
@@ -65,6 +72,12 @@ object WeTypeSettings {
 
     fun getKeyColorHookAlpha(context: Context): Int = readSnapshot(context).keyColorHookAlpha
 
+    fun getCandidateBackgroundCorner(context: Context): Float =
+        readSnapshot(context).candidateBackgroundCorner
+
+    fun getCandidatePinyinLeftMarginDp(context: Context): Int =
+        readSnapshot(context).candidatePinyinLeftMarginDp
+
     fun getAppearanceColors(context: Context): Map<String, Int> = readSnapshot(context).appearanceColors
 
     fun initXposed() {
@@ -81,6 +94,8 @@ object WeTypeSettings {
         edgeHighlightIntensity: Int,
         keyOpacity: Int,
         keyColorHookAlpha: Int,
+        candidateBackgroundCorner: Float,
+        candidatePinyinLeftMarginDp: Int,
         appearanceColors: Map<String, Int>
     ) {
         val editor = appPreferences(context)
@@ -93,6 +108,14 @@ object WeTypeSettings {
             .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity.coerceIn(0, 200))
             .putInt(KEY_KEY_OPACITY, keyOpacity.coerceIn(0, 255))
             .putInt(KEY_KEY_COLOR_HOOK_ALPHA, keyColorHookAlpha.coerceIn(0, 255))
+            .putFloat(
+                KEY_CANDIDATE_BACKGROUND_CORNER,
+                candidateBackgroundCorner.coerceIn(0f, MAX_CANDIDATE_BACKGROUND_CORNER.toFloat())
+            )
+            .putInt(
+                KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
+                candidatePinyinLeftMarginDp.coerceIn(0, 64)
+            )
         WeTypeAppearanceColorGroups.groups.forEach { group ->
             editor.putInt(
                 "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
@@ -126,6 +149,12 @@ object WeTypeSettings {
     fun getKeyOpacityXposed(context: Context): Int = readSnapshotXposed().keyOpacity
 
     fun getKeyColorHookAlphaXposed(): Int = readSnapshotXposed().keyColorHookAlpha
+
+    fun getCandidateBackgroundCornerXposed(): Float =
+        readSnapshotXposed().candidateBackgroundCorner
+
+    fun getCandidatePinyinLeftMarginDpXposed(): Int =
+        readSnapshotXposed().candidatePinyinLeftMarginDp
 
     fun getAppearanceColorXposed(groupId: String): Int =
         readSnapshotXposed().appearanceColors[groupId]
@@ -187,6 +216,14 @@ object WeTypeSettings {
             ),
             keyOpacity = getInt(KEY_KEY_OPACITY, DEFAULT_KEY_OPACITY),
             keyColorHookAlpha = getInt(KEY_KEY_COLOR_HOOK_ALPHA, DEFAULT_KEY_COLOR_HOOK_ALPHA),
+            candidateBackgroundCorner = getFloat(
+                KEY_CANDIDATE_BACKGROUND_CORNER,
+                DEFAULT_CANDIDATE_BACKGROUND_CORNER
+            ).coerceIn(0f, MAX_CANDIDATE_BACKGROUND_CORNER.toFloat()),
+            candidatePinyinLeftMarginDp = getInt(
+                KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
+                DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
+            ).coerceIn(0, 64),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 group.id to getInt(
                     "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
@@ -205,6 +242,8 @@ object WeTypeSettings {
         edgeHighlightIntensity = DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
         keyOpacity = DEFAULT_KEY_OPACITY,
         keyColorHookAlpha = DEFAULT_KEY_COLOR_HOOK_ALPHA,
+        candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
+        candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors()
     )
 }

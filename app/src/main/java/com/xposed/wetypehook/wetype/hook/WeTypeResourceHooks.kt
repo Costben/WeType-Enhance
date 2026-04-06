@@ -9,6 +9,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.util.TypedValue
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import com.github.kyuubiran.ezxhelper.utils.Log
 import com.github.kyuubiran.ezxhelper.utils.getObjectAs
 import com.github.kyuubiran.ezxhelper.utils.hookAfter
@@ -20,10 +23,17 @@ import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.util.Collections
 import java.util.WeakHashMap
+import kotlin.math.roundToInt
 
 internal object WeTypeResourceHooks {
+    private const val CANDIDATE_LAYOUT_NAME = "c2"
+    private const val CANDIDATE_PINYIN_CONTAINER_NAME = "a7j"
+
     private val typedArrayAttributeCache = Collections.synchronizedMap(
         WeakHashMap<TypedArray, IntArray>()
+    )
+    private val candidatePinyinMarginListeners = Collections.synchronizedMap(
+        WeakHashMap<View, View.OnLayoutChangeListener>()
     )
 
     fun hookFont(
@@ -285,6 +295,127 @@ internal object WeTypeResourceHooks {
             Log.i("Failed: Hook WeType self-draw key colors")
             Log.i(it)
         }
+    }
+
+    fun hookCandidateBackgroundCorner() {
+        runCatching {
+            val candidateViewClass = loadClassOrNull(
+                "com.tencent.wetype.plugin.hld.candidate.selfdraw.selfview.d"
+            ) ?: error("Failed to load candidate self view")
+            val cornerField = generateSequence(candidateViewClass as Class<*>?) { it.superclass }
+                .mapNotNull { clazz ->
+                    runCatching { clazz.getDeclaredField("g") }.getOrNull()
+                }
+                .firstOrNull()
+                ?.also { it.isAccessible = true }
+                ?: error("Failed to find candidate corner field g")
+
+            candidateViewClass.declaredMethods
+                .filter { it.name == "e" && it.parameterTypes.size == 3 }
+                .forEach { method ->
+                    method.hookBefore { param ->
+                        val radius = WeTypeSettings.getCandidateBackgroundCornerXposed().roundToInt()
+                        cornerField.setInt(param.thisObject, radius)
+                    }
+                }
+            Log.i("Success: Hook candidate background corner")
+        }.onFailure {
+            Log.i("Failed: Hook candidate background corner")
+            Log.i(it)
+        }
+    }
+
+    fun hookCandidatePinyinLeftMargin() {
+        runCatching {
+            LayoutInflater::class.java.getMethod(
+                "inflate",
+                Int::class.javaPrimitiveType,
+                ViewGroup::class.java
+            ).hookAfter { param ->
+                hookCandidatePinyinLayoutInflation(param.args[0] as? Int, param.result as? View)
+            }
+            LayoutInflater::class.java.getMethod(
+                "inflate",
+                Int::class.javaPrimitiveType,
+                ViewGroup::class.java,
+                Boolean::class.javaPrimitiveType
+            ).hookAfter { param ->
+                val inflatedRoot = (param.result as? View) ?: (param.args[1] as? View)
+                hookCandidatePinyinLayoutInflation(param.args[0] as? Int, inflatedRoot)
+            }
+            Log.i("Success: Hook candidate pinyin left margin")
+        }.onFailure {
+            Log.i("Failed: Hook candidate pinyin left margin")
+            Log.i(it)
+        }
+    }
+
+    private fun hookCandidatePinyinLayoutInflation(layoutResId: Int?, inflatedRoot: View?) {
+        if (layoutResId == null || inflatedRoot == null) return
+        if (!isLayoutResourceName(inflatedRoot.resources, layoutResId, CANDIDATE_LAYOUT_NAME)) return
+        val candidatePinyinContainer = findViewByEntryName(
+            inflatedRoot,
+            CANDIDATE_PINYIN_CONTAINER_NAME
+        ) ?: return
+        applyCandidatePinyinLeftMargin(candidatePinyinContainer)
+        ensureCandidatePinyinMarginSync(candidatePinyinContainer)
+    }
+
+    private fun ensureCandidatePinyinMarginSync(view: View) {
+        if (candidatePinyinMarginListeners.containsKey(view)) return
+        val layoutListener = View.OnLayoutChangeListener { changedView, _, _, _, _, _, _, _, _ ->
+            applyCandidatePinyinLeftMargin(changedView)
+        }
+        val attachStateListener = object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                applyCandidatePinyinLeftMargin(v)
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                candidatePinyinMarginListeners.remove(v)?.also { v.removeOnLayoutChangeListener(it) }
+                v.removeOnAttachStateChangeListener(this)
+            }
+        }
+        view.addOnLayoutChangeListener(layoutListener)
+        view.addOnAttachStateChangeListener(attachStateListener)
+        candidatePinyinMarginListeners[view] = layoutListener
+    }
+
+    private fun isLayoutResourceName(resources: Resources, resId: Int, expectedName: String): Boolean {
+        val resourceType = runCatching { resources.getResourceTypeName(resId) }.getOrNull() ?: return false
+        if (resourceType != "layout") return false
+        val entryName = runCatching { resources.getResourceEntryName(resId) }.getOrNull() ?: return false
+        return entryName == expectedName
+    }
+
+    private fun findViewByEntryName(root: View, expectedName: String): View? {
+        val viewId = root.id
+        if (viewId != View.NO_ID) {
+            val entryName = runCatching {
+                root.resources.getResourceEntryName(viewId)
+            }.getOrNull()
+            if (entryName == expectedName) return root
+        }
+        val group = root as? ViewGroup ?: return null
+        for (index in 0 until group.childCount) {
+            findViewByEntryName(group.getChildAt(index), expectedName)?.also { return it }
+        }
+        return null
+    }
+
+    private fun applyCandidatePinyinLeftMargin(view: View) {
+        val startPadding = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            WeTypeSettings.getCandidatePinyinLeftMarginDpXposed().toFloat(),
+            view.resources.displayMetrics
+        ).roundToInt()
+        if (view.paddingStart == startPadding) return
+        view.setPaddingRelative(
+            startPadding,
+            view.paddingTop,
+            view.paddingEnd,
+            view.paddingBottom
+        )
     }
 
     private fun replaceColor(
