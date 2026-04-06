@@ -86,7 +86,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
@@ -307,11 +307,11 @@ private fun WeTypeSettingsScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = ::restoreDefaults
+                        onClick = { saveSettings() }
                     ) {
                         Icon(
-                            imageVector = MiuixIcons.Refresh,
-                            contentDescription = stringResource(R.string.settings_reset_title)
+                            imageVector = MiuixIcons.Ok,
+                            contentDescription = stringResource(R.string.settings_save_title)
                         )
                     }
                 },
@@ -564,9 +564,9 @@ private fun WeTypeSettingsScreen(
                 ) {
                     Column {
                         ArrowPreference(
-                            title = stringResource(R.string.settings_save_title),
-                            summary = stringResource(R.string.settings_save_desc),
-                            onClick = { saveSettings() }
+                            title = stringResource(R.string.settings_reset_title),
+                            summary = stringResource(R.string.settings_reset_desc),
+                            onClick = ::restoreDefaults
                         )
 
                         HorizontalDivider()
