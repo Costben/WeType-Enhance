@@ -9,6 +9,7 @@ import android.content.res.Resources
 import android.graphics.Color
 import android.view.View
 import android.view.inputmethod.InputMethodManager
+import androidx.core.graphics.toColorInt
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
 import com.github.kyuubiran.ezxhelper.utils.findMethod
@@ -44,8 +45,8 @@ private val WETYPE_COLOR_REPLACEMENTS = mapOf(
     "k9" to Color.TRANSPARENT,
     "ng" to Color.TRANSPARENT,
     "pq" to Color.TRANSPARENT,
-    "hf" to Color.parseColor("#bffffff"),
-    "l_" to Color.parseColor("#26ffffff")
+    "hf" to "#ffffff".toColorInt(),
+    "l_" to "#262626".toColorInt()
 )
 private val WETYPE_DRAWABLE_REPLACEMENTS = mapOf(
     "ic" to R.drawable.wetype_ic,

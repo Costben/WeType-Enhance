@@ -69,7 +69,7 @@ dependencies {
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.0")
     implementation("top.yukonga.miuix.kmp:miuix-core-android:0.9.0")
     implementation("top.yukonga.miuix.kmp:miuix-shapes-android:0.9.0")
-    implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.8.6") {
+    implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.9.0") {
         exclude(group = "top.yukonga.miuix.kmp", module = "miuix-android")
     }
     implementation("io.github.kyant0:capsule:2.1.3")
