@@ -13,11 +13,11 @@ import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import androidx.core.graphics.drawable.toDrawable
-import com.github.kyuubiran.ezxhelper.utils.Log
-import com.github.kyuubiran.ezxhelper.utils.getObjectAs
-import com.github.kyuubiran.ezxhelper.utils.hookAfter
-import com.github.kyuubiran.ezxhelper.utils.invokeMethodAs
-import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
+import com.xposed.wetypehook.xposed.Log
+import com.xposed.wetypehook.xposed.getObjectAs
+import com.xposed.wetypehook.xposed.hookAfter
+import com.xposed.wetypehook.xposed.invokeMethodAs
+import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath

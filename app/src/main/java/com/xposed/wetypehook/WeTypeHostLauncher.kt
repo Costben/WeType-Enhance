@@ -14,7 +14,7 @@ import android.view.Window
 import android.view.WindowManager
 import androidx.activity.ComponentDialog
 import androidx.compose.ui.platform.ComposeView
-import com.github.kyuubiran.ezxhelper.utils.Log
+import com.xposed.wetypehook.xposed.Log
 import java.util.WeakHashMap
 
 private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"

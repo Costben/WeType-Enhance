@@ -7,17 +7,20 @@ import android.content.res.Resources
 import android.content.res.TypedArray
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import com.github.kyuubiran.ezxhelper.utils.Log
-import com.github.kyuubiran.ezxhelper.utils.getObjectAs
-import com.github.kyuubiran.ezxhelper.utils.hookAfter
-import com.github.kyuubiran.ezxhelper.utils.hookBefore
-import com.github.kyuubiran.ezxhelper.utils.hookReturnConstant
-import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
+import com.xposed.wetypehook.xposed.Log
+import com.xposed.wetypehook.xposed.getObjectAs
+import com.xposed.wetypehook.xposed.hookAfter
+import com.xposed.wetypehook.xposed.hookBefore
+import com.xposed.wetypehook.xposed.hookReturnConstant
+import com.xposed.wetypehook.xposed.invokeMethodAs
+import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -28,6 +31,8 @@ import kotlin.math.roundToInt
 internal object WeTypeResourceHooks {
     private const val CANDIDATE_LAYOUT_NAME = "c2"
     private const val CANDIDATE_PINYIN_CONTAINER_NAME = "a7j"
+    private const val SETTING_KEYBOARD_TYPE_VIEW_CLASS =
+        "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingKeyboardTypeView"
 
     private val typedArrayAttributeCache = Collections.synchronizedMap(
         WeakHashMap<TypedArray, IntArray>()
@@ -350,6 +355,23 @@ internal object WeTypeResourceHooks {
         }
     }
 
+    fun hookSettingKeyboardOpaqueBackground() {
+        runCatching {
+            val settingKeyboardViewClass = loadClassOrNull(SETTING_KEYBOARD_TYPE_VIEW_CLASS)
+                ?: error("Failed to load S10SettingKeyboardTypeView")
+            settingKeyboardViewClass.getMethod(
+                "k",
+                Boolean::class.javaPrimitiveType
+            ).hookAfter { param ->
+                applyOpaqueSettingKeyboardBackground(param.thisObject)
+            }
+            Log.i("Success: Hook WeType setting keyboard opaque background")
+        }.onFailure {
+            Log.i("Failed: Hook WeType setting keyboard opaque background")
+            Log.i(it)
+        }
+    }
+
     private fun hookCandidatePinyinLayoutInflation(layoutResId: Int?, inflatedRoot: View?) {
         if (layoutResId == null || inflatedRoot == null) return
         if (!isLayoutResourceName(inflatedRoot.resources, layoutResId, CANDIDATE_LAYOUT_NAME)) return
@@ -416,6 +438,48 @@ internal object WeTypeResourceHooks {
             view.paddingEnd,
             view.paddingBottom
         )
+    }
+
+    private fun applyOpaqueSettingKeyboardBackground(target: Any?) {
+        target ?: return
+        listOf(
+            runCatching { target.invokeMethodAs<View>("getSettingBaseGridViewBg") }.getOrNull(),
+            runCatching { target.invokeMethodAs<View>("getBelowBgFl") }.getOrNull()
+        ).forEach { view ->
+            view ?: return@forEach
+            forceOpaqueBackground(view)
+            view.post { forceOpaqueBackground(view) }
+        }
+    }
+
+    private fun forceOpaqueBackground(view: View) {
+        val background = view.background ?: return
+        val mutatedBackground = background.mutate()
+        val targetColor = resolveSettingKeyboardBackgroundColor(view)
+        when (mutatedBackground) {
+            is ColorDrawable -> {
+                mutatedBackground.color = targetColor
+                view.background = mutatedBackground
+            }
+            is GradientDrawable -> {
+                mutatedBackground.setColor(targetColor)
+                mutatedBackground.alpha = 255
+                view.background = mutatedBackground
+            }
+            else -> {
+                mutatedBackground.setTint(targetColor)
+                mutatedBackground.alpha = 255
+                view.background = mutatedBackground
+            }
+        }
+        view.invalidate()
+    }
+
+    private fun resolveSettingKeyboardBackgroundColor(view: View): Int {
+        val isDarkMode =
+            view.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+        return if (isDarkMode) 0xFF262626.toInt() else Color.WHITE
     }
 
     private fun replaceColor(
