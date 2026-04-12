@@ -31,8 +31,10 @@ import kotlin.math.roundToInt
 internal object WeTypeResourceHooks {
     private const val CANDIDATE_LAYOUT_NAME = "c2"
     private const val CANDIDATE_PINYIN_CONTAINER_NAME = "a7j"
-    private const val SETTING_KEYBOARD_TYPE_VIEW_CLASS =
-        "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingKeyboardTypeView"
+    private val SETTING_OPAQUE_BACKGROUND_VIEW_CLASSES = listOf(
+        "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingKeyboardTypeView",
+        "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingCustomToolbarView"
+    )
 
     private val typedArrayAttributeCache = Collections.synchronizedMap(
         WeakHashMap<TypedArray, IntArray>()
@@ -356,19 +358,26 @@ internal object WeTypeResourceHooks {
     }
 
     fun hookSettingKeyboardOpaqueBackground() {
-        runCatching {
-            val settingKeyboardViewClass = loadClassOrNull(SETTING_KEYBOARD_TYPE_VIEW_CLASS)
-                ?: error("Failed to load S10SettingKeyboardTypeView")
-            settingKeyboardViewClass.getMethod(
-                "k",
-                Boolean::class.javaPrimitiveType
-            ).hookAfter { param ->
-                applyOpaqueSettingKeyboardBackground(param.thisObject)
+        SETTING_OPAQUE_BACKGROUND_VIEW_CLASSES.forEach { className ->
+            runCatching {
+                val targetClass = loadClassOrNull(className)
+                    ?: error("Failed to load $className")
+                targetClass.getMethod(
+                    "k",
+                    Boolean::class.javaPrimitiveType
+                ).hookAfter { param ->
+                    applyOpaqueSettingKeyboardBackground(param.thisObject)
+                }
+                runCatching {
+                    targetClass.getMethod("onAttachedToWindow").hookAfter { param ->
+                        applyOpaqueSettingKeyboardBackground(param.thisObject)
+                    }
+                }
+                Log.i("Success: Hook opaque background for $className")
+            }.onFailure {
+                Log.i("Failed: Hook opaque background for $className")
+                Log.i(it)
             }
-            Log.i("Success: Hook WeType setting keyboard opaque background")
-        }.onFailure {
-            Log.i("Failed: Hook WeType setting keyboard opaque background")
-            Log.i(it)
         }
     }
 
@@ -479,7 +488,7 @@ internal object WeTypeResourceHooks {
         val isDarkMode =
             view.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
                 android.content.res.Configuration.UI_MODE_NIGHT_YES
-        return if (isDarkMode) 0xFF262626.toInt() else Color.WHITE
+        return if (isDarkMode) 0xFF262626.toInt() else 0xFFD1D3D8.toInt()
     }
 
     private fun replaceColor(
