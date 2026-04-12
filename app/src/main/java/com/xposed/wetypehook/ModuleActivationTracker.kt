@@ -33,6 +33,29 @@ object ModuleActivationTracker {
         val lastActivatedAt: Long
     )
 
+    fun resolveStatusForUi(context: Context): ActivationStatus {
+        val appContext = context.applicationContext ?: context
+        if (appContext.packageName == MODULE_PACKAGE_NAME) {
+            return readStatus(appContext)
+        }
+        return ActivationStatus(
+            isActive = true,
+            sourcePackage = appContext.packageName,
+            sourceProcess = resolveProcessName(appContext),
+            lastActivatedAt = System.currentTimeMillis()
+        )
+    }
+
+    fun syncActivationFromUiContext(context: Context) {
+        val appContext = context.applicationContext ?: context
+        if (appContext.packageName == MODULE_PACKAGE_NAME) return
+        notifyActivationFromHook(
+            context = appContext,
+            sourcePackage = appContext.packageName,
+            sourceProcess = resolveProcessName(appContext)
+        )
+    }
+
     fun notifyActivationFromHook(
         context: Context,
         sourcePackage: String,
@@ -101,6 +124,10 @@ object ModuleActivationTracker {
         val appContext = context.applicationContext ?: context
         return appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     }
+
+    private fun resolveProcessName(context: Context): String? = runCatching {
+        context.applicationInfo.processName ?: context.packageName
+    }.getOrNull()
 }
 
 class ModuleActivationReceiver : BroadcastReceiver() {

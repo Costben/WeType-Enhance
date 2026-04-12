@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Color
 import android.view.View
+import android.inputmethodservice.InputMethodService
 import android.view.inputmethod.InputMethodManager
 import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
@@ -217,14 +218,26 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             name == "attach" && parameterTypes.sameAs(Context::class.java)
         }.hookAfter { param ->
             val context = param.args[0] as? Context ?: return@hookAfter
-            ModuleActivationTracker.notifyActivationFromHook(
-                context = context,
-                sourcePackage = sourcePackage,
-                sourceProcess = runCatching {
-                    context.applicationInfo.processName ?: context.packageName
-                }.getOrNull()
-            )
+            notifyActivationHeartbeat(context, sourcePackage)
         }
+
+        findMethod("android.inputmethodservice.InputMethodService") {
+            name == "onStartInputView" && parameterTypes.size == 2
+        }.hookAfter { param ->
+            val service = param.thisObject as? InputMethodService ?: return@hookAfter
+            if (service.packageName != sourcePackage) return@hookAfter
+            notifyActivationHeartbeat(service, sourcePackage)
+        }
+    }
+
+    private fun notifyActivationHeartbeat(context: Context, sourcePackage: String) {
+        ModuleActivationTracker.notifyActivationFromHook(
+            context = context,
+            sourcePackage = sourcePackage,
+            sourceProcess = runCatching {
+                context.applicationInfo.processName ?: context.packageName
+            }.getOrNull()
+        )
     }
 
     private fun hookWeTypeFont() {

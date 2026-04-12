@@ -26,7 +26,10 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CornerSize
@@ -42,6 +45,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -54,6 +59,7 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -95,9 +101,20 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 const val EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS = "com.xposed.wetypehook.extra.OPEN_WETYPE_EMBEDDED_SETTINGS"
+private const val ACTIVATION_HEARTBEAT_WINDOW_MS = 4_000L
+private const val ACTIVATION_KEYBOARD_RETRY_COUNT = 3
+private const val ACTIVATION_KEYBOARD_RETRY_DELAY_MS = 450L
+
+private fun ModuleActivationTracker.ActivationStatus.hasFreshHeartbeat(
+    now: Long = System.currentTimeMillis()
+): Boolean {
+    if (!isActive || lastActivatedAt <= 0L) return false
+    return now - lastActivatedAt <= ACTIVATION_HEARTBEAT_WINDOW_MS
+}
 
 class MainActivity : ComponentActivity() {
     private var hasAttemptedEmbeddedLaunch = false
@@ -113,17 +130,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        activationStatus = ModuleActivationTracker.readStatus(this)
+        activationStatus = ModuleActivationTracker.resolveStatusForUi(this)
         activationStatusListener = ModuleActivationTracker.registerStatusListener(this) { status ->
             activationStatus = status
-            if (!status.isActive) return@registerStatusListener
+            if (!status.hasFreshHeartbeat()) return@registerStatusListener
             runOnUiThread {
                 launchEmbeddedSettingsAndFinish()
             }
         }
         setContent {
             ActivationEntryApp(
-                isActive = activationStatus.isActive,
+                isActive = activationStatus.hasFreshHeartbeat(),
                 onOpenEmbeddedSettings = ::launchEmbeddedSettingsAndFinish
             )
         }
@@ -132,7 +149,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        activationStatus = ModuleActivationTracker.readStatus(this)
+        activationStatus = ModuleActivationTracker.resolveStatusForUi(this)
         launchEmbeddedSettingsIfActive()
     }
 
@@ -145,7 +162,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchEmbeddedSettingsIfActive(): Boolean {
-        if (!hasAttemptedEmbeddedLaunch && activationStatus.isActive) {
+        if (!hasAttemptedEmbeddedLaunch && activationStatus.hasFreshHeartbeat()) {
             return launchEmbeddedSettingsAndFinish()
         }
         return false
@@ -218,17 +235,41 @@ private fun ActivationEntryScreen(
     isActive: Boolean,
     onOpenEmbeddedSettings: () -> Unit
 ) {
+    var probeText by rememberSaveable { mutableStateOf("") }
+    var isCheckingHeartbeat by rememberSaveable { mutableStateOf(!isActive) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(isActive) {
+        if (isActive) {
+            isCheckingHeartbeat = false
+            return@LaunchedEffect
+        }
+
+        isCheckingHeartbeat = true
+        repeat(ACTIVATION_KEYBOARD_RETRY_COUNT) {
+            delay(ACTIVATION_KEYBOARD_RETRY_DELAY_MS)
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+        isCheckingHeartbeat = false
+    }
+
     val backgroundColor = if (isSystemInDarkTheme()) {
         ComposeColor.Black
     } else {
         ComposeColor(0xFFF7F7F7)
     }
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(backgroundColor)
-            .padding(20.dp),
-        contentAlignment = Alignment.Center
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -273,23 +314,54 @@ private fun ActivationEntryScreen(
                     style = MiuixTheme.textStyles.main,
                     textAlign = TextAlign.Center
                 )
-                if (isActive) {
-                    Spacer(modifier = Modifier.height(18.dp))
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        insideMargin = PaddingValues(0.dp)
-                    ) {
-                        BasicComponent(
-                            title = stringResource(R.string.activation_open_embedded_settings),
-                            titleColor = BasicComponentDefaults.titleColor(
-                                color = MiuixTheme.colorScheme.primary
-                            ),
-                            onClick = onOpenEmbeddedSettings
-                        )
-                    }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            if (isActive) {
+                BasicComponent(
+                    title = stringResource(R.string.activation_open_embedded_settings),
+                    titleColor = BasicComponentDefaults.titleColor(
+                        color = MiuixTheme.colorScheme.primary
+                    ),
+                    onClick = onOpenEmbeddedSettings
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 20.dp)
+                ) {
+                    Text(
+                        text = stringResource(
+                            if (isCheckingHeartbeat) {
+                                R.string.activation_detecting_summary
+                            } else {
+                                R.string.activation_probe_summary
+                            }
+                        ),
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        style = MiuixTheme.textStyles.body2
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TextField(
+                        value = probeText,
+                        onValueChange = { probeText = it },
+                        label = stringResource(R.string.activation_probe_label),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                    )
                 }
             }
         }
+
+
     }
 }
 
@@ -332,19 +404,8 @@ private fun WeTypeSettingsScreen(
         (context.applicationContext ?: context).packageName != "com.xposed.wetypehook"
     }
     val snapshot = remember(preferencesContext) { WeTypeSettings.readSnapshot(preferencesContext) }
-    var activationStatus by remember {
-        mutableStateOf(
-            if (isEmbeddedHost) {
-                ModuleActivationTracker.ActivationStatus(
-                    isActive = true,
-                    sourcePackage = null,
-                    sourceProcess = null,
-                    lastActivatedAt = System.currentTimeMillis()
-                )
-            } else {
-                ModuleActivationTracker.readStatus(preferencesContext)
-            }
-        )
+    var activationStatus by remember(preferencesContext) {
+        mutableStateOf(ModuleActivationTracker.resolveStatusForUi(preferencesContext))
     }
     val systemDarkMode = isSystemInDarkTheme()
     val appearanceGroups = remember { WeTypeAppearanceColorGroups.groups }
@@ -457,7 +518,11 @@ private fun WeTypeSettingsScreen(
         saveSettings(showSavedToast = false)
     }
 
-    if (!isEmbeddedHost) {
+    if (isEmbeddedHost) {
+        LaunchedEffect(preferencesContext) {
+            ModuleActivationTracker.syncActivationFromUiContext(preferencesContext)
+        }
+    } else {
         DisposableEffect(preferencesContext) {
             val listener = ModuleActivationTracker.registerStatusListener(preferencesContext) {
                 activationStatus = it

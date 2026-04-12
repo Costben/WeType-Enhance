@@ -83,6 +83,9 @@
     <string name="settings_reset_toast">Defaults restored</string>
     <string name="activation_required_title">Module is not active / scope not restarted</string>
     <string name="activation_required_summary">Make sure this module is enabled in LSPosed, restart the scope, and confirm you can already see the WeType visual effect. Then reopen this launcher entry to enter the embedded WeType settings page.</string>
+    <string name="activation_detecting_summary">Waiting for a fresh WeType activation signal.</string>
+    <string name="activation_probe_summary">Refer to the above prompts for operation.</string>
+    <string name="activation_probe_label">Tap to open WeType</string>
     <string name="activation_active_title">Module is active</string>
     <string name="activation_active_summary">Tap the button below to enter the embedded WeType settings page.</string>
     <string name="activation_open_embedded_settings">Open WeType settings</string>
