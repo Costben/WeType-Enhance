@@ -427,6 +427,9 @@ private fun WeTypeSettingsScreen(
     var candidatePinyinLeftMarginDp by rememberSaveable {
         mutableStateOf(snapshot.candidatePinyinLeftMarginDp.toString())
     }
+    var disableHotUpdate by rememberSaveable {
+        mutableStateOf(snapshot.disableHotUpdate)
+    }
     val appearanceGroupColors = rememberSaveable(
         saver = listSaver(
             save = { it.toList() },
@@ -492,7 +495,8 @@ private fun WeTypeSettingsScreen(
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.toIntOrNull()
                 ?: WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
-            appearanceColors = currentAppearanceColors()
+            appearanceColors = currentAppearanceColors(),
+            disableHotUpdate = disableHotUpdate
         )
         if (showSavedToast) {
             Toast.makeText(context, R.string.settings_saved, Toast.LENGTH_SHORT).show()
@@ -510,6 +514,7 @@ private fun WeTypeSettingsScreen(
         keyColorHookAlpha = WeTypeSettings.DEFAULT_KEY_COLOR_HOOK_ALPHA
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
+        disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         appearanceGroups.forEachIndexed { index, group ->
             appearanceGroupColors[index] = group.defaultColor
         }
@@ -827,6 +832,26 @@ private fun WeTypeSettingsScreen(
                                 )
                                 context.startActivity(intent)
                             }
+                        )
+                    }
+                }
+            }
+
+            // 其他分组
+            item {
+                SmallTitle(
+                    text = stringResource(R.string.settings_group_other)
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        MiuixSwitchWidget(
+                            title = stringResource(R.string.settings_disable_hot_update_title),
+                            description = stringResource(R.string.settings_disable_hot_update_desc),
+                            checked = disableHotUpdate,
+                            onCheckedChange = { disableHotUpdate = it }
                         )
                     }
                 }

@@ -11,6 +11,7 @@ import android.view.View
 import android.inputmethodservice.InputMethodService
 import android.view.inputmethod.InputMethodManager
 import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
+import com.xposed.wetypehook.wetype.hook.WeTypeUpdateHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.HookEnvironment
@@ -151,6 +152,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         hookWeTypeSettingKeyboardOpaqueBackground()
         hookWeTypeWindowBlur()
         hookWeTypeWindowCorner()
+        hookWeTypeDisableHotUpdate()
         hookWeTypeIntentEntry()
         hookWeTypeAboutLogoEntry()
     }
@@ -277,6 +279,10 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private fun hookWeTypeWindowCorner() {
         WeTypeWindowHooks.hookWindowCorner()
+    }
+
+    private fun hookWeTypeDisableHotUpdate() {
+        WeTypeUpdateHooks.hookDisableHotUpdate()
     }
 
     private fun hookWeTypeWindowBlur() {

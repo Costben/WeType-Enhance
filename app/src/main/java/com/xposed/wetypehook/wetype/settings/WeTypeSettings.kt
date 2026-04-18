@@ -19,6 +19,7 @@ object WeTypeSettings {
     private const val KEY_CANDIDATE_BACKGROUND_CORNER = "candidate_background_corner"
     private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
+    private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     const val DEFAULT_LIGHT_COLOR = 0xA0D1D3D8.toInt()
     const val DEFAULT_DARK_COLOR = 0x90101010.toInt()
     const val DEFAULT_BLUR_RADIUS = 60
@@ -31,6 +32,7 @@ object WeTypeSettings {
     const val DEFAULT_CANDIDATE_BACKGROUND_CORNER = 60f
     const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
     const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
+    const val DEFAULT_DISABLE_HOT_UPDATE = true
 
     private val xposedPrefsLock = Any()
 
@@ -54,7 +56,8 @@ object WeTypeSettings {
         val keyColorHookAlpha: Int,
         val candidateBackgroundCorner: Float,
         val candidatePinyinLeftMarginDp: Int,
-        val appearanceColors: Map<String, Int>
+        val appearanceColors: Map<String, Int>,
+        val disableHotUpdate: Boolean
     )
 
     fun getLightColor(context: Context): Int = readSnapshot(context).lightColor
@@ -81,6 +84,8 @@ object WeTypeSettings {
 
     fun getAppearanceColors(context: Context): Map<String, Int> = readSnapshot(context).appearanceColors
 
+    fun isDisableHotUpdate(context: Context): Boolean = readSnapshot(context).disableHotUpdate
+
     fun initXposed() {
         getXposedPrefs(xposedPrefsPackageName)?.reload()
     }
@@ -106,7 +111,8 @@ object WeTypeSettings {
         keyColorHookAlpha: Int,
         candidateBackgroundCorner: Float,
         candidatePinyinLeftMarginDp: Int,
-        appearanceColors: Map<String, Int>
+        appearanceColors: Map<String, Int>,
+        disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE
     ) {
         val sanitizedAppearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
             group.id to (appearanceColors[group.id] ?: group.defaultColor)
@@ -123,7 +129,8 @@ object WeTypeSettings {
             keyColorHookAlpha = keyColorHookAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
-            appearanceColors = sanitizedAppearanceColors
+            appearanceColors = sanitizedAppearanceColors,
+            disableHotUpdate = disableHotUpdate
         )
     }
 
@@ -154,6 +161,8 @@ object WeTypeSettings {
 
     fun getCandidatePinyinLeftMarginDpXposed(): Int =
         readSnapshotXposed().candidatePinyinLeftMarginDp
+
+    fun isDisableHotUpdateXposed(): Boolean = readSnapshotXposed().disableHotUpdate
 
     fun getAppearanceColorXposed(groupId: String): Int =
         readSnapshotXposed().appearanceColors[groupId]
@@ -205,7 +214,8 @@ object WeTypeSettings {
         keyColorHookAlpha: Int,
         candidateBackgroundCorner: Float,
         candidatePinyinLeftMarginDp: Int,
-        appearanceColors: Map<String, Int>
+        appearanceColors: Map<String, Int>,
+        disableHotUpdate: Boolean
     ) {
         val editor = appPreferences(context)
             .edit()
@@ -225,6 +235,7 @@ object WeTypeSettings {
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 candidatePinyinLeftMarginDp.coerceIn(0, 64)
             )
+            .putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
         WeTypeAppearanceColorGroups.groups.forEach { group ->
             editor.putInt(
                 "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
@@ -289,7 +300,8 @@ object WeTypeSettings {
                     "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
                     group.defaultColor
                 )
-            }
+            },
+            disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, DEFAULT_DISABLE_HOT_UPDATE)
         )
     }
 
@@ -304,6 +316,7 @@ object WeTypeSettings {
             !contains(KEY_KEY_COLOR_HOOK_ALPHA) &&
             !contains(KEY_CANDIDATE_BACKGROUND_CORNER) &&
             !contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) &&
+            !contains(KEY_DISABLE_HOT_UPDATE) &&
             WeTypeAppearanceColorGroups.groups.none { group ->
                 contains("$KEY_APPEARANCE_COLOR_PREFIX${group.id}")
             }
@@ -324,6 +337,7 @@ object WeTypeSettings {
         keyColorHookAlpha = DEFAULT_KEY_COLOR_HOOK_ALPHA,
         candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
-        appearanceColors = WeTypeAppearanceColorGroups.defaultColors()
+        appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
+        disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE
     )
 }

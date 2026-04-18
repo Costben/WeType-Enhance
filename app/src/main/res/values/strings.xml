@@ -46,6 +46,10 @@
     <string name="settings_edge_highlight_intensity_title">Highlight intensity</string>
     <string name="settings_group_color">Color</string>
     <string name="settings_group_actions">Actions</string>
+    <string name="settings_group_other">Other</string>
+
+    <string name="settings_disable_hot_update_title">Disable hot update</string>
+    <string name="settings_disable_hot_update_desc">Block WeType hotfix updates</string>
 
     <string name="settings_preview_title">Effect preview</string>
     <string name="settings_preview_mode_light">Light mode</string>

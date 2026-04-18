@@ -46,6 +46,10 @@
     <string name="settings_edge_highlight_intensity_title">高光效果强度</string>
     <string name="settings_group_color">颜色</string>
     <string name="settings_group_actions">操作</string>
+    <string name="settings_group_other">其他</string>
+
+    <string name="settings_disable_hot_update_title">禁用热更新</string>
+    <string name="settings_disable_hot_update_desc">阻止微信输入法热修复</string>
 
     <string name="settings_preview_title">效果预览</string>
     <string name="settings_preview_mode_light">浅色模式</string>
