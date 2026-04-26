@@ -28,6 +28,8 @@ import java.util.WeakHashMap
 import kotlin.math.roundToInt
 
 internal object WeTypeResourceHooks {
+    private const val CANDIDATE_SELF_VIEW_CLASS =
+        "com.tencent.wetype.plugin.hld.candidate.selfdraw.selfview.d"
     private const val CANDIDATE_PINYIN_CONTAINER_ACCESSOR_CLASS =
         "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView\$d2"
     private val SETTING_OPAQUE_BACKGROUND_VIEW_CLASSES = listOf(
@@ -305,9 +307,8 @@ internal object WeTypeResourceHooks {
 
     fun hookCandidateBackgroundCorner() {
         runCatching {
-            val candidateViewClass = loadClassOrNull(
-                "com.tencent.wetype.plugin.hld.candidate.selfdraw.selfview.d"
-            ) ?: error("Failed to load candidate self view")
+            val candidateViewClass = loadClassOrNull(CANDIDATE_SELF_VIEW_CLASS)
+                ?: error("Failed to load candidate self view")
             val cornerField = generateSequence(candidateViewClass as Class<*>?) { it.superclass }
                 .mapNotNull { clazz ->
                     runCatching { clazz.getDeclaredField("g") }.getOrNull()
@@ -327,6 +328,35 @@ internal object WeTypeResourceHooks {
             Log.i("Success: Hook candidate background corner")
         }.onFailure {
             Log.i("Failed: Hook candidate background corner")
+            Log.i(it)
+        }
+    }
+
+    fun hookCandidateBackgroundAlpha() {
+        runCatching {
+            val candidateViewClass = loadClassOrNull(CANDIDATE_SELF_VIEW_CLASS)
+                ?: error("Failed to load candidate self view")
+            val colorMethods = candidateViewClass.declaredMethods.filter { method ->
+                method.name == "g" &&
+                    method.parameterTypes.isEmpty() &&
+                    method.returnType == Int::class.javaPrimitiveType
+            }
+            check(colorMethods.isNotEmpty()) {
+                "Failed to find candidate background color method g"
+            }
+            colorMethods.forEach { method ->
+                method.hookAfter { param ->
+                    val color = param.result as? Int ?: return@hookAfter
+                    if (Color.alpha(color) == 0) return@hookAfter
+                    param.result = withForcedAlpha(
+                        color,
+                        WeTypeSettings.getCandidateBackgroundAlphaXposed()
+                    )
+                }
+            }
+            Log.i("Success: Hook candidate background alpha")
+        }.onFailure {
+            Log.i("Failed: Hook candidate background alpha")
             Log.i(it)
         }
     }
@@ -572,9 +602,7 @@ internal object WeTypeResourceHooks {
     }
 
     private fun resolvedGroupColor(group: WeTypeAppearanceColorGroup): Int {
-        val color = WeTypeSettings.getAppearanceColorXposed(group.id)
-        if (!group.isKeyColorGroup) return color
-        return withForcedAlpha(color, WeTypeSettings.getKeyColorHookAlphaXposed())
+        return WeTypeSettings.getAppearanceColorXposed(group.id)
     }
 
     private fun withForcedAlpha(color: Int, alpha: Int): Int = Color.argb(

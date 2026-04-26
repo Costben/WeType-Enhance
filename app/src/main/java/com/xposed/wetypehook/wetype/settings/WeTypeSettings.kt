@@ -15,7 +15,8 @@ object WeTypeSettings {
     private const val KEY_EDGE_HIGHLIGHT_ENABLED = "edge_highlight_enabled"
     private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
     private const val KEY_KEY_OPACITY = "key_opacity"
-    private const val KEY_KEY_COLOR_HOOK_ALPHA = "key_color_hook_alpha"
+    // Keep the original preference key so existing saved values still migrate cleanly.
+    private const val KEY_CANDIDATE_BACKGROUND_ALPHA = "key_color_hook_alpha"
     private const val KEY_CANDIDATE_BACKGROUND_CORNER = "candidate_background_corner"
     private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
@@ -28,7 +29,7 @@ object WeTypeSettings {
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 50
     const val DEFAULT_KEY_OPACITY = 200
-    const val DEFAULT_KEY_COLOR_HOOK_ALPHA = 255
+    const val DEFAULT_CANDIDATE_BACKGROUND_ALPHA = 255
     const val DEFAULT_CANDIDATE_BACKGROUND_CORNER = 60f
     const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
     const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
@@ -53,7 +54,7 @@ object WeTypeSettings {
         val edgeHighlightEnabled: Boolean,
         val edgeHighlightIntensity: Int,
         val keyOpacity: Int,
-        val keyColorHookAlpha: Int,
+        val candidateBackgroundAlpha: Int,
         val candidateBackgroundCorner: Float,
         val candidatePinyinLeftMarginDp: Int,
         val appearanceColors: Map<String, Int>,
@@ -74,7 +75,8 @@ object WeTypeSettings {
 
     fun getKeyOpacity(context: Context): Int = readSnapshot(context).keyOpacity
 
-    fun getKeyColorHookAlpha(context: Context): Int = readSnapshot(context).keyColorHookAlpha
+    fun getCandidateBackgroundAlpha(context: Context): Int =
+        readSnapshot(context).candidateBackgroundAlpha
 
     fun getCandidateBackgroundCorner(context: Context): Float =
         readSnapshot(context).candidateBackgroundCorner
@@ -108,7 +110,7 @@ object WeTypeSettings {
         edgeHighlightEnabled: Boolean,
         edgeHighlightIntensity: Int,
         keyOpacity: Int,
-        keyColorHookAlpha: Int,
+        candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidatePinyinLeftMarginDp: Int,
         appearanceColors: Map<String, Int>,
@@ -126,7 +128,7 @@ object WeTypeSettings {
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
             keyOpacity = keyOpacity,
-            keyColorHookAlpha = keyColorHookAlpha,
+            candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
             appearanceColors = sanitizedAppearanceColors,
@@ -154,7 +156,8 @@ object WeTypeSettings {
 
     fun getKeyOpacityXposed(context: Context): Int = readSnapshotXposed().keyOpacity
 
-    fun getKeyColorHookAlphaXposed(): Int = readSnapshotXposed().keyColorHookAlpha
+    fun getCandidateBackgroundAlphaXposed(): Int =
+        readSnapshotXposed().candidateBackgroundAlpha
 
     fun getCandidateBackgroundCornerXposed(): Float =
         readSnapshotXposed().candidateBackgroundCorner
@@ -211,7 +214,7 @@ object WeTypeSettings {
         edgeHighlightEnabled: Boolean,
         edgeHighlightIntensity: Int,
         keyOpacity: Int,
-        keyColorHookAlpha: Int,
+        candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidatePinyinLeftMarginDp: Int,
         appearanceColors: Map<String, Int>,
@@ -226,7 +229,10 @@ object WeTypeSettings {
             .putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, edgeHighlightEnabled)
             .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity.coerceIn(0, 200))
             .putInt(KEY_KEY_OPACITY, keyOpacity.coerceIn(0, 255))
-            .putInt(KEY_KEY_COLOR_HOOK_ALPHA, keyColorHookAlpha.coerceIn(0, 255))
+            .putInt(
+                KEY_CANDIDATE_BACKGROUND_ALPHA,
+                candidateBackgroundAlpha.coerceIn(0, 255)
+            )
             .putFloat(
                 KEY_CANDIDATE_BACKGROUND_CORNER,
                 candidateBackgroundCorner.coerceIn(0f, MAX_CANDIDATE_BACKGROUND_CORNER.toFloat())
@@ -286,7 +292,10 @@ object WeTypeSettings {
                 DEFAULT_EDGE_HIGHLIGHT_INTENSITY
             ),
             keyOpacity = getInt(KEY_KEY_OPACITY, DEFAULT_KEY_OPACITY),
-            keyColorHookAlpha = getInt(KEY_KEY_COLOR_HOOK_ALPHA, DEFAULT_KEY_COLOR_HOOK_ALPHA),
+            candidateBackgroundAlpha = getInt(
+                KEY_CANDIDATE_BACKGROUND_ALPHA,
+                DEFAULT_CANDIDATE_BACKGROUND_ALPHA
+            ),
             candidateBackgroundCorner = getFloat(
                 KEY_CANDIDATE_BACKGROUND_CORNER,
                 DEFAULT_CANDIDATE_BACKGROUND_CORNER
@@ -313,7 +322,7 @@ object WeTypeSettings {
             !contains(KEY_EDGE_HIGHLIGHT_ENABLED) &&
             !contains(KEY_EDGE_HIGHLIGHT_INTENSITY) &&
             !contains(KEY_KEY_OPACITY) &&
-            !contains(KEY_KEY_COLOR_HOOK_ALPHA) &&
+            !contains(KEY_CANDIDATE_BACKGROUND_ALPHA) &&
             !contains(KEY_CANDIDATE_BACKGROUND_CORNER) &&
             !contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) &&
             !contains(KEY_DISABLE_HOT_UPDATE) &&
@@ -334,7 +343,7 @@ object WeTypeSettings {
         edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED,
         edgeHighlightIntensity = DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
         keyOpacity = DEFAULT_KEY_OPACITY,
-        keyColorHookAlpha = DEFAULT_KEY_COLOR_HOOK_ALPHA,
+        candidateBackgroundAlpha = DEFAULT_CANDIDATE_BACKGROUND_ALPHA,
         candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),

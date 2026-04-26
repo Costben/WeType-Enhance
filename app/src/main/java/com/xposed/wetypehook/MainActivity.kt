@@ -420,7 +420,9 @@ private fun WeTypeSettingsScreen(
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
     var keyOpacity by rememberSaveable { mutableIntStateOf(snapshot.keyOpacity) }
-    var keyColorHookAlpha by rememberSaveable { mutableIntStateOf(snapshot.keyColorHookAlpha) }
+    var candidateBackgroundAlpha by rememberSaveable {
+        mutableIntStateOf(snapshot.candidateBackgroundAlpha)
+    }
     var candidateBackgroundCorner by rememberSaveable {
         mutableIntStateOf(snapshot.candidateBackgroundCorner.roundToInt())
     }
@@ -491,7 +493,7 @@ private fun WeTypeSettingsScreen(
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
             keyOpacity = keyOpacity,
-            keyColorHookAlpha = keyColorHookAlpha,
+            candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.toIntOrNull()
                 ?: WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
@@ -511,7 +513,7 @@ private fun WeTypeSettingsScreen(
         edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
         edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
         keyOpacity = WeTypeSettings.DEFAULT_KEY_OPACITY
-        keyColorHookAlpha = WeTypeSettings.DEFAULT_KEY_COLOR_HOOK_ALPHA
+        candidateBackgroundAlpha = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_ALPHA
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
@@ -787,9 +789,9 @@ private fun WeTypeSettingsScreen(
 
                         SliderPreferenceItem(
                             title = stringResource(R.string.settings_key_color_hook_alpha_title),
-                            value = keyColorHookAlpha,
+                            value = candidateBackgroundAlpha,
                             max = 255,
-                            onValueChange = { keyColorHookAlpha = it }
+                            onValueChange = { candidateBackgroundAlpha = it }
                         )
 
                         SliderPreferenceItem(

@@ -27,12 +27,9 @@ android {
     buildFeatures {
         compose = true
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     packaging {
         resources {
@@ -60,10 +57,10 @@ kotlin {
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")
     implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("androidx.compose.foundation:foundation-android:1.10.6")
-    implementation("androidx.compose.ui:ui-android:1.10.6")
-    implementation("androidx.compose.ui:ui-graphics-android:1.10.6")
-    implementation("androidx.compose.ui:ui-text-android:1.10.6")
+    implementation("androidx.compose.foundation:foundation-android:1.11.0")
+    implementation("androidx.compose.ui:ui-android:1.11.0")
+    implementation("androidx.compose.ui:ui-graphics-android:1.11.0")
+    implementation("androidx.compose.ui:ui-text-android:1.11.0")
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.0")
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.0")
     implementation("top.yukonga.miuix.kmp:miuix-core-android:0.9.0")
