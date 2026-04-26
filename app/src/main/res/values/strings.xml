@@ -68,6 +68,8 @@
     <string name="settings_key_color_input_label">Key color</string>
     <string name="settings_candidate_corner_title">Candidate background corner</string>
     <string name="settings_candidate_corner_desc">Edit the first candidate background corner radius.</string>
+    <string name="settings_candidate_background_left_margin_title">First candidate left margin</string>
+    <string name="settings_candidate_background_left_margin_desc">Edit the left outer margin of the first candidate background.</string>
     <string name="settings_candidate_pinyin_margin_title">Candidate pinyin left margin</string>
     <string name="settings_candidate_pinyin_margin_desc">Edit the left padding of the pinyin area.</string>
 

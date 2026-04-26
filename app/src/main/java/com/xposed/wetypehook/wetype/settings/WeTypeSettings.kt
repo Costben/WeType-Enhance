@@ -18,6 +18,8 @@ object WeTypeSettings {
     // Keep the original preference key so existing saved values still migrate cleanly.
     private const val KEY_CANDIDATE_BACKGROUND_ALPHA = "key_color_hook_alpha"
     private const val KEY_CANDIDATE_BACKGROUND_CORNER = "candidate_background_corner"
+    private const val KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP =
+        "candidate_background_left_margin_dp"
     private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
@@ -32,6 +34,7 @@ object WeTypeSettings {
     const val DEFAULT_CANDIDATE_BACKGROUND_ALPHA = 255
     const val DEFAULT_CANDIDATE_BACKGROUND_CORNER = 60f
     const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
+    const val DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP = 6
     const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
     const val DEFAULT_DISABLE_HOT_UPDATE = true
 
@@ -56,6 +59,7 @@ object WeTypeSettings {
         val keyOpacity: Int,
         val candidateBackgroundAlpha: Int,
         val candidateBackgroundCorner: Float,
+        val candidateBackgroundLeftMarginDp: Int,
         val candidatePinyinLeftMarginDp: Int,
         val appearanceColors: Map<String, Int>,
         val disableHotUpdate: Boolean
@@ -80,6 +84,9 @@ object WeTypeSettings {
 
     fun getCandidateBackgroundCorner(context: Context): Float =
         readSnapshot(context).candidateBackgroundCorner
+
+    fun getCandidateBackgroundLeftMarginDp(context: Context): Int =
+        readSnapshot(context).candidateBackgroundLeftMarginDp
 
     fun getCandidatePinyinLeftMarginDp(context: Context): Int =
         readSnapshot(context).candidatePinyinLeftMarginDp
@@ -112,6 +119,7 @@ object WeTypeSettings {
         keyOpacity: Int,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
+        candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE
@@ -130,6 +138,7 @@ object WeTypeSettings {
             keyOpacity = keyOpacity,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner,
+            candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate
@@ -161,6 +170,9 @@ object WeTypeSettings {
 
     fun getCandidateBackgroundCornerXposed(): Float =
         readSnapshotXposed().candidateBackgroundCorner
+
+    fun getCandidateBackgroundLeftMarginDpXposed(): Int =
+        readSnapshotXposed().candidateBackgroundLeftMarginDp
 
     fun getCandidatePinyinLeftMarginDpXposed(): Int =
         readSnapshotXposed().candidatePinyinLeftMarginDp
@@ -216,6 +228,7 @@ object WeTypeSettings {
         keyOpacity: Int,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
+        candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean
@@ -236,6 +249,10 @@ object WeTypeSettings {
             .putFloat(
                 KEY_CANDIDATE_BACKGROUND_CORNER,
                 candidateBackgroundCorner.coerceIn(0f, MAX_CANDIDATE_BACKGROUND_CORNER.toFloat())
+            )
+            .putInt(
+                KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
+                candidateBackgroundLeftMarginDp.coerceIn(0, 64)
             )
             .putInt(
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
@@ -300,6 +317,10 @@ object WeTypeSettings {
                 KEY_CANDIDATE_BACKGROUND_CORNER,
                 DEFAULT_CANDIDATE_BACKGROUND_CORNER
             ).coerceIn(0f, MAX_CANDIDATE_BACKGROUND_CORNER.toFloat()),
+            candidateBackgroundLeftMarginDp = getInt(
+                KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
+                DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP
+            ).coerceIn(0, 64),
             candidatePinyinLeftMarginDp = getInt(
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
@@ -324,6 +345,7 @@ object WeTypeSettings {
             !contains(KEY_KEY_OPACITY) &&
             !contains(KEY_CANDIDATE_BACKGROUND_ALPHA) &&
             !contains(KEY_CANDIDATE_BACKGROUND_CORNER) &&
+            !contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) &&
             !contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) &&
             !contains(KEY_DISABLE_HOT_UPDATE) &&
             WeTypeAppearanceColorGroups.groups.none { group ->
@@ -345,6 +367,7 @@ object WeTypeSettings {
         keyOpacity = DEFAULT_KEY_OPACITY,
         candidateBackgroundAlpha = DEFAULT_CANDIDATE_BACKGROUND_ALPHA,
         candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
+        candidateBackgroundLeftMarginDp = DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE

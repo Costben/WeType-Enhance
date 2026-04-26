@@ -33,6 +33,8 @@ internal object WeTypeResourceHooks {
         "com.tencent.wetype.plugin.hld.candidate.selfdraw.selfview.d"
     private const val CANDIDATE_WITH_EXTRA_COMPANION_CLASS =
         "com.tencent.wetype.plugin.hld.candidate.b\$a"
+    private const val CANDIDATE_ITEM_ROOT_CLASS =
+        "com.tencent.wetype.plugin.hld.candidate.selfdraw.scrollview.SelfDrawScrollView\$f"
     private const val CANDIDATE_PINYIN_CONTAINER_ACCESSOR_CLASS =
         "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView\$d2"
     private val SETTING_OPAQUE_BACKGROUND_VIEW_CLASSES = listOf(
@@ -45,6 +47,9 @@ internal object WeTypeResourceHooks {
     )
     private val candidatePinyinMarginListeners = Collections.synchronizedMap(
         WeakHashMap<View, View.OnLayoutChangeListener>()
+    )
+    private val candidateItemRootBaseLeftPaddingPx = Collections.synchronizedMap(
+        WeakHashMap<Any, Int>()
     )
 
     fun hookFont(
@@ -384,6 +389,44 @@ internal object WeTypeResourceHooks {
         }
     }
 
+    fun hookCandidateBackgroundLeftMargin() {
+        runCatching {
+            val candidateItemRootClass = loadClassOrNull(CANDIDATE_ITEM_ROOT_CLASS)
+                ?: error("Failed to load candidate item root view")
+            val setInsetMethod = candidateItemRootClass.getMethod(
+                "b0",
+                Integer::class.java,
+                Integer::class.java,
+                Integer::class.java,
+                Integer::class.java
+            )
+            candidateItemRootClass.getMethod("N").hookBefore { param ->
+                val itemRoot = param.thisObject ?: return@hookBefore
+                val baseLeftPaddingPx = candidateItemRootBaseLeftPaddingPx.getOrPut(itemRoot) {
+                    runCatching { itemRoot.invokeMethodAs<Int>("p") }.getOrDefault(0)
+                }
+                val itemPosition = runCatching {
+                    itemRoot.invokeMethodAs<Int>("o0")
+                }.getOrNull() ?: return@hookBefore
+                val targetLeftPaddingPx =
+                    baseLeftPaddingPx + if (itemPosition == 0) {
+                        resolveCandidateBackgroundLeftMarginPx(itemRoot)
+                    } else {
+                        0
+                    }
+                val currentLeftPaddingPx = runCatching {
+                    itemRoot.invokeMethodAs<Int>("p")
+                }.getOrNull() ?: return@hookBefore
+                if (currentLeftPaddingPx == targetLeftPaddingPx) return@hookBefore
+                setInsetMethod.invoke(itemRoot, targetLeftPaddingPx, null, null, null)
+            }
+            Log.i("Success: Hook candidate background left margin")
+        }.onFailure {
+            Log.i("Failed: Hook candidate background left margin")
+            Log.i(it)
+        }
+    }
+
     fun hookCandidatePinyinLeftMargin() {
         runCatching {
             val candidateContainerAccessorClass = loadClassOrNull(CANDIDATE_PINYIN_CONTAINER_ACCESSOR_CLASS)
@@ -457,6 +500,17 @@ internal object WeTypeResourceHooks {
             view.paddingEnd,
             view.paddingBottom
         )
+    }
+
+    private fun resolveCandidateBackgroundLeftMarginPx(itemRoot: Any): Int {
+        val context = runCatching {
+            itemRoot.invokeMethodAs<Context>("k")
+        }.getOrNull() ?: return 0
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            WeTypeSettings.getCandidateBackgroundLeftMarginDpXposed().toFloat(),
+            context.resources.displayMetrics
+        ).roundToInt()
     }
 
     private fun applyOpaqueSettingKeyboardBackground(target: Any?) {

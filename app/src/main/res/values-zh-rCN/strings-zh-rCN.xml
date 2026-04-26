@@ -68,6 +68,8 @@
     <string name="settings_key_color_input_label">按键颜色</string>
     <string name="settings_candidate_corner_title">候选词背景圆角</string>
     <string name="settings_candidate_corner_desc">编辑首个候选词背景圆角</string>
+    <string name="settings_candidate_background_left_margin_title">首个候选词左边距</string>
+    <string name="settings_candidate_background_left_margin_desc">编辑首个候选词背景的左侧外边距</string>
     <string name="settings_candidate_pinyin_margin_title">候选栏拼音左边距</string>
     <string name="settings_candidate_pinyin_margin_desc">编辑候选栏内显拼音的左边距</string>
 

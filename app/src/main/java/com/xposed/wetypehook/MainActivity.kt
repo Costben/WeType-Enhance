@@ -426,6 +426,9 @@ private fun WeTypeSettingsScreen(
     var candidateBackgroundCorner by rememberSaveable {
         mutableIntStateOf(snapshot.candidateBackgroundCorner.roundToInt())
     }
+    var candidateBackgroundLeftMarginDp by rememberSaveable {
+        mutableStateOf(snapshot.candidateBackgroundLeftMarginDp.toString())
+    }
     var candidatePinyinLeftMarginDp by rememberSaveable {
         mutableStateOf(snapshot.candidatePinyinLeftMarginDp.toString())
     }
@@ -495,6 +498,8 @@ private fun WeTypeSettingsScreen(
             keyOpacity = keyOpacity,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
+            candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.toIntOrNull()
+                ?: WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.toIntOrNull()
                 ?: WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
             appearanceColors = currentAppearanceColors(),
@@ -515,6 +520,8 @@ private fun WeTypeSettingsScreen(
         keyOpacity = WeTypeSettings.DEFAULT_KEY_OPACITY
         candidateBackgroundAlpha = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_ALPHA
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
+        candidateBackgroundLeftMarginDp =
+            WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP.toString()
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         appearanceGroups.forEachIndexed { index, group ->
@@ -775,6 +782,17 @@ private fun WeTypeSettingsScreen(
                                 onColorChange = { appearanceGroupColors[index] = it }
                             )
                         }
+
+                        NumericTextSettingItem(
+                            title = stringResource(R.string.settings_candidate_background_left_margin_title),
+                            summary = stringResource(R.string.settings_candidate_background_left_margin_desc),
+                            value = candidateBackgroundLeftMarginDp,
+                            onValueChange = { input ->
+                                if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                                    candidateBackgroundLeftMarginDp = input
+                                }
+                            }
+                        )
 
                         NumericTextSettingItem(
                             title = stringResource(R.string.settings_candidate_pinyin_margin_title),
