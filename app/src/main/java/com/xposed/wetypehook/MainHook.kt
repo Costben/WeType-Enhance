@@ -223,6 +223,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
             name == "attach" && parameterTypes.sameAs(Context::class.java)
         }.hookAfter { param ->
             val context = param.args[0] as? Context ?: return@hookAfter
+            WeTypeSettings.ensureHostSnapshot(context)
             notifyActivationHeartbeat(context, sourcePackage)
         }
 
@@ -231,6 +232,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         }.hookAfter { param ->
             val service = param.thisObject as? InputMethodService ?: return@hookAfter
             if (service.packageName != sourcePackage) return@hookAfter
+            WeTypeSettings.ensureHostSnapshot(service)
             notifyActivationHeartbeat(service, sourcePackage)
         }
     }
