@@ -23,7 +23,7 @@ data class WeTypeAppearanceColorGroup(
 object WeTypeAppearanceColorGroups {
     val groups: List<WeTypeAppearanceColorGroup> = listOf(
         WeTypeAppearanceColorGroup(
-            id = "pure_black",
+            id = "theme_color",
             displayName = "品牌强调色",
             defaultColor = 0xFF23c891.toInt(),
             colorResourceNames = setOf(

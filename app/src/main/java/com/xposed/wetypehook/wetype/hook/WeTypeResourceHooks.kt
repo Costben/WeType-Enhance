@@ -324,7 +324,7 @@ internal object WeTypeResourceHooks {
                     parameterTypes[0] == Int::class.javaPrimitiveType &&
                     returnType == Int::class.javaPrimitiveType
             }.hookAfter { param ->
-                param.result = WeTypeSettings.getAppearanceColorXposed("pure_black")
+                param.result = WeTypeSettings.getAppearanceColorXposed("theme_color")
             }
             Log.i("Success: Hook candidate special text color")
         }.onFailure {
@@ -597,6 +597,9 @@ internal object WeTypeResourceHooks {
         getModuleResources: (Resources) -> Resources
     ): Drawable? {
         val drawableName = runCatching { resources.getResourceEntryName(drawableResId) }.getOrNull() ?: return null
+        if (drawableName == "io") {
+            return WeTypeIconDrawable()
+        }
         val replacementResId = drawableReplacements[drawableName] ?: return null
         val replacementDrawable = getModuleResources(resources).getDrawable(replacementResId, null)
         return replacementDrawable.constantState?.newDrawable(resources, theme)?.mutate()
