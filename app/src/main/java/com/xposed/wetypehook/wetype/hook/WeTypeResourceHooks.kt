@@ -14,6 +14,7 @@ import android.util.TypedValue
 import android.view.View
 import android.widget.FrameLayout
 import com.xposed.wetypehook.xposed.Log
+import com.xposed.wetypehook.xposed.findMethod
 import com.xposed.wetypehook.xposed.getObjectAs
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
@@ -30,6 +31,8 @@ import kotlin.math.roundToInt
 internal object WeTypeResourceHooks {
     private const val CANDIDATE_SELF_VIEW_CLASS =
         "com.tencent.wetype.plugin.hld.candidate.selfdraw.selfview.d"
+    private const val CANDIDATE_WITH_EXTRA_COMPANION_CLASS =
+        "com.tencent.wetype.plugin.hld.candidate.b\$a"
     private const val CANDIDATE_PINYIN_CONTAINER_ACCESSOR_CLASS =
         "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView\$d2"
     private val SETTING_OPAQUE_BACKGROUND_VIEW_CLASSES = listOf(
@@ -301,6 +304,26 @@ internal object WeTypeResourceHooks {
             Log.i("Success: Hook WeType self-draw key colors")
         }.onFailure {
             Log.i("Failed: Hook WeType self-draw key colors")
+            Log.i(it)
+        }
+    }
+
+    fun hookCandidateSpecialTextColor() {
+        runCatching {
+            val candidateWithExtraCompanionClass =
+                loadClassOrNull(CANDIDATE_WITH_EXTRA_COMPANION_CLASS)
+                    ?: error("Failed to load CandidateWithExtra companion")
+            candidateWithExtraCompanionClass.findMethod {
+                name == "s" &&
+                    parameterTypes.size == 1 &&
+                    parameterTypes[0] == Int::class.javaPrimitiveType &&
+                    returnType == Int::class.javaPrimitiveType
+            }.hookAfter { param ->
+                param.result = WeTypeSettings.getAppearanceColorXposed("pure_black")
+            }
+            Log.i("Success: Hook candidate special text color")
+        }.onFailure {
+            Log.i("Failed: Hook candidate special text color")
             Log.i(it)
         }
     }

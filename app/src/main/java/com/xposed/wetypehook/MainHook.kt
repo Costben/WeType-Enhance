@@ -147,6 +147,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         hookWeTypeTransparentColors()
         hookWeTypeXmlDrawables()
         hookWeTypeSelfDrawKeyColors()
+        hookWeTypeCandidateSpecialTextColor()
         hookWeTypeCandidateBackgroundAlpha()
         hookWeTypeCandidateBackgroundCorner()
         hookWeTypeCandidatePinyinLeftMargin()
@@ -264,6 +265,10 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private fun hookWeTypeSelfDrawKeyColors() {
         WeTypeResourceHooks.hookSelfDrawKeyColors()
+    }
+
+    private fun hookWeTypeCandidateSpecialTextColor() {
+        WeTypeResourceHooks.hookCandidateSpecialTextColor()
     }
 
     private fun hookWeTypeCandidateBackgroundAlpha() {
