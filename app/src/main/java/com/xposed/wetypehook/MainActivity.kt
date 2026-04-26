@@ -822,6 +822,26 @@ private fun WeTypeSettingsScreen(
                 }
             }
 
+            // 其他分组
+            item {
+                SmallTitle(
+                    text = stringResource(R.string.settings_group_other)
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        MiuixSwitchWidget(
+                            title = stringResource(R.string.settings_disable_hot_update_title),
+                            description = stringResource(R.string.settings_disable_hot_update_desc),
+                            checked = disableHotUpdate,
+                            onCheckedChange = { disableHotUpdate = it }
+                        )
+                    }
+                }
+            }
+
             // 操作分组
             item {
                 SmallTitle(
@@ -857,25 +877,6 @@ private fun WeTypeSettingsScreen(
                 }
             }
 
-            // 其他分组
-            item {
-                SmallTitle(
-                    text = stringResource(R.string.settings_group_other)
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        MiuixSwitchWidget(
-                            title = stringResource(R.string.settings_disable_hot_update_title),
-                            description = stringResource(R.string.settings_disable_hot_update_desc),
-                            checked = disableHotUpdate,
-                            onCheckedChange = { disableHotUpdate = it }
-                        )
-                    }
-                }
-            }
         }
     }
 }
