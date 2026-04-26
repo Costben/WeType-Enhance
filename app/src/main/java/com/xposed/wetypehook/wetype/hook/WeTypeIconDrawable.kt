@@ -7,13 +7,17 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
+import androidx.annotation.FloatRange
 import androidx.core.graphics.PathParser
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 
-internal class WeTypeIconDrawable : Drawable() {
+internal class WeTypeIconDrawable(
+    @FloatRange(from = 0.0, to = 1.0)
+    backgroundAlphaFraction: Float
+) : Drawable() {
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.argb((0.2f * 255).toInt(), 255, 255, 255)
+        color = Color.argb((backgroundAlphaFraction * 255).toInt().coerceIn(0, 255), 255, 255, 255)
     }
     private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -46,6 +50,7 @@ internal class WeTypeIconDrawable : Drawable() {
         invalidateSelf()
     }
 
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
     override fun getIntrinsicWidth(): Int = VIEWPORT_SIZE.toInt()

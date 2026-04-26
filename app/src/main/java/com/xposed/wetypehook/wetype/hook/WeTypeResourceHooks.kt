@@ -598,7 +598,10 @@ internal object WeTypeResourceHooks {
     ): Drawable? {
         val drawableName = runCatching { resources.getResourceEntryName(drawableResId) }.getOrNull() ?: return null
         if (drawableName == "io") {
-            return WeTypeIconDrawable()
+            return WeTypeIconDrawable(backgroundAlphaFraction = 0.2f)
+        }
+        if (drawableName == "in") {
+            return WeTypeIconDrawable(backgroundAlphaFraction = 0.9f)
         }
         val replacementResId = drawableReplacements[drawableName] ?: return null
         val replacementDrawable = getModuleResources(resources).getDrawable(replacementResId, null)
