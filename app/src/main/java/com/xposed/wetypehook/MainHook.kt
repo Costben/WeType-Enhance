@@ -104,25 +104,30 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        if (PropertyUtils["ro.miui.support_miui_ime_bottom", "0"] != "1") return
-
         HookEnvironment.init(lpparam.classLoader, TAG)
-        Log.i("miuiime is supported")
+
+        val isMiuiImeSupport = PropertyUtils["ro.miui.support_miui_ime_bottom", "0"] == "1"
 
         if (lpparam.packageName == "android") {
-            startPermissionHook()
+            if (isMiuiImeSupport) {
+                startPermissionHook()
+            }
         } else {
-            startHook(lpparam)
+            startHook(lpparam, isMiuiImeSupport)
         }
     }
 
-    private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam) {
+    private fun startHook(lpparam: XC_LoadPackage.LoadPackageParam, isMiuiImeSupport: Boolean) {
         val packageName = lpparam.packageName
         val isWeType = packageName == WETYPE_PACKAGE
 
         if (isWeType) {
             installWeTypeHooks(packageName)
         }
+
+        if (!isMiuiImeSupport) return
+
+        Log.i("miuiime is supported")
 
         val isNonCustomize = packageName !in miuiImeList
         if (isNonCustomize) {
