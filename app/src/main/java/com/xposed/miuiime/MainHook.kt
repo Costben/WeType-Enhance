@@ -1,6 +1,7 @@
 package com.xposed.miuiime
 
-import android.content.IntentFilter
+import android.content.Context
+import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
 import com.github.kyuubiran.ezxhelper.utils.Log
@@ -11,11 +12,12 @@ import com.github.kyuubiran.ezxhelper.utils.hookAfter
 import com.github.kyuubiran.ezxhelper.utils.hookBefore
 import com.github.kyuubiran.ezxhelper.utils.hookReplace
 import com.github.kyuubiran.ezxhelper.utils.hookReturnConstant
-import com.github.kyuubiran.ezxhelper.utils.invokeMethodAs
+import com.github.kyuubiran.ezxhelper.utils.invokeMethodAuto
 import com.github.kyuubiran.ezxhelper.utils.invokeStaticMethodAuto
 import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
 import com.github.kyuubiran.ezxhelper.utils.putStaticObject
 import com.github.kyuubiran.ezxhelper.utils.sameAs
+import dalvik.system.BaseDexClassLoader
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
@@ -67,14 +69,25 @@ class MainHook : IXposedHookLoadPackage {
         // 获取常用语的ClassLoader
         findMethod("android.inputmethodservice.InputMethodModuleManager") {
             name == "loadDex" && parameterTypes.sameAs(ClassLoader::class.java, String::class.java)
-        }.hookAfter { param ->
+        }.hookBefore { param ->
+            val loader = param.args[0] as ClassLoader
+            val dexPath = param.args[1] as String
+            // 系统原始逻辑，若已加载dex则直接返回，避免重复hook
+            if (loader !is BaseDexClassLoader) throw NoSuchMethodException("addDexPath method not found.")
+            runCatching {
+                Class.forName("com.miui.inputmethod.InputMethodBottomManager", true, loader)
+                param.result = null
+                return@hookBefore
+            }
+            loader.invokeMethodAuto("addDexPath", dexPath)
+
             hookDeleteNotSupportIme(
                 "com.miui.inputmethod.InputMethodBottomManager\$MiuiSwitchInputMethodListener",
-                param.args[0] as ClassLoader
+                loader
             )
             loadClassOrNull(
                 "com.miui.inputmethod.InputMethodBottomManager",
-                param.args[0] as ClassLoader
+                loader
             )?.also {
                 if (isNonCustomize) {
                     hookSIsImeSupport(it)
@@ -87,6 +100,7 @@ class MainHook : IXposedHookLoadPackage {
                         .getObjectAs<InputMethodManager>("mImm").enabledInputMethodList
                 }
             } ?: Log.e("Failed:Class not found: com.miui.inputmethod.InputMethodBottomManager")
+            param.result = null
         }
 
         Log.i("Hook MIUI IME Done!")
@@ -179,50 +193,29 @@ class MainHook : IXposedHookLoadPackage {
     }
 
     /**
-     * Hook 获取应用列表权限，为所有输入法强制提供获取输入法列表的权限。
+     * Hook 获取应用列表权限，使当前输入法可见其他输入法。
      * 用于修复部分输入法（搜狗输入法小米版等）缺少获取输入法列表权限，导致切换输入法功能不能显示其他输入法的问题。
-     * 理论等效于在输入法的AndroidManifest.xml中添加:
-     * ```xml
-     * <manifest>
-     *     <queries>
-     *         <intent>
-     *             <action android:name="android.view.InputMethod" />
-     *         </intent>
-     *     </queries>
-     * </manifest>
-     * ```
-     * 当前实现可能影响开机速度，如需此修复需手动设置系统框架作用域。
      */
     private fun startPermissionHook() {
         runCatching {
-            findMethod("com.android.server.pm.AppsFilterUtils") {
-                name == "canQueryViaComponents"
+            findMethod("com.android.server.inputmethod.InputMethodManagerServiceImpl") {
+                name == "isCallingBetweenCustomIME"
             }.hookAfter { param ->
                 if (param.result == true) return@hookAfter
-                val querying = param.args[0]
-                val potentialTarget = param.args[1]
-                if (!isIme(querying)) return@hookAfter
-                if (!isIme(potentialTarget)) return@hookAfter
-                param.result = true
-            }
-        }.onFailure {
-            Log.i("Failed: Hook method canQueryViaComponents")
-            Log.i(it)
-        }
-    }
-
-    private fun isIme(androidPackage: Any): Boolean {
-        val services = androidPackage.invokeMethodAs<List<Any>>("getServices")
-        services?.forEach { service ->
-            if (!service.invokeMethodAs<Boolean>("isExported")!!) return@forEach
-            val intents = service.invokeMethodAs<List<Any>>("getIntents")
-            intents?.forEach { intent ->
-                val intentFilter = intent.invokeMethodAs<IntentFilter>("getIntentFilter")
-                if (intentFilter?.matchAction("android.view.InputMethod") == true) {
-                    return true
+                val context = param.args[0] as Context
+                val uid = param.args[1] as Int
+                val currentInputMethodPackageName = Settings.Secure.getString(
+                    context.contentResolver,
+                    Settings.Secure.DEFAULT_INPUT_METHOD
+                )?.substringBefore('/') ?: return@hookAfter
+                val packagesForUid = context.packageManager.getPackagesForUid(uid) ?: return@hookAfter
+                if (packagesForUid.contains(currentInputMethodPackageName)) {
+                    param.result = true
                 }
             }
+        }.onFailure {
+            Log.i("Failed: Hook method isCallingBetweenCustomIME")
+            Log.i(it)
         }
-        return false
     }
 }
