@@ -1,13 +1,13 @@
 package com.xposed.wetypehook
 import android.app.Activity
 import android.content.Context
-import android.content.IntentFilter
 import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Color
-import android.view.View
 import android.inputmethodservice.InputMethodService
+import android.provider.Settings
+import android.view.View
 import android.view.inputmethod.InputMethodManager
 import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeUpdateHooks
@@ -16,7 +16,6 @@ import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.HookEnvironment
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.findMethod
-import com.xposed.wetypehook.xposed.findMethodInHierarchy
 import com.xposed.wetypehook.xposed.getObjectAs
 import com.xposed.wetypehook.xposed.getStaticObject
 import com.xposed.wetypehook.xposed.hookAfter
@@ -32,8 +31,6 @@ import de.robv.android.xposed.IXposedHookZygoteInit
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import java.lang.reflect.Field
 import java.lang.reflect.Method
-import java.util.Collections
-import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "miuiime"
@@ -42,7 +39,6 @@ private const val WETYPE_ABOUT_ACTIVITY = "com.tencent.wetype.plugin.hld.ui.ImeA
 private const val WETYPE_ABOUT_LOGO_TAG_KEY = 0x4D495549
 private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
 private const val MODULE_WETYPE_FONT_ASSET = "WE-Regular.ttf"
-private const val INPUT_METHOD_ACTION = "android.view.InputMethod"
 private const val TRANSPARENT_BOTTOM_VIEW_DARK_CONTENT = 0xFFF5F5F5.toInt()
 private const val TRANSPARENT_BOTTOM_VIEW_LIGHT_CONTENT = 0xFF202020.toInt()
 
@@ -61,19 +57,6 @@ private val WETYPE_DRAWABLE_REPLACEMENTS = mapOf(
     "ime_keyboard_full_gradient_bg_color_dark" to R.drawable.wetype_full_gradient_bg_dark
 )
 
-private data class PackageMethods(
-    val getServices: Method
-)
-
-private data class ServiceMethods(
-    val isExported: Method,
-    val getIntents: Method
-)
-
-private data class IntentMethods(
-    val getIntentFilter: Method
-)
-
 class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
     private val miuiImeList = setOf(
         "com.iflytek.inputmethod.miui",
@@ -83,10 +66,6 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         "com.xiaomi.type"
     )
     private val installedHookTokens = ConcurrentHashMap.newKeySet<String>()
-    private val imeDetectionCache = Collections.synchronizedMap(WeakHashMap<Any, Boolean>())
-    private val packageMethodCache = ConcurrentHashMap<Class<*>, PackageMethods>()
-    private val serviceMethodCache = ConcurrentHashMap<Class<*>, ServiceMethods>()
-    private val intentMethodCache = ConcurrentHashMap<Class<*>, IntentMethods>()
     private var navBarColor: Int? = null
     private var bottomViewSourceColor: Int? = null
     private lateinit var modulePath: String
@@ -542,66 +521,25 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private fun startPermissionHook() {
         runCatching {
-            findMethod("com.android.server.pm.AppsFilterUtils") {
-                name == "canQueryViaComponents"
+            findMethod("com.android.server.inputmethod.InputMethodManagerServiceImpl") {
+                name == "isCallingBetweenCustomIME"
             }.hookAfter { param ->
                 if (param.result == true) return@hookAfter
-                val querying = param.args[0] ?: return@hookAfter
-                val potentialTarget = param.args[1] ?: return@hookAfter
-                if (!isIme(querying)) return@hookAfter
-                if (!isIme(potentialTarget)) return@hookAfter
-                param.result = true
+                val context = param.args[0] as? Context ?: return@hookAfter
+                val uid = param.args[1] as? Int ?: return@hookAfter
+                val currentInputMethodPackageName = Settings.Secure.getString(
+                    context.contentResolver,
+                    Settings.Secure.DEFAULT_INPUT_METHOD
+                )?.substringBefore('/') ?: return@hookAfter
+                val packagesForUid = context.packageManager.getPackagesForUid(uid) ?: return@hookAfter
+                if (packagesForUid.contains(currentInputMethodPackageName)) {
+                    param.result = true
+                }
             }
         }.onFailure {
-            Log.i("Failed: Hook method canQueryViaComponents")
+            Log.i("Failed: Hook method isCallingBetweenCustomIME")
             Log.i(it)
         }
-    }
-
-    private fun isIme(androidPackage: Any): Boolean {
-        imeDetectionCache[androidPackage]?.let { return it }
-
-        val result = runCatching {
-            val packageMethods = packageMethodCache.getOrPut(androidPackage.javaClass) {
-                PackageMethods(
-                    getServices = androidPackage.javaClass.findMethodInHierarchy {
-                        name == "getServices" && parameterTypes.isEmpty()
-                    }
-                )
-            }
-            val services = packageMethods.getServices.invoke(androidPackage) as? List<*> ?: emptyList<Any>()
-            services.any { service ->
-                service ?: return@any false
-                val serviceMethods = serviceMethodCache.getOrPut(service.javaClass) {
-                    ServiceMethods(
-                        isExported = service.javaClass.findMethodInHierarchy {
-                            name == "isExported" && parameterTypes.isEmpty()
-                        },
-                        getIntents = service.javaClass.findMethodInHierarchy {
-                            name == "getIntents" && parameterTypes.isEmpty()
-                        }
-                    )
-                }
-                if (serviceMethods.isExported.invoke(service) as? Boolean != true) return@any false
-
-                val intents = serviceMethods.getIntents.invoke(service) as? List<*> ?: emptyList<Any>()
-                intents.any { intent ->
-                    intent ?: return@any false
-                    val intentMethods = intentMethodCache.getOrPut(intent.javaClass) {
-                        IntentMethods(
-                            getIntentFilter = intent.javaClass.findMethodInHierarchy {
-                                name == "getIntentFilter" && parameterTypes.isEmpty()
-                            }
-                        )
-                    }
-                    val intentFilter = intentMethods.getIntentFilter.invoke(intent) as? IntentFilter
-                    intentFilter?.matchAction(INPUT_METHOD_ACTION) == true
-                }
-            }
-        }.getOrDefault(false)
-
-        imeDetectionCache[androidPackage] = result
-        return result
     }
 
     private fun classHookToken(hookName: String, clazz: Class<*>): String =
