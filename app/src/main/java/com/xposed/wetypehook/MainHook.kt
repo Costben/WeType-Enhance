@@ -22,10 +22,12 @@ import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.hookReplace
 import com.xposed.wetypehook.xposed.hookReturnConstant
+import com.xposed.wetypehook.xposed.invokeMethodAs
 import com.xposed.wetypehook.xposed.invokeStaticMethodAuto
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.xposed.putStaticObject
 import com.xposed.wetypehook.xposed.sameAs
+import dalvik.system.BaseDexClassLoader
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.IXposedHookZygoteInit
 import de.robv.android.xposed.callbacks.XC_LoadPackage
@@ -35,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "miuiime"
 private const val WETYPE_PACKAGE = "com.tencent.wetype"
+private const val INPUT_METHOD_BOTTOM_MANAGER = "com.miui.inputmethod.InputMethodBottomManager"
 private const val WETYPE_ABOUT_ACTIVITY = "com.tencent.wetype.plugin.hld.ui.ImeAboutActivity"
 private const val WETYPE_ABOUT_LOGO_TAG_KEY = 0x4D495549
 private const val WETYPE_FONT_ASSET = "fonts/WE-Regular.ttf"
@@ -158,30 +161,48 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
         runCatching {
             findMethod("android.inputmethodservice.InputMethodModuleManager") {
                 name == "loadDex" && parameterTypes.sameAs(ClassLoader::class.java, String::class.java)
-            }.hookAfter { param ->
-                val targetClassLoader = param.args[0] as? ClassLoader ?: return@hookAfter
-                hookDeleteNotSupportIme(
-                    "com.miui.inputmethod.InputMethodBottomManager\$MiuiSwitchInputMethodListener",
-                    targetClassLoader
-                )
-                val bottomManagerClass = loadClassOrNull(
-                    "com.miui.inputmethod.InputMethodBottomManager",
-                    targetClassLoader
-                ) ?: run {
-                    Log.e("Failed:Class not found: com.miui.inputmethod.InputMethodBottomManager")
-                    return@hookAfter
-                }
+            }.hookBefore { param ->
+                runCatching {
+                    val targetClassLoader = param.args[0] as? ClassLoader ?: return@runCatching
+                    val dexPath = param.args[1] as? String ?: return@runCatching
+                    if (targetClassLoader !is BaseDexClassLoader) return@runCatching
 
-                if (isNonCustomize) {
-                    hookSIsImeSupport(bottomManagerClass)
-                    hookIsXiaoAiEnable(bottomManagerClass)
+                    if (!isBottomManagerLoaded(targetClassLoader)) {
+                        targetClassLoader.invokeMethodAs<Any?>("addDexPath", dexPath)
+                    }
+                    installBottomManagerHooks(targetClassLoader, isNonCustomize)
+                    param.result = null
+                }.onFailure {
+                    Log.e("Failed:Handle InputMethodModuleManager.loadDex")
+                    Log.i(it)
                 }
-                hookSupportImeList(bottomManagerClass)
             }
         }.onFailure {
             Log.e("Failed:Hook InputMethodModuleManager.loadDex")
             Log.i(it)
         }
+    }
+
+    private fun isBottomManagerLoaded(classLoader: ClassLoader): Boolean =
+        runCatching {
+            Class.forName(INPUT_METHOD_BOTTOM_MANAGER, true, classLoader)
+        }.isSuccess
+
+    private fun installBottomManagerHooks(classLoader: ClassLoader, isNonCustomize: Boolean) {
+        hookDeleteNotSupportIme(
+            "$INPUT_METHOD_BOTTOM_MANAGER\$MiuiSwitchInputMethodListener",
+            classLoader
+        )
+        val bottomManagerClass = loadClassOrNull(INPUT_METHOD_BOTTOM_MANAGER, classLoader) ?: run {
+            Log.e("Failed:Class not found: $INPUT_METHOD_BOTTOM_MANAGER")
+            return
+        }
+
+        if (isNonCustomize) {
+            hookSIsImeSupport(bottomManagerClass)
+            hookIsXiaoAiEnable(bottomManagerClass)
+        }
+        hookSupportImeList(bottomManagerClass)
     }
 
     private fun hookSupportImeList(clazz: Class<*>) {
