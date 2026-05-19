@@ -6,12 +6,18 @@ import com.xposed.wetypehook.R
 const val LIGHT_KEY_COLOR_GROUP_ID = "transparent_h6"
 const val DARK_KEY_COLOR_GROUP_ID = "transparent_l0"
 
+enum class WeTypeAppearanceColorMode {
+    Direct,
+    HueShift
+}
+
 data class WeTypeAppearanceColorGroup(
     val id: String,
     val displayName: String,
     val defaultColor: Int,
     val colorResourceNames: Set<String> = emptySet(),
-    val themeAttributeNames: Set<String> = emptySet()
+    val themeAttributeNames: Set<String> = emptySet(),
+    val colorMode: WeTypeAppearanceColorMode = WeTypeAppearanceColorMode.Direct
 ) {
     val entryCount: Int
         get() = colorResourceNames.size + themeAttributeNames.size
@@ -26,6 +32,7 @@ object WeTypeAppearanceColorGroups {
             id = "theme_color",
             displayName = "品牌强调色",
             defaultColor = 0xFF23c891.toInt(),
+            colorMode = WeTypeAppearanceColorMode.HueShift,
             colorResourceNames = setOf(
                 "Brand", "Brand_100", "Brand_100_CARE", "Brand_120", "Brand_170",
                 "Brand_80", "Brand_80_CARE", "Brand_90", "Brand_90_CARE",

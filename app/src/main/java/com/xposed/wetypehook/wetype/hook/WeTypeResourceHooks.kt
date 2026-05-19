@@ -24,6 +24,7 @@ import com.xposed.wetypehook.xposed.hookReturnConstant
 import com.xposed.wetypehook.xposed.invokeMethodAs
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
+import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorMode
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.util.Collections
@@ -56,6 +57,24 @@ internal object WeTypeResourceHooks {
     )
     private val candidateItemRootBaseLeftPaddingPx = Collections.synchronizedMap(
         WeakHashMap<Any, Int>()
+    )
+    private val appearanceColorParamsLock = Any()
+    private val hsvScratchThreadLocal = object : ThreadLocal<FloatArray>() {
+        override fun initialValue(): FloatArray = FloatArray(3)
+    }
+
+    @Volatile
+    private var cachedAppearanceColors: Map<String, Int>? = null
+
+    @Volatile
+    private var cachedAppearanceColorParams: Map<String, AppearanceColorParams> = emptyMap()
+
+    private data class AppearanceColorParams(
+        val mode: WeTypeAppearanceColorMode,
+        val userColor: Int,
+        val targetHue: Float = 0f,
+        val deltaSaturation: Float = 0f,
+        val deltaValue: Float = 0f
     )
 
     fun hookFont(
@@ -258,7 +277,12 @@ internal object WeTypeResourceHooks {
                     )
                     return@hookAfter
                 }
-                replaceThemeAttributeColor(typedArray, index, resolvedThemeAttrs)?.also { param.result = it }
+                replaceThemeAttributeColor(
+                    typedArray,
+                    index,
+                    param.result as Int,
+                    resolvedThemeAttrs
+                )?.also { param.result = it }
             }
             TypedArray::class.java.getMethod("getColorStateList", Int::class.javaPrimitiveType)
                 .hookAfter { param ->
@@ -276,7 +300,12 @@ internal object WeTypeResourceHooks {
                         )
                         return@hookAfter
                     }
-                    replaceThemeAttributeColor(typedArray, index, resolvedThemeAttrs)
+                    replaceThemeAttributeColor(
+                        typedArray,
+                        index,
+                        colorStateList.defaultColor,
+                        resolvedThemeAttrs
+                    )
                         ?.also { param.result = ColorStateList.valueOf(it) }
                 }
             Log.i("Success: Hook WeType appearance colors")
@@ -723,7 +752,7 @@ internal object WeTypeResourceHooks {
     ): Int {
         staticColorReplacements[colorResId]?.let { return it }
         val group = dynamicColorReplacements[colorResId] ?: return color
-        return resolvedGroupColor(group)
+        return resolvedGroupColor(group, color)
     }
 
     private fun replaceTypedValue(
@@ -732,8 +761,11 @@ internal object WeTypeResourceHooks {
         dynamicColorReplacements: Map<Int, WeTypeAppearanceColorGroup>
     ): Boolean {
         val colorResId = typedValue.resourceId.takeIf { it != 0 } ?: return false
-        val replacementColor = replaceColor(colorResId, Int.MIN_VALUE, staticColorReplacements, dynamicColorReplacements)
-        if (replacementColor == Int.MIN_VALUE) return false
+        val replacementColor = staticColorReplacements[colorResId]
+            ?: dynamicColorReplacements[colorResId]?.let { group ->
+                resolvedGroupColor(group, typedValue.data)
+            }
+            ?: return false
 
         typedValue.type = when (Color.alpha(replacementColor)) {
             0xFF -> TypedValue.TYPE_INT_COLOR_RGB8
@@ -868,7 +900,7 @@ internal object WeTypeResourceHooks {
         resolvedThemeAttrs: Map<Int, WeTypeAppearanceColorGroup>
     ): Boolean {
         val group = resolvedThemeAttrs[attrResId] ?: return false
-        val replacementColor = WeTypeSettings.getAppearanceColorXposed(group.id)
+        val replacementColor = resolvedGroupColor(group, typedValue.data)
         typedValue.type = when (Color.alpha(replacementColor)) {
             0xFF -> TypedValue.TYPE_INT_COLOR_RGB8
             else -> TypedValue.TYPE_INT_COLOR_ARGB8
@@ -883,16 +915,96 @@ internal object WeTypeResourceHooks {
     private fun replaceThemeAttributeColor(
         typedArray: TypedArray, 
         index: Int,
+        color: Int,
         resolvedThemeAttrs: Map<Int, WeTypeAppearanceColorGroup>
     ): Int? {
         val attrIds = typedArrayAttributeCache[typedArray] ?: return null
         val attrResId = attrIds.getOrNull(index) ?: return null
         val group = resolvedThemeAttrs[attrResId] ?: return null
-        return resolvedGroupColor(group)
+        return resolvedGroupColor(group, color)
     }
 
-    private fun resolvedGroupColor(group: WeTypeAppearanceColorGroup): Int {
-        return WeTypeSettings.getAppearanceColorXposed(group.id)
+    private fun resolvedGroupColor(group: WeTypeAppearanceColorGroup, sourceColor: Int): Int {
+        val params = appearanceColorParams(group)
+        return when (params.mode) {
+            WeTypeAppearanceColorMode.Direct -> params.userColor
+            WeTypeAppearanceColorMode.HueShift -> tintToAccent(
+                sourceColor = sourceColor,
+                params = params
+            )
+        }
+    }
+
+    private fun appearanceColorParams(group: WeTypeAppearanceColorGroup): AppearanceColorParams {
+        val appearanceColors = WeTypeSettings.getAppearanceColorsXposed()
+        val cachedColors = cachedAppearanceColors
+        if (appearanceColors === cachedColors) {
+            cachedAppearanceColorParams[group.id]?.let { return it }
+        }
+
+        synchronized(appearanceColorParamsLock) {
+            if (appearanceColors !== cachedAppearanceColors) {
+                cachedAppearanceColorParams = buildAppearanceColorParams(appearanceColors)
+                cachedAppearanceColors = appearanceColors
+            }
+            cachedAppearanceColorParams[group.id]?.let { return it }
+
+            val params = buildAppearanceColorParam(
+                group = group,
+                userColor = appearanceColors[group.id] ?: group.defaultColor
+            )
+            cachedAppearanceColorParams = cachedAppearanceColorParams + (group.id to params)
+            return params
+        }
+    }
+
+    private fun buildAppearanceColorParams(
+        appearanceColors: Map<String, Int>
+    ): Map<String, AppearanceColorParams> {
+        return WeTypeAppearanceColorGroups.groups.associate { group ->
+            group.id to buildAppearanceColorParam(
+                group = group,
+                userColor = appearanceColors[group.id] ?: group.defaultColor
+            )
+        }
+    }
+
+    private fun buildAppearanceColorParam(
+        group: WeTypeAppearanceColorGroup,
+        userColor: Int
+    ): AppearanceColorParams {
+        if (group.colorMode == WeTypeAppearanceColorMode.Direct) {
+            return AppearanceColorParams(
+                mode = group.colorMode,
+                userColor = userColor
+            )
+        }
+
+        val defaultHsv = FloatArray(3)
+        val targetHsv = FloatArray(3)
+        Color.colorToHSV(group.defaultColor, defaultHsv)
+        Color.colorToHSV(userColor, targetHsv)
+        return AppearanceColorParams(
+            mode = group.colorMode,
+            userColor = userColor,
+            targetHue = targetHsv[0],
+            deltaSaturation = targetHsv[1] - defaultHsv[1],
+            deltaValue = targetHsv[2] - defaultHsv[2]
+        )
+    }
+
+    private fun tintToAccent(sourceColor: Int, params: AppearanceColorParams): Int {
+        val sourceHsv = obtainHsvScratch()
+        Color.colorToHSV(sourceColor, sourceHsv)
+
+        sourceHsv[0] = params.targetHue
+        sourceHsv[1] = (sourceHsv[1] + params.deltaSaturation).coerceIn(0f, 1f)
+        sourceHsv[2] = (sourceHsv[2] + params.deltaValue).coerceIn(0f, 1f)
+        return Color.HSVToColor(Color.alpha(sourceColor), sourceHsv)
+    }
+
+    private fun obtainHsvScratch(): FloatArray {
+        return hsvScratchThreadLocal.get()!!
     }
 
     private fun containsTargetWeTypeThemeAttr(

@@ -225,6 +225,8 @@ object WeTypeSettings {
             ?: WeTypeAppearanceColorGroups.findById(groupId)?.defaultColor
             ?: 0
 
+    fun getAppearanceColorsXposed(): Map<String, Int> = readSnapshotXposed().appearanceColors
+
     fun readSnapshot(context: Context): Snapshot {
         val prefs = appPreferences(context)
         return prefs.toSnapshotOrNull() ?: readSnapshotXposed()
