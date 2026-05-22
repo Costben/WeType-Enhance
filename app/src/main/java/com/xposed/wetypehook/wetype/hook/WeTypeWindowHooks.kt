@@ -42,6 +42,7 @@ internal object WeTypeWindowHooks {
     private data class WeTypeWindowState(
         var blurApplyToken: Int = 0,
         var blurEligible: Boolean = false,
+        var windowVisible: Boolean = false,
         var backgroundCarrier: View? = null,
         var inputMethodService: Any? = null,
         var heightChangeListener: View.OnLayoutChangeListener? = null,
@@ -118,6 +119,34 @@ internal object WeTypeWindowHooks {
             ).hookAfter { param ->
                 onComputeInsets(param.thisObject, param.args.getOrNull(0) as? InputMethodService.Insets)
             }
+            runCatching {
+                inputMethodService.getMethod("onWindowHidden").hookAfter { param ->
+                    onWindowInactive(param.thisObject, removeCarrier = false)
+                }
+            }
+            runCatching {
+                inputMethodService.getMethod(
+                    "onFinishInputView",
+                    Boolean::class.javaPrimitiveType
+                ).hookAfter { param ->
+                    onWindowInactive(param.thisObject, removeCarrier = false)
+                }
+            }
+            runCatching {
+                inputMethodService.getMethod("onFinishInput").hookAfter { param ->
+                    onWindowInactive(param.thisObject, removeCarrier = false)
+                }
+            }
+            runCatching {
+                inputMethodService.getMethod("hideWindow").hookAfter { param ->
+                    onWindowInactive(param.thisObject, removeCarrier = false)
+                }
+            }
+            runCatching {
+                inputMethodService.getMethod("onDestroy").hookAfter { param ->
+                    onWindowInactive(param.thisObject, removeCarrier = true)
+                }
+            }
             Log.i("Success: Hook WeType window blur")
         }.onFailure {
             Log.i("Failed: Hook WeType window blur")
@@ -161,11 +190,20 @@ internal object WeTypeWindowHooks {
                 ?: window.decorView.height.takeIf { it > 0 }
                 ?: return@runCatching
             val visibleTopInsets = insets?.visibleTopInsets ?: return@runCatching
-            state.computedVisibleImeHeightPx = (rootHeight - visibleTopInsets).coerceAtLeast(0)
+            val visibleImeHeight = (rootHeight - visibleTopInsets).coerceAtLeast(0)
+            val previousVisibleImeHeight = state.computedVisibleImeHeightPx
+            state.computedVisibleImeHeightPx = visibleImeHeight
 
-            if (state.blurEligible || state.backgroundCarrier != null) {
-                scheduleWindowBlur(inputMethodService)
+            if (!state.windowVisible) return@runCatching
+            if (visibleImeHeight <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {
+                val wasExpanded = previousVisibleImeHeight
+                    ?.let { it > WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX } != false
+                if (wasExpanded) state.blurApplyToken++
+                hideBackgroundCarrier(state)
+                return@runCatching
             }
+            if (visibleImeHeight == previousVisibleImeHeight) return@runCatching
+            if (state.blurEligible) scheduleWindowBlur(inputMethodService)
         }.onFailure {
             Log.i("Failed: Track WeType visible IME height")
             Log.i(it)
@@ -180,7 +218,15 @@ internal object WeTypeWindowHooks {
                     state.blurEligible = false
                     state.computedVisibleImeHeightPx = null
                 }
-                "onWindowShown", "updateFullscreenMode" -> state.blurEligible = true
+                "onWindowShown" -> {
+                    state.windowVisible = true
+                    state.blurEligible = true
+                    state.computedVisibleImeHeightPx = null
+                }
+                "updateFullscreenMode" -> {
+                    if (!state.windowVisible) return@runCatching
+                    state.blurEligible = true
+                }
             }
 
             if (!state.blurEligible) return@runCatching
@@ -193,6 +239,7 @@ internal object WeTypeWindowHooks {
 
     private fun scheduleWindowBlur(inputMethodService: Any) {
         val state = getWindowState(inputMethodService)
+        if (!state.windowVisible) return
         val token = ++state.blurApplyToken
         applyWindowBlurWhenReady(inputMethodService, token, 0)
     }
@@ -201,6 +248,7 @@ internal object WeTypeWindowHooks {
         runCatching {
             val state = getWindowState(inputMethodService)
             if (state.blurApplyToken != token) return
+            if (!state.windowVisible || !state.blurEligible) return
 
             val context = inputMethodService as? Context ?: return
             val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return
@@ -232,6 +280,7 @@ internal object WeTypeWindowHooks {
         runCatching {
             val state = getWindowState(inputMethodService)
             if (state.blurApplyToken != token) return
+            if (!state.windowVisible || !state.blurEligible) return
 
             val context = inputMethodService as? Context ?: return
             val softInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return
@@ -242,6 +291,7 @@ internal object WeTypeWindowHooks {
                 runCatching {
                     val latestState = getWindowState(inputMethodService)
                     if (latestState.blurApplyToken != token) return@runCatching
+                    if (!latestState.windowVisible || !latestState.blurEligible) return@runCatching
 
                     val latestSoftInputWindow = inputMethodService.invokeMethodAs<Any>("getWindow") ?: return@runCatching
                     val latestWindow = latestSoftInputWindow.invokeMethodAs<Window>("getWindow") ?: return@runCatching
@@ -281,6 +331,26 @@ internal object WeTypeWindowHooks {
         synchronized(weTypeWindowStates) {
             weTypeWindowStates.getOrPut(inputMethodService) { WeTypeWindowState() }
         }
+
+    private fun onWindowInactive(inputMethodService: Any, removeCarrier: Boolean) {
+        runCatching {
+            val state = getWindowState(inputMethodService)
+            state.windowVisible = false
+            state.blurEligible = false
+            state.computedVisibleImeHeightPx = null
+            state.blurApplyToken++
+            hideBackgroundCarrier(state)
+            if (removeCarrier) {
+                removeBackgroundCarrier(state)
+                synchronized(weTypeWindowStates) {
+                    weTypeWindowStates.remove(inputMethodService)
+                }
+            }
+        }.onFailure {
+            Log.i("Failed: Cleanup WeType window background")
+            Log.i(it)
+        }
+    }
 
     private fun resolveCornerRadii(targetView: View, context: Context, state: WeTypeWindowState): WeTypeCornerRadii {
         val topRadius = android.util.TypedValue.applyDimension(
@@ -380,6 +450,7 @@ internal object WeTypeWindowHooks {
             if (oldHeight == newHeight) return@OnLayoutChangeListener
 
             runCatching {
+                if (!state.windowVisible || !state.blurEligible) return@runCatching
                 val ims = state.inputMethodService ?: return@runCatching
                 val softInputWindow = ims.invokeMethodAs<Any>("getWindow") ?: return@runCatching
                 val window = softInputWindow.invokeMethodAs<Window>("getWindow") ?: return@runCatching
@@ -488,6 +559,13 @@ internal object WeTypeWindowHooks {
             layoutParams.topMargin = 0
             carrier.layoutParams = layoutParams
         }
+    }
+
+    private fun removeBackgroundCarrier(state: WeTypeWindowState) {
+        val carrier = state.backgroundCarrier ?: return
+        (carrier.parent as? ViewGroup)?.removeView(carrier)
+        state.backgroundCarrier = null
+        state.inputMethodService = null
     }
 
     private fun createBackgroundDrawable(targetView: View, context: Context, cornerRadii: WeTypeCornerRadii): Drawable {
