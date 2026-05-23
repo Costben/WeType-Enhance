@@ -125,19 +125,6 @@ internal object WeTypeWindowHooks {
                 }
             }
             runCatching {
-                inputMethodService.getMethod(
-                    "onFinishInputView",
-                    Boolean::class.javaPrimitiveType
-                ).hookAfter { param ->
-                    onWindowInactive(param.thisObject, removeCarrier = false)
-                }
-            }
-            runCatching {
-                inputMethodService.getMethod("onFinishInput").hookAfter { param ->
-                    onWindowInactive(param.thisObject, removeCarrier = false)
-                }
-            }
-            runCatching {
                 inputMethodService.getMethod("hideWindow").hookAfter { param ->
                     onWindowInactive(param.thisObject, removeCarrier = false)
                 }
@@ -215,8 +202,8 @@ internal object WeTypeWindowHooks {
             val state = getWindowState(inputMethodService)
             when (stage) {
                 "onStartInputView" -> {
-                    state.blurEligible = false
                     state.computedVisibleImeHeightPx = null
+                    state.blurEligible = state.windowVisible
                 }
                 "onWindowShown" -> {
                     state.windowVisible = true
