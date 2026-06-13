@@ -33,6 +33,12 @@ import kotlin.math.roundToInt
 
 internal object WeTypeResourceHooks {
     private const val WETYPE_RESOURCE_PACKAGE = "com.tencent.wetype"
+    private const val WETYPE_DRAWABLE_R_CLASS = "com.tencent.wetype.plugin.hld.r"
+
+    // Background opacity fraction applied to the synthesized logo drawable. Dark logo variants use a
+    // much lighter background so the white backing circle stays subtle against dark keyboards.
+    private const val LOGO_LIGHT_BG_ALPHA_FRACTION = 0.9f
+    private const val LOGO_DARK_BG_ALPHA_FRACTION = 0.2f
     private const val CANDIDATE_SELF_VIEW_CLASS =
         "com.tencent.wetype.plugin.hld.candidate.selfdraw.selfview.d"
     private const val CANDIDATE_WITH_EXTRA_COMPANION_CLASS =
@@ -551,6 +557,14 @@ internal object WeTypeResourceHooks {
             val sClass = loadClassOrNull("com.tencent.wetype.plugin.hld.s") ?: return
             val logoIvId = sClass.getField("logo_iv").getInt(null)
 
+            // Resolve the resource IDs of the "dark" logo variants up-front from the host's R
+            // drawable class. The R field names (e.g. ime_logo_green_dark) are stable source
+            // identifiers that survive across host versions, whereas the obfuscated resource
+            // *entry* names returned by getResourceEntryName (e.g. "j3" in 3.3.0, "j1" in 3.4.0)
+            // change between releases. Matching on those entry-name strings is what previously
+            // broke the dark-logo detection on 3.4.0 and left the background fully opaque.
+            val darkLogoResIds = resolveDarkLogoResIds()
+
             val replaceLogo = object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val imageView = param.thisObject as? android.widget.ImageView ?: return
@@ -558,19 +572,18 @@ internal object WeTypeResourceHooks {
                         val drawableArg = param.args.getOrNull(0)
                         if (drawableArg is WeTypeIconDrawable) return
 
-                        var alpha = 0.9f
+                        var alpha = LOGO_LIGHT_BG_ALPHA_FRACTION
                         if (param.method.name == "setImageResource") {
                             val resId = param.args[0] as Int
-                            val resName = runCatching { imageView.resources.getResourceEntryName(resId) }.getOrNull() ?: ""
-                            if (resName.contains("dark") || resName == "io" || resName == "j3") {
-                                alpha = 0.2f
+                            if (isDarkLogoResource(resId, darkLogoResIds, imageView.resources)) {
+                                alpha = LOGO_DARK_BG_ALPHA_FRACTION
                             }
                             imageView.setImageDrawable(WeTypeIconDrawable(alpha))
                             param.result = null
                         } else {
                             val uiMode = imageView.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
                             if (uiMode == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
-                                alpha = 0.2f
+                                alpha = LOGO_DARK_BG_ALPHA_FRACTION
                             }
                             param.args[0] = WeTypeIconDrawable(alpha)
                         }
@@ -595,6 +608,46 @@ internal object WeTypeResourceHooks {
             Log.i("Failed: Hook WeType keyboard logo")
             Log.i(it)
         }
+    }
+
+    /**
+     * Resolves the resource IDs of every "dark" keyboard-logo drawable from the host's R drawable
+     * class by their stable source field names (e.g. ime_logo_green_dark, icon_logo_grey_dark).
+     *
+     * This is deliberately version-agnostic: it enumerates the R fields whose names identify a dark
+     * logo variant rather than relying on the obfuscated resource entry names, which differ between
+     * host releases (e.g. "j3" on 3.3.0 vs "j1" on 3.4.0). Returns an empty set if the class or
+     * fields cannot be resolved, in which case the caller falls back to name/uiMode heuristics.
+     */
+    private fun resolveDarkLogoResIds(): Set<Int> {
+        val rClass = loadClassOrNull(WETYPE_DRAWABLE_R_CLASS) ?: return emptySet()
+        return rClass.declaredFields.asSequence()
+            .filter { field ->
+                val name = field.name.lowercase()
+                java.lang.reflect.Modifier.isStatic(field.modifiers) &&
+                    field.type == Int::class.javaPrimitiveType &&
+                    name.contains("logo") &&
+                    name.endsWith("_dark")
+            }
+            .mapNotNull { field ->
+                runCatching {
+                    field.isAccessible = true
+                    field.getInt(null)
+                }.getOrNull()
+            }
+            .toSet()
+    }
+
+    private fun isDarkLogoResource(
+        resId: Int,
+        darkLogoResIds: Set<Int>,
+        resources: Resources
+    ): Boolean {
+        if (resId in darkLogoResIds) return true
+        // Fallback for host builds that keep readable resource entry names (the dark variants then
+        // literally contain "dark", e.g. icon_logo_grey_dark).
+        val resName = runCatching { resources.getResourceEntryName(resId) }.getOrNull().orEmpty()
+        return resName.contains("dark", ignoreCase = true)
     }
 
     fun hookToolbarIconBackground() {
