@@ -63,14 +63,18 @@ object WeTypeAppearanceColorGroups {
         WeTypeAppearanceColorGroup(
             id = LIGHT_KEY_COLOR_GROUP_ID,
             displayName = "浅色模式按键色",
-            defaultColor = 0xFFfcfcfe.toInt(),
-            colorResourceNames = setOf("ime_skin_color_12")
+            defaultColor = 0xABFFFFFF.toInt(),
+            // Scope to the self-draw key fill resources only: normal/QWERTY keys ("white") and
+            // special/function keys ("grey"). Resolved by stable R.color field names so it stays
+            // version-agnostic, and deliberately excludes keys backed by other colors (e.g. the
+            // theme-colored "搜索"/enter key) and unrelated non-key surfaces.
+            colorResourceNames = setOf("ime_skin_key_white_color", "ime_skin_key_grey_color")
         ),
         WeTypeAppearanceColorGroup(
             id = DARK_KEY_COLOR_GROUP_ID,
             displayName = "深色模式按键色",
-            defaultColor = 0xFF707070.toInt(),
-            colorResourceNames = setOf("ime_skin_dark_color_12")
+            defaultColor = 0x2BEDEDED,
+            colorResourceNames = setOf("ime_skin_dark_key_white_color", "ime_skin_dark_key_grey_color")
         )
     )
 

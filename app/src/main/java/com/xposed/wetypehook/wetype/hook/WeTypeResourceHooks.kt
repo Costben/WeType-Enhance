@@ -27,6 +27,8 @@ import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorMode
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
+import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
+import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
 import java.util.Collections
 import java.util.WeakHashMap
 import kotlin.math.roundToInt
@@ -34,6 +36,11 @@ import kotlin.math.roundToInt
 internal object WeTypeResourceHooks {
     private const val WETYPE_RESOURCE_PACKAGE = "com.tencent.wetype"
     private const val WETYPE_DRAWABLE_R_CLASS = "com.tencent.wetype.plugin.hld.r"
+    private const val WETYPE_ATTR_R_CLASS = "com.tencent.wetype.plugin.hld.o"
+    private const val WETYPE_ID_R_CLASS = "com.tencent.wetype.plugin.hld.s"
+
+    // Faint hairline alpha applied to the host key border color (mirrors the legacy flat look).
+    private const val KEY_BORDER_ALPHA = 0x20
 
     // Background opacity fraction applied to the synthesized logo drawable. Dark logo variants use a
     // much lighter background so the white backing circle stays subtle against dark keyboards.
@@ -393,33 +400,105 @@ internal object WeTypeResourceHooks {
         }
     }
 
+    /**
+     * Recolors the self-draw keyboard keys by intercepting the host's theme-attribute color
+     * resolution (`Resources.Theme.resolveAttribute`), the single funnel every self-draw key
+     * fill/shadow/border color is resolved through — both the layout-JSON `@attr/?attr` button
+     * colors (the bulk of keys) and the few programmatically-styled keys.
+     *
+     * Scoping is done purely by the stable R.attr field names of the key background attributes
+     * (resolved via the positionally-stable R.attr class, never by version-specific method/entry
+     * names). The "white" attributes cover normal/QWERTY keys and the "grey" attributes cover
+     * special/function keys (backspace, "123", symbols, caps lock, ...). Accent keys (the green
+     * "搜索"/enter button, `ime_color_btn_green_*`) and every non-key surface are intentionally left
+     * untouched. The light/dark variants share the same attribute id and are disambiguated at
+     * resolve time from the theme's night-mode configuration, matching the background color's
+     * light/dark handling. Matching on the attribute id (rather than the resolved resource id) is
+     * what makes this robust: the skin frequently resolves these attributes to inline colors whose
+     * `TypedValue.resourceId` is 0.
+     */
     fun hookSelfDrawKeyColors() {
         runCatching {
-            val imeButtonClass = loadClassOrNull("com.tencent.wetype.plugin.hld.keyboard.selfdraw.j")
-                ?: error("Failed to load ImeButton")
-
-            listOf(
-                "i" to { context: Context -> WeTypeSettings.getKeyOpacityXposed(context) },
-                "k" to { _: Context -> 0x20 },
-                "X" to { context: Context -> (WeTypeSettings.getKeyOpacityXposed(context) + 20).coerceAtMost(255) }
-            ).forEach { (methodName, alphaProvider) ->
-                imeButtonClass.getMethod(methodName).hookAfter { param ->
-                    val color = param.result as? Int ?: return@hookAfter
-                    if (color == 0) return@hookAfter
-                    val button = param.thisObject ?: return@hookAfter
-                    val view = runCatching { button.getObjectAs<android.view.View>("a") }.getOrNull()
-                    val context = view?.context ?: return@hookAfter
-                    param.result = withForcedAlpha(color, alphaProvider(context))
-                }
+            val keyAttrRoles = resolveResourceIds(
+                mapOf(
+                    // Skin-layout button backgrounds (the bulk of keys: QWERTY/normal -> "white",
+                    // special keys such as backspace/"123"/symbols -> "grey"). These are what the
+                    // keyboard JSON references via @attr/?attr and are resolved through
+                    // Resources.Theme.resolveAttribute.
+                    "ime_color_btn_white_bg" to KeyAttrRole.Fill,
+                    "ime_color_btn_grey_bg" to KeyAttrRole.Fill,
+                    "ime_color_btn_white_shadow" to KeyAttrRole.Shadow,
+                    "ime_color_btn_grey_shadow" to KeyAttrRole.Shadow,
+                    // Dark-mode key shadow: the layout color arrays use this shared black-50%
+                    // attribute as their dark slot for both white and grey keys. It is referenced
+                    // exclusively by key shadowColor entries (verified: no code/other-resource use),
+                    // so neutralizing the attribute resolution is safe and key-scoped.
+                    "UN_BW_0_Alpha_0_5" to KeyAttrRole.Shadow,
+                    "ime_color_btn_white_border" to KeyAttrRole.Border,
+                    "ime_color_btn_grey_border" to KeyAttrRole.Border,
+                    // Programmatically-styled keys (e.g. caps lock / enter / separator) that read the
+                    // key colors directly instead of from the layout JSON.
+                    "ime_key_white_color" to KeyAttrRole.Fill,
+                    "ime_key_grey_color" to KeyAttrRole.Fill,
+                    "ime_key_white_shadow_color" to KeyAttrRole.Shadow,
+                    "ime_key_grey_shadow_color" to KeyAttrRole.Shadow,
+                    "ime_key_white_border_color" to KeyAttrRole.Border,
+                    "ime_key_grey_border_color" to KeyAttrRole.Border
+                ),
+                WETYPE_ATTR_R_CLASS,
+                WETYPE_ID_R_CLASS
+            )
+            check(keyAttrRoles.values.any { it == KeyAttrRole.Fill }) {
+                "Failed to resolve key background theme attributes"
             }
 
-            imeButtonClass.getMethod("Y").hookReturnConstant(Color.TRANSPARENT)
+            Resources.Theme::class.java.getMethod(
+                "resolveAttribute",
+                Int::class.javaPrimitiveType,
+                TypedValue::class.java,
+                Boolean::class.javaPrimitiveType
+            ).hookAfter { param ->
+                if (param.result != true) return@hookAfter
+                val attrResId = param.args[0] as? Int ?: return@hookAfter
+                val role = keyAttrRoles[attrResId] ?: return@hookAfter
+                val outValue = param.args[1] as? TypedValue ?: return@hookAfter
+                val theme = param.thisObject as? Resources.Theme ?: return@hookAfter
+                val replacement = when (role) {
+                    KeyAttrRole.Fill -> resolveKeyColor(theme)
+                    KeyAttrRole.Shadow -> Color.TRANSPARENT
+                    // Keep a faint hairline using the host's own border hue at low opacity.
+                    KeyAttrRole.Border -> withForcedAlpha(outValue.data, KEY_BORDER_ALPHA)
+                }
+                applyColorToTypedValue(outValue, replacement)
+            }
 
             Log.i("Success: Hook WeType self-draw key colors")
         }.onFailure {
             Log.i("Failed: Hook WeType self-draw key colors")
             Log.i(it)
         }
+    }
+
+    private enum class KeyAttrRole { Fill, Shadow, Border }
+
+    private fun resolveKeyColor(theme: Resources.Theme): Int {
+        val isDarkMode = theme.resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val groupId = if (isDarkMode) DARK_KEY_COLOR_GROUP_ID else LIGHT_KEY_COLOR_GROUP_ID
+        return WeTypeSettings.getAppearanceColorXposed(groupId)
+    }
+
+    private fun applyColorToTypedValue(outValue: TypedValue, color: Int) {
+        outValue.type = if (Color.alpha(color) == 0xFF) {
+            TypedValue.TYPE_INT_COLOR_RGB8
+        } else {
+            TypedValue.TYPE_INT_COLOR_ARGB8
+        }
+        outValue.data = color
+        outValue.assetCookie = 0
+        outValue.resourceId = 0
+        outValue.string = null
     }
 
     fun hookCandidateSpecialTextColor() {

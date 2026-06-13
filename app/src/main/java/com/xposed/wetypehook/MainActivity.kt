@@ -421,7 +421,6 @@ private fun WeTypeSettingsScreen(
     var cornerRadius by rememberSaveable { mutableIntStateOf(snapshot.cornerRadius) }
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
-    var keyOpacity by rememberSaveable { mutableIntStateOf(snapshot.keyOpacity) }
     var candidateBackgroundAlpha by rememberSaveable {
         mutableIntStateOf(snapshot.candidateBackgroundAlpha)
     }
@@ -500,7 +499,6 @@ private fun WeTypeSettingsScreen(
             cornerRadius = cornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
-            keyOpacity = keyOpacity,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.toIntOrNull()
@@ -523,7 +521,6 @@ private fun WeTypeSettingsScreen(
         cornerRadius = WeTypeSettings.DEFAULT_CORNER_RADIUS
         edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
         edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
-        keyOpacity = WeTypeSettings.DEFAULT_KEY_OPACITY
         candidateBackgroundAlpha = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_ALPHA
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
         candidateBackgroundLeftMarginDp =
@@ -587,7 +584,6 @@ private fun WeTypeSettingsScreen(
                         cornerRadius = cornerRadius,
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         edgeHighlightIntensity = edgeHighlightIntensity,
-                        keyOpacity = keyOpacity,
                         lightKeyColor = keyColorValue(false),
                         darkKeyColor = keyColorValue(true),
                         isDark = currentModeIsDark
@@ -715,7 +711,7 @@ private fun WeTypeSettingsScreen(
                             },
                             summary = stringResource(
                                 R.string.settings_key_color_group_summary,
-                                keyOpacity,
+                                Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
                                 currentKeyGroup.entryCount
                             ),
                             color = appearanceGroupColors[currentKeyGroupIndex],
@@ -767,13 +763,6 @@ private fun WeTypeSettingsScreen(
                             value = cornerRadius,
                             max = WeTypeSettings.MAX_CORNER_RADIUS,
                             onValueChange = { cornerRadius = it }
-                        )
-
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_key_opacity_title),
-                            value = keyOpacity,
-                            max = 255,
-                            onValueChange = { keyOpacity = it }
                         )
 
                         SliderPreferenceItem(
@@ -932,7 +921,6 @@ private fun PreviewSection(
     cornerRadius: Int,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
-    keyOpacity: Int,
     lightKeyColor: Int,
     darkKeyColor: Int,
     isDark: Boolean
@@ -966,7 +954,6 @@ private fun PreviewSection(
                         cornerRadius = cornerRadius,
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         edgeHighlightIntensity = edgeHighlightIntensity,
-                        keyOpacity = keyOpacity,
                         lightKeyColor = lightKeyColor,
                         darkKeyColor = darkKeyColor,
                         isDark = isDark
@@ -984,7 +971,6 @@ private fun PreviewCard(
     cornerRadius: Int,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
-    keyOpacity: Int,
     lightKeyColor: Int,
     darkKeyColor: Int,
     isDark: Boolean
@@ -1063,7 +1049,7 @@ private fun PreviewCard(
                             Box(
                                 modifier = Modifier
                                     .clip(previewKeyShape)
-                                    .background(previewKeyBackgroundColor(previewKeyColor, keyOpacity))
+                                    .background(ComposeColor(previewKeyColor))
                                     .padding(horizontal = 14.dp, vertical = 8.dp)
                             ) {
                                 Text(
@@ -1078,7 +1064,7 @@ private fun PreviewCard(
                                 Box(
                                     modifier = Modifier
                                         .clip(previewKeyShape)
-                                        .background(previewKeyBackgroundColor(previewKeyColor, keyOpacity))
+                                        .background(ComposeColor(previewKeyColor))
                                         .padding(horizontal = 14.dp, vertical = 8.dp)
                                 ) {
                                     Text(
@@ -1103,16 +1089,6 @@ private fun PreviewCard(
     }
 }
 
-private fun previewKeyBackgroundColor(baseColor: Int, keyOpacity: Int): ComposeColor {
-    return ComposeColor(
-        Color.argb(
-            keyOpacity.coerceIn(0, 255),
-            Color.red(baseColor),
-            Color.green(baseColor),
-            Color.blue(baseColor)
-        )
-    )
-}
 
 @Composable
 private fun Modifier.weTypePreviewBloom(
@@ -1265,33 +1241,52 @@ private fun KeyColorEditor(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-    ) {
-        Text(
-            text = title,
-            style = MiuixTheme.textStyles.main
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 16.dp)
+        ) {
+            Text(
+                text = title,
+                style = MiuixTheme.textStyles.main
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = summary,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                style = MiuixTheme.textStyles.body2
+            )
+        }
+        // Per-mode key opacity, baked directly into the key color's alpha channel (same logic as
+        // the background opacity slider above).
+        SliderPreferenceItem(
+            title = stringResource(R.string.settings_key_opacity_title),
+            value = Color.alpha(color),
+            max = 255,
+            onValueChange = { alpha ->
+                onColorChange((alpha shl 24) or (color and 0xFFFFFF))
+            }
         )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = summary,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            style = MiuixTheme.textStyles.body2
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        TextField(
-            value = input,
-            onValueChange = { raw ->
-                val sanitized = sanitizeRgbColorInput(raw) ?: return@TextField
-                input = sanitized
-                parseRgbColor(sanitized)?.let(onColorChange)
-            },
-            label = stringResource(R.string.settings_key_color_input_label),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+        ) {
+            TextField(
+                value = input,
+                onValueChange = { raw ->
+                    val sanitized = sanitizeRgbColorInput(raw) ?: return@TextField
+                    input = sanitized
+                    parseRgbColor(sanitized)?.let { rgb ->
+                        onColorChange((color and 0xFF000000.toInt()) or (rgb and 0xFFFFFF))
+                    }
+                },
+                label = stringResource(R.string.settings_key_color_input_label),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 
