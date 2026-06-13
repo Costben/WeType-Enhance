@@ -2,55 +2,55 @@ package com.xposed.wetypehook.wetype.graphics
 
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
-import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.util.TypedValue
-import kotlin.math.cos
+import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
-private data class BloomStrokeLightSource(
-    val centerXFraction: Float,
-    val centerYFraction: Float,
-    val depth: Float,
+/**
+ * A single CSS-style box-shadow layer. All length values are expressed in CSS px and are mapped to
+ * density-independent pixels at draw time, matching the rest of this drawable.
+ */
+private data class BoxShadow(
+    val inset: Boolean,
+    val offsetX: Float,
+    val offsetY: Float,
+    val blur: Float,
+    val spread: Float,
     val color: Int
 )
 
-private data class BloomStrokeSpec(
-    val strokeWidth: Float,
-    val gradientAngle: Float,
-    val baseColor: Int,
-    val glowWidth: Float,
-    val source1: BloomStrokeLightSource,
-    val source2: BloomStrokeLightSource
+private class RenderedShadow(
+    val inset: Boolean,
+    val path: Path,
+    val paint: Paint
 )
 
-private val glassStrokeSmallLight = floatArrayOf(
-    0.8f, 180.0f,
-    1.0f, 1.0f, 1.0f, 0.05f,
-    2.6f,
-    0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.6f,
-    0.5f, 0.95f, -0.5f, 1.0f, 1.0f, 1.0f, 0.35f
-)
-
-private val glassStrokeSmallDark = floatArrayOf(
-    0.8f, 180.0f,
-    1.0f, 1.0f, 1.0f, 0.08f,
-    2.3f,
-    0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.6f,
-    0.5f, 0.95f, -0.36f, 1.0f, 1.0f, 1.0f, 0.25f
-)
-
+/**
+ * Renders the keyboard edge highlight as a faithful reproduction of the following CSS box-shadow
+ * stack (the first listed shadow paints on top, per the CSS spec):
+ *
+ * ```
+ * box-shadow:
+ *   inset 2px 2px 0.25px -1.5px rgba(255, 255, 255, 0.70),
+ *   inset 1px 1px 2px 0 rgb(255 255 255 / 80%),
+ *   inset -1px -1px 2px 0 rgb(255 255 255 / 60%),
+ *   inset 0 0 8px 1px rgba(0, 0, 0, 0.20);
+ * ```
+ *
+ * Outer shadows are clipped to the region outside the content shape so the overlay never darkens the
+ * surface interior; inset shadows are clipped to the inside of the content shape. The public API is
+ * unchanged so existing call sites keep working.
+ */
 internal class WeTypeBloomStrokeDrawable(
     private val context: Context,
     private val cornerRadii: WeTypeCornerRadii,
@@ -58,54 +58,36 @@ internal class WeTypeBloomStrokeDrawable(
     private val intensityScale: Float = 1f
 ) : Drawable() {
     private val contentPath = Path()
-    private val glowPath = Path()
-    private val innerGlowPath = Path()
-    private val highlightPath = Path()
-
-    private val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val outerGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val innerGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val source1GlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val source2GlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val hairlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val renderedShadows = mutableListOf<RenderedShadow>()
 
     private var drawableAlpha = 255
+    private var activeColorFilter: ColorFilter? = null
 
     override fun draw(canvas: Canvas) {
-        if (!contentPath.isEmpty) {
-            canvas.drawPath(contentPath, sheenPaint)
-        }
-        if (!glowPath.isEmpty) {
-            canvas.drawPath(glowPath, outerGlowPaint)
-            canvas.drawPath(glowPath, source1GlowPaint)
-            canvas.drawPath(glowPath, source2GlowPaint)
-        }
-        if (!innerGlowPath.isEmpty) {
-            canvas.drawPath(innerGlowPath, innerGlowPaint)
-        }
-        if (!highlightPath.isEmpty) {
-            canvas.drawPath(highlightPath, highlightPaint)
-            canvas.drawPath(highlightPath, hairlinePaint)
+        if (contentPath.isEmpty || renderedShadows.isEmpty()) return
+        renderedShadows.forEach { shadow ->
+            val saveCount = canvas.save()
+            if (shadow.inset) {
+                canvas.clipPath(contentPath)
+            } else {
+                canvas.clipOutPath(contentPath)
+            }
+            canvas.drawPath(shadow.path, shadow.paint)
+            canvas.restoreToCount(saveCount)
         }
     }
 
     override fun setAlpha(alpha: Int) {
-        drawableAlpha = alpha.coerceIn(0, 255)
-        updateShaders(bounds)
+        val clamped = alpha.coerceIn(0, 255)
+        if (clamped == drawableAlpha) return
+        drawableAlpha = clamped
+        rebuild(bounds)
         invalidateSelf()
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
-        listOf(
-            sheenPaint,
-            outerGlowPaint,
-            innerGlowPaint,
-            source1GlowPaint,
-            source2GlowPaint,
-            highlightPaint,
-            hairlinePaint
-        ).forEach { it.colorFilter = colorFilter }
+        activeColorFilter = colorFilter
+        renderedShadows.forEach { it.paint.colorFilter = colorFilter }
         invalidateSelf()
     }
 
@@ -114,200 +96,108 @@ internal class WeTypeBloomStrokeDrawable(
 
     override fun onBoundsChange(bounds: Rect) {
         super.onBoundsChange(bounds)
-        updateShaders(bounds)
+        rebuild(bounds)
     }
 
-    private fun updateShaders(bounds: Rect) {
+    private fun rebuild(bounds: Rect) {
         contentPath.reset()
-        glowPath.reset()
-        innerGlowPath.reset()
-        highlightPath.reset()
+        renderedShadows.clear()
         if (bounds.width() <= 0 || bounds.height() <= 0) return
 
-        val darkMode = isDarkMode()
-        val spec = bloomStrokeSpec(darkMode)
-        val bloomLayerAlphaScale = if (darkMode) 0.3f else 1f
         val alphaScale = surfaceAlphaScale(surfaceColor) *
             (drawableAlpha / 255f) *
-            bloomLayerAlphaScale *
-            intensityScale.coerceAtLeast(0f)
-        val hairlineAlphaScale = if (darkMode) 0.7f else 1f
+            intensityScale.coerceAtLeast(0f) *
+            if (isDarkMode()) DARK_MODE_ALPHA_SCALE else 1f
+        if (alphaScale <= 0f) return
+
         val contentRect = RectF(bounds).apply { inset(0.5f, 0.5f) }
-
-        val highlightWidth = dp(spec.strokeWidth + 0.8f)
-        val innerGlowWidth = dp(spec.strokeWidth + spec.glowWidth * 1.55f + 2.2f)
-        val outerGlowWidth = dp(spec.strokeWidth + spec.glowWidth * 1.9f + 2.4f)
-        val sourceGlowWidth = dp(spec.strokeWidth + spec.glowWidth * 2.5f + 3.2f)
-        val hairlineWidth = dp(0.9f)
-
+        if (contentRect.width() <= 0f || contentRect.height() <= 0f) return
         contentPath.set(createOffsetRoundedPath(contentRect, cornerRadii))
 
-        val glowOutset = outerGlowWidth * 0.58f + 0.6f
-        val glowRect = RectF(bounds).apply { inset(-glowOutset, -glowOutset) }
-        if (glowRect.width() > 0f && glowRect.height() > 0f) {
-            glowPath.set(
-                createOffsetRoundedPath(
-                    glowRect,
-                    cornerRadii.outset(glowOutset)
-                )
-            )
+        // CSS paints the first listed shadow on top, so build the list reversed: earlier list
+        // entries are appended last and therefore drawn last (on top).
+        BOX_SHADOWS.asReversed().forEach { shadow ->
+            buildShadow(shadow, contentRect, alphaScale)?.let(renderedShadows::add)
         }
-
-        val innerGlowInset = innerGlowWidth * 0.34f + 0.6f
-        val innerGlowRect = RectF(bounds).apply { inset(innerGlowInset, innerGlowInset) }
-        if (innerGlowRect.width() > 0f && innerGlowRect.height() > 0f) {
-            innerGlowPath.set(
-                createOffsetRoundedPath(
-                    innerGlowRect,
-                    cornerRadii.inset(innerGlowInset)
-                )
-            )
-        }
-
-        val highlightInset = highlightWidth / 2f + 0.5f
-        val highlightRect = RectF(bounds).apply { inset(highlightInset, highlightInset) }
-        if (highlightRect.width() > 0f && highlightRect.height() > 0f) {
-            highlightPath.set(
-                createOffsetRoundedPath(
-                    highlightRect,
-                    cornerRadii.inset(highlightInset)
-                )
-            )
-        }
-
-        val edgeGlowGradient = buildLinearGradient(
-            contentRect,
-            spec.gradientAngle,
-            intArrayOf(
-                scaleColorAlpha(spec.baseColor, 0.26f * alphaScale),
-                scaleColorAlpha(spec.baseColor, 0.10f * alphaScale),
-                scaleColorAlpha(spec.baseColor, 0.025f * alphaScale),
-                Color.TRANSPARENT
-            ),
-            floatArrayOf(0f, 0.24f, 0.58f, 1f)
-        )
-        val outerGlowGradient = buildLinearGradient(
-            contentRect,
-            spec.gradientAngle,
-            intArrayOf(
-                scaleColorAlpha(spec.baseColor, 0.62f * alphaScale),
-                scaleColorAlpha(spec.baseColor, 0.28f * alphaScale),
-                Color.TRANSPARENT
-            ),
-            floatArrayOf(0f, 0.32f, 1f)
-        )
-        val sheenGradient = buildVerticalGradient(
-            contentRect,
-            intArrayOf(
-                scaleColorAlpha(Color.WHITE, 0.20f * alphaScale),
-                scaleColorAlpha(spec.baseColor, 0.16f * alphaScale),
-                scaleColorAlpha(spec.baseColor, 0.06f * alphaScale),
-                Color.TRANSPARENT
-            ),
-            floatArrayOf(0f, 0.16f, 0.40f, 0.72f)
-        )
-        val highlightGradient = buildLinearGradient(
-            contentRect,
-            spec.gradientAngle,
-            intArrayOf(
-                scaleColorAlpha(Color.WHITE, 0.88f * alphaScale),
-                scaleColorAlpha(spec.baseColor, 1.05f * alphaScale),
-                scaleColorAlpha(spec.baseColor, 0.26f * alphaScale)
-            ),
-            floatArrayOf(0f, 0.24f, 1f)
-        )
-
-        sheenPaint.shader = sheenGradient
-
-        outerGlowPaint.strokeWidth = outerGlowWidth
-        outerGlowPaint.shader = outerGlowGradient
-
-        innerGlowPaint.strokeWidth = innerGlowWidth
-        innerGlowPaint.shader = edgeGlowGradient
-
-        source1GlowPaint.strokeWidth = sourceGlowWidth
-        source1GlowPaint.shader = buildSourceGradient(contentRect, spec.source1, alphaScale, true)
-
-        source2GlowPaint.strokeWidth = sourceGlowWidth * 0.92f
-        source2GlowPaint.shader = buildSourceGradient(contentRect, spec.source2, alphaScale, false)
-
-        highlightPaint.strokeWidth = highlightWidth
-        highlightPaint.shader = highlightGradient
-
-        hairlinePaint.strokeWidth = hairlineWidth
-        hairlinePaint.shader = buildLinearGradient(
-            contentRect,
-            spec.gradientAngle,
-            intArrayOf(
-                scaleColorAlpha(Color.WHITE, 0.90f * alphaScale * hairlineAlphaScale),
-                scaleColorAlpha(Color.WHITE, 0.18f * alphaScale * hairlineAlphaScale),
-                Color.TRANSPARENT
-            ),
-            floatArrayOf(0f, 0.38f, 1f)
-        )
     }
 
-    private fun buildSourceGradient(
-        rect: RectF,
-        source: BloomStrokeLightSource,
-        alphaScale: Float,
-        primary: Boolean
-    ): Shader {
-        val centerX = rect.left + rect.width() * source.centerXFraction
-        val centerY = rect.top + rect.height() * source.centerYFraction
-        val radius = rect.width().coerceAtLeast(rect.height()) * if (primary) 0.76f else 0.64f
-        return RadialGradient(
-            centerX,
-            centerY,
-            radius,
-            intArrayOf(
-                scaleColorAlpha(source.color, (if (primary) 0.92f else 0.68f) * alphaScale),
-                scaleColorAlpha(source.color, (if (primary) 0.48f else 0.30f) * alphaScale),
-                scaleColorAlpha(source.color, 0.10f * alphaScale),
-                Color.TRANSPARENT
-            ),
-            floatArrayOf(0f, 0.22f, 0.54f, 1f),
-            Shader.TileMode.CLAMP
-        )
+    private fun buildShadow(
+        shadow: BoxShadow,
+        contentRect: RectF,
+        alphaScale: Float
+    ): RenderedShadow? {
+        val color = scaleColorAlpha(shadow.color, alphaScale)
+        if (Color.alpha(color) == 0) return null
+
+        val offsetX = dp(shadow.offsetX)
+        val offsetY = dp(shadow.offsetY)
+        val spread = dp(shadow.spread)
+        val blur = dp(shadow.blur)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            this.color = color
+            colorFilter = activeColorFilter
+            val maskRadius = blur * CSS_BLUR_TO_MASK_RADIUS
+            if (maskRadius > MIN_MASK_RADIUS_PX) {
+                maskFilter = BlurMaskFilter(maskRadius, BlurMaskFilter.Blur.NORMAL)
+            }
+        }
+
+        val path = if (shadow.inset) {
+            buildInsetShadowPath(contentRect, offsetX, offsetY, spread)
+        } else {
+            buildOuterShadowPath(contentRect, offsetX, offsetY, spread)
+        } ?: return null
+
+        return RenderedShadow(shadow.inset, path, paint)
     }
 
-    private fun buildVerticalGradient(
-        rect: RectF,
-        colors: IntArray,
-        positions: FloatArray
-    ): Shader = LinearGradient(
-        rect.left,
-        rect.top,
-        rect.left,
-        rect.bottom,
-        colors,
-        positions,
-        Shader.TileMode.CLAMP
-    )
+    /**
+     * Builds the fill region for an inset shadow: everything inside the content shape except the
+     * "hole" (the content shape contracted by [spread] and translated by the offset). Drawing this
+     * while clipped to the content shape produces a shadow that hugs the inner edges, exactly like a
+     * CSS `inset` box-shadow. A negative spread expands the hole, leaving only a thin band on the
+     * edge opposite the offset direction (e.g. the top white highlight).
+     */
+    private fun buildInsetShadowPath(
+        contentRect: RectF,
+        offsetX: Float,
+        offsetY: Float,
+        spread: Float
+    ): Path? {
+        val holeRect = RectF(contentRect).apply { inset(spread, spread) }
+        if (holeRect.width() <= 0f || holeRect.height() <= 0f) {
+            // Hole fully collapsed: the whole interior is in shadow.
+            return Path(contentPath)
+        }
+        val holePath = createOffsetRoundedPath(holeRect, cornerRadii.inset(spread)).apply {
+            offset(offsetX, offsetY)
+        }
+        val coverInset = -(abs(offsetX) + abs(offsetY) + dp(64f))
+        val fill = Path().apply {
+            addRect(RectF(contentRect).apply { inset(coverInset, coverInset) }, Path.Direction.CW)
+        }
+        fill.op(holePath, Path.Op.DIFFERENCE)
+        return fill
+    }
 
-    private fun buildLinearGradient(
-        rect: RectF,
-        angle: Float,
-        colors: IntArray,
-        positions: FloatArray
-    ): Shader {
-        val radians = Math.toRadians(angle.toDouble())
-        val directionX = sin(radians).toFloat()
-        val directionY = -cos(radians).toFloat()
-        val centerX = rect.centerX()
-        val centerY = rect.centerY()
-        val halfExtent =
-            (kotlin.math.abs(directionX) * rect.width() +
-                kotlin.math.abs(directionY) * rect.height()) / 2f
-        return LinearGradient(
-            centerX - directionX * halfExtent,
-            centerY - directionY * halfExtent,
-            centerX + directionX * halfExtent,
-            centerY + directionY * halfExtent,
-            colors,
-            positions,
-            Shader.TileMode.CLAMP
-        )
+    /**
+     * Builds the silhouette for an outer shadow: the content shape grown by [spread] and translated
+     * by the offset. Drawing it while clipped to the area outside the content shape keeps the overlay
+     * from tinting the surface interior.
+     */
+    private fun buildOuterShadowPath(
+        contentRect: RectF,
+        offsetX: Float,
+        offsetY: Float,
+        spread: Float
+    ): Path? {
+        val shapeRect = RectF(contentRect).apply { inset(-spread, -spread) }
+        if (shapeRect.width() <= 0f || shapeRect.height() <= 0f) return null
+        return createOffsetRoundedPath(shapeRect, cornerRadii.outset(spread)).apply {
+            offset(offsetX, offsetY)
+        }
     }
 
     private fun createOffsetRoundedPath(rect: RectF, cornerRadii: WeTypeCornerRadii): Path =
@@ -315,49 +205,38 @@ internal class WeTypeBloomStrokeDrawable(
             offset(rect.left, rect.top)
         }
 
+    private fun dp(value: Float): Float =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, context.resources.displayMetrics)
+
     private fun isDarkMode(): Boolean =
         context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
             Configuration.UI_MODE_NIGHT_YES
-
-    private fun dp(value: Float): Float =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, context.resources.displayMetrics)
 
     private fun surfaceAlphaScale(color: Int): Float {
         val alpha = Color.alpha(color) / 255f
         return (1.10f - alpha * 0.20f).coerceIn(0.88f, 1.08f)
     }
 
-    private fun bloomStrokeSpec(isDarkMode: Boolean): BloomStrokeSpec =
-        (if (isDarkMode) glassStrokeSmallDark else glassStrokeSmallLight).toBloomStrokeSpec()
-
-    private fun FloatArray.toBloomStrokeSpec(): BloomStrokeSpec = BloomStrokeSpec(
-        strokeWidth = this[0],
-        gradientAngle = this[1],
-        baseColor = rgbaToColor(this[2], this[3], this[4], this[5]),
-        glowWidth = this[6],
-        source1 = BloomStrokeLightSource(
-            centerXFraction = this[7],
-            centerYFraction = this[8],
-            depth = this[9],
-            color = rgbaToColor(this[10], this[11], this[12], this[13])
-        ),
-        source2 = BloomStrokeLightSource(
-            centerXFraction = this[14],
-            centerYFraction = this[15],
-            depth = this[16],
-            color = rgbaToColor(this[17], this[18], this[19], this[20])
-        )
-    )
-
-    private fun rgbaToColor(r: Float, g: Float, b: Float, a: Float): Int = Color.argb(
-        (a * 255f).roundToInt().coerceIn(0, 255),
-        (r * 255f).roundToInt().coerceIn(0, 255),
-        (g * 255f).roundToInt().coerceIn(0, 255),
-        (b * 255f).roundToInt().coerceIn(0, 255)
-    )
-
     private fun scaleColorAlpha(color: Int, scale: Float): Int {
         val scaledAlpha = (Color.alpha(color) * scale).roundToInt().coerceIn(0, 255)
         return Color.argb(scaledAlpha, Color.red(color), Color.green(color), Color.blue(color))
+    }
+
+    private companion object {
+        // Android BlurMaskFilter radius maps to a Gaussian sigma of ~0.5773*radius, while a CSS blur
+        // radius maps to sigma = blur/2. Matching the two sigmas gives radius ≈ 0.866 * cssBlur.
+        private const val CSS_BLUR_TO_MASK_RADIUS = 0.8660f
+        private const val MIN_MASK_RADIUS_PX = 0.05f
+
+        // The highlight reads much brighter on dark keyboards, so dim every shadow layer's opacity
+        // in night mode (mirrors the previous bloom behaviour).
+        private const val DARK_MODE_ALPHA_SCALE = 0.3f
+
+        private val BOX_SHADOWS = listOf(
+            BoxShadow(inset = true, offsetX = 2f, offsetY = 2f, blur = 0.25f, spread = -1.5f, color = 0xB3FFFFFF.toInt()),
+            BoxShadow(inset = true, offsetX = 1f, offsetY = 1f, blur = 2f, spread = 0f, color = 0xCCFFFFFF.toInt()),
+            BoxShadow(inset = true, offsetX = -1f, offsetY = -1f, blur = 2f, spread = 0f, color = 0x99FFFFFF.toInt()),
+            BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 8f, spread = 1f, color = 0x33000000)
+        )
     }
 }

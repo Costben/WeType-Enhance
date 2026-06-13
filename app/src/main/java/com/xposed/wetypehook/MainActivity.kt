@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -1133,32 +1135,41 @@ private fun Modifier.weTypePreviewBloom(
             bottomRight = 0f,
             bottomLeft = 0f
         )
-        val clipPath = createWeTypeContinuousRoundedPath(
-            width = size.width,
-            height = size.height,
-            cornerRadii = previewCornerRadii
-        )
-        val bloomDrawable = if (edgeHighlightEnabled) {
-            WeTypeBloomStrokeDrawable(
-                context = previewContext,
-                cornerRadii = previewCornerRadii,
-                surfaceColor = color,
-                intensityScale = edgeHighlightIntensity / 100f
-            )
+        val widthPx = size.width.roundToInt()
+        val heightPx = size.height.roundToInt()
+        // The bloom overlay relies on clipPath + BlurMaskFilter + Path.op, which are not reliably
+        // supported on Compose's hardware-accelerated recording canvas and crash the preview. Render
+        // it once into an offscreen software bitmap (which supports every operation) and blit the
+        // result, keeping the preview pixel-accurate.
+        val overlayBitmap = if (edgeHighlightEnabled && widthPx > 0 && heightPx > 0) {
+            runCatching {
+                val bloomDrawable = WeTypeBloomStrokeDrawable(
+                    context = previewContext,
+                    cornerRadii = previewCornerRadii,
+                    surfaceColor = color,
+                    intensityScale = edgeHighlightIntensity / 100f
+                )
+                bloomDrawable.setBounds(0, 0, widthPx, heightPx)
+                val clipPath = createWeTypeContinuousRoundedPath(
+                    width = widthPx.toFloat(),
+                    height = heightPx.toFloat(),
+                    cornerRadii = previewCornerRadii
+                )
+                Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also { bitmap ->
+                    val bitmapCanvas = Canvas(bitmap)
+                    bitmapCanvas.clipPath(clipPath)
+                    bloomDrawable.draw(bitmapCanvas)
+                }
+            }.getOrNull()
         } else {
             null
         }
 
         onDrawWithContent {
             drawContent()
-            bloomDrawable ?: return@onDrawWithContent
-            bloomDrawable.setBounds(0, 0, size.width.roundToInt(), size.height.roundToInt())
+            val bitmap = overlayBitmap ?: return@onDrawWithContent
             drawIntoCanvas { canvas ->
-                val nativeCanvas = canvas.nativeCanvas
-                val checkpoint = nativeCanvas.save()
-                nativeCanvas.clipPath(clipPath)
-                bloomDrawable.draw(nativeCanvas)
-                nativeCanvas.restoreToCount(checkpoint)
+                canvas.nativeCanvas.drawBitmap(bitmap, 0f, 0f, null)
             }
         }
     }
