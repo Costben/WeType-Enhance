@@ -56,6 +56,7 @@
     <string name="settings_preview_mode_dark">深色模式</string>
     <string name="settings_blur_title">模糊强度</string>
     <string name="settings_corner_title">圆角大小</string>
+    <string name="settings_key_corner_title">键盘按键圆角</string>
     <string name="settings_alpha_title">背景不透明度</string>
     <string name="settings_key_opacity_title">按键不透明度</string>
     <string name="settings_toolbar_icon_bg_opacity_title">工具栏图标背景不透明度</string>

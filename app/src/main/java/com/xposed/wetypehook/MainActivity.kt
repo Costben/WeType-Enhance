@@ -419,6 +419,7 @@ private fun WeTypeSettingsScreen(
     var darkColor by rememberSaveable { mutableIntStateOf(snapshot.darkColor) }
     var blurRadius by rememberSaveable { mutableIntStateOf(snapshot.blurRadius) }
     var cornerRadius by rememberSaveable { mutableIntStateOf(snapshot.cornerRadius) }
+    var keyCornerRadius by rememberSaveable { mutableIntStateOf(snapshot.keyCornerRadius) }
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
     var candidateBackgroundAlpha by rememberSaveable {
@@ -497,6 +498,7 @@ private fun WeTypeSettingsScreen(
             darkColor = darkColor,
             blurRadius = blurRadius,
             cornerRadius = cornerRadius,
+            keyCornerRadius = keyCornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
@@ -519,6 +521,7 @@ private fun WeTypeSettingsScreen(
         darkColor = WeTypeSettings.DEFAULT_DARK_COLOR
         blurRadius = WeTypeSettings.DEFAULT_BLUR_RADIUS
         cornerRadius = WeTypeSettings.DEFAULT_CORNER_RADIUS
+        keyCornerRadius = WeTypeSettings.DEFAULT_KEY_CORNER_RADIUS
         edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
         edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
         candidateBackgroundAlpha = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_ALPHA
@@ -582,6 +585,7 @@ private fun WeTypeSettingsScreen(
                         color = previewColor,
                         blurRadius = blurRadius,
                         cornerRadius = cornerRadius,
+                        keyCornerRadius = keyCornerRadius,
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         lightKeyColor = keyColorValue(false),
@@ -766,6 +770,13 @@ private fun WeTypeSettingsScreen(
                         )
 
                         SliderPreferenceItem(
+                            title = stringResource(R.string.settings_key_corner_title),
+                            value = keyCornerRadius,
+                            max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
+                            onValueChange = { keyCornerRadius = it }
+                        )
+
+                        SliderPreferenceItem(
                             title = stringResource(R.string.settings_toolbar_icon_bg_opacity_title),
                             value = toolbarIconBgOpacity,
                             max = 255,
@@ -919,6 +930,7 @@ private fun PreviewSection(
     color: Int,
     blurRadius: Int,
     cornerRadius: Int,
+    keyCornerRadius: Int,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
     lightKeyColor: Int,
@@ -952,6 +964,7 @@ private fun PreviewSection(
                         color = color,
                         blurRadius = blurRadius,
                         cornerRadius = cornerRadius,
+                        keyCornerRadius = keyCornerRadius,
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         lightKeyColor = lightKeyColor,
@@ -969,6 +982,7 @@ private fun PreviewCard(
     color: Int,
     blurRadius: Int,
     cornerRadius: Int,
+    keyCornerRadius: Int,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
     lightKeyColor: Int,
@@ -994,7 +1008,7 @@ private fun PreviewCard(
         bottomStart = CornerSize(0.dp)
     )
     val previewKeyColor = if (isDark) darkKeyColor else lightKeyColor
-    val previewKeyShape = ContinuousRoundedRectangle(12.dp)
+    val previewKeyShape = ContinuousRoundedRectangle(keyCornerRadius.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()

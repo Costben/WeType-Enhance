@@ -12,6 +12,7 @@ object WeTypeSettings {
     private const val KEY_DARK_COLOR = "dark_color"
     private const val KEY_BLUR_RADIUS = "blur_radius"
     private const val KEY_CORNER_RADIUS = "corner_radius"
+    private const val KEY_KEY_CORNER_RADIUS = "key_corner_radius"
     private const val KEY_EDGE_HIGHLIGHT_ENABLED = "edge_highlight_enabled"
     private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
     // Keep the original preference key so existing saved values still migrate cleanly.
@@ -28,6 +29,8 @@ object WeTypeSettings {
     const val DEFAULT_BLUR_RADIUS = 60
     const val DEFAULT_CORNER_RADIUS = 28
     const val MAX_CORNER_RADIUS = DEFAULT_CORNER_RADIUS * 2
+    const val DEFAULT_KEY_CORNER_RADIUS = 10
+    const val MAX_KEY_CORNER_RADIUS = 40
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 80
     const val DEFAULT_CANDIDATE_BACKGROUND_ALPHA = 150
@@ -60,6 +63,7 @@ object WeTypeSettings {
         val darkColor: Int,
         val blurRadius: Int,
         val cornerRadius: Int,
+        val keyCornerRadius: Int,
         val edgeHighlightEnabled: Boolean,
         val edgeHighlightIntensity: Int,
         val candidateBackgroundAlpha: Int,
@@ -78,6 +82,8 @@ object WeTypeSettings {
     fun getBlurRadius(context: Context): Int = readSnapshot(context).blurRadius
 
     fun getCornerRadius(context: Context): Int = readSnapshot(context).cornerRadius
+
+    fun getKeyCornerRadius(context: Context): Int = readSnapshot(context).keyCornerRadius
 
     fun isEdgeHighlightEnabled(context: Context): Boolean = readSnapshot(context).edgeHighlightEnabled
 
@@ -126,6 +132,7 @@ object WeTypeSettings {
             darkColor = snapshot.darkColor,
             blurRadius = snapshot.blurRadius,
             cornerRadius = snapshot.cornerRadius,
+            keyCornerRadius = snapshot.keyCornerRadius,
             edgeHighlightEnabled = snapshot.edgeHighlightEnabled,
             edgeHighlightIntensity = snapshot.edgeHighlightIntensity,
             candidateBackgroundAlpha = snapshot.candidateBackgroundAlpha,
@@ -144,6 +151,7 @@ object WeTypeSettings {
         darkColor: Int,
         blurRadius: Int,
         cornerRadius: Int,
+        keyCornerRadius: Int,
         edgeHighlightEnabled: Boolean,
         edgeHighlightIntensity: Int,
         candidateBackgroundAlpha: Int,
@@ -163,6 +171,7 @@ object WeTypeSettings {
             darkColor = darkColor,
             blurRadius = blurRadius,
             cornerRadius = cornerRadius,
+            keyCornerRadius = keyCornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
@@ -186,6 +195,8 @@ object WeTypeSettings {
     fun getBlurRadiusXposed(context: Context): Int = readSnapshotXposed().blurRadius
 
     fun getCornerRadiusXposed(context: Context): Int = readSnapshotXposed().cornerRadius
+
+    fun getKeyCornerRadiusXposed(): Int = readSnapshotXposed().keyCornerRadius
 
     fun isEdgeHighlightEnabledXposed(context: Context): Boolean =
         readSnapshotXposed().edgeHighlightEnabled
@@ -259,6 +270,7 @@ object WeTypeSettings {
         darkColor: Int,
         blurRadius: Int,
         cornerRadius: Int,
+        keyCornerRadius: Int,
         edgeHighlightEnabled: Boolean,
         edgeHighlightIntensity: Int,
         candidateBackgroundAlpha: Int,
@@ -275,6 +287,7 @@ object WeTypeSettings {
             .putInt(KEY_DARK_COLOR, darkColor)
             .putInt(KEY_BLUR_RADIUS, blurRadius.coerceIn(0, 100))
             .putInt(KEY_CORNER_RADIUS, cornerRadius.coerceIn(0, MAX_CORNER_RADIUS))
+            .putInt(KEY_KEY_CORNER_RADIUS, keyCornerRadius.coerceIn(0, MAX_KEY_CORNER_RADIUS))
             .putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, edgeHighlightEnabled)
             .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity.coerceIn(0, 200))
             .putInt(
@@ -310,6 +323,7 @@ object WeTypeSettings {
             darkColor = darkColor,
             blurRadius = blurRadius.coerceIn(0, 100),
             cornerRadius = cornerRadius.coerceIn(0, MAX_CORNER_RADIUS),
+            keyCornerRadius = keyCornerRadius.coerceIn(0, MAX_KEY_CORNER_RADIUS),
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity.coerceIn(0, 200),
             candidateBackgroundAlpha = candidateBackgroundAlpha.coerceIn(0, 255),
@@ -362,6 +376,8 @@ object WeTypeSettings {
             blurRadius = getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS),
             cornerRadius = getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
                 .coerceIn(0, MAX_CORNER_RADIUS),
+            keyCornerRadius = getInt(KEY_KEY_CORNER_RADIUS, DEFAULT_KEY_CORNER_RADIUS)
+                .coerceIn(0, MAX_KEY_CORNER_RADIUS),
             edgeHighlightEnabled = getBoolean(
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 DEFAULT_EDGE_HIGHLIGHT_ENABLED
@@ -407,6 +423,7 @@ object WeTypeSettings {
         darkColor = DEFAULT_DARK_COLOR,
         blurRadius = DEFAULT_BLUR_RADIUS,
         cornerRadius = DEFAULT_CORNER_RADIUS,
+        keyCornerRadius = DEFAULT_KEY_CORNER_RADIUS,
         edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED,
         edgeHighlightIntensity = DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
         candidateBackgroundAlpha = DEFAULT_CANDIDATE_BACKGROUND_ALPHA,
@@ -423,6 +440,7 @@ object WeTypeSettings {
             contains(KEY_DARK_COLOR) ||
             contains(KEY_BLUR_RADIUS) ||
             contains(KEY_CORNER_RADIUS) ||
+            contains(KEY_KEY_CORNER_RADIUS) ||
             contains(KEY_EDGE_HIGHLIGHT_ENABLED) ||
             contains(KEY_EDGE_HIGHLIGHT_INTENSITY) ||
             contains(KEY_CANDIDATE_BACKGROUND_ALPHA) ||

@@ -38,6 +38,10 @@ internal object WeTypeResourceHooks {
     private const val WETYPE_DRAWABLE_R_CLASS = "com.tencent.wetype.plugin.hld.r"
     private const val WETYPE_ATTR_R_CLASS = "com.tencent.wetype.plugin.hld.o"
     private const val WETYPE_ID_R_CLASS = "com.tencent.wetype.plugin.hld.s"
+    private const val KEY_DATA_CLASS =
+        "com.tencent.wetype.plugin.hld.keyboard.selfdraw.bean.KeyData"
+    // KeyData.bgCorner renders ~10dp smaller than its numeric value; offset the stored dp radius.
+    private const val KEY_CORNER_BGCORNER_OFFSET = 10
 
     // Faint hairline alpha applied to the host key border color (mirrors the legacy flat look).
     private const val KEY_BORDER_ALPHA = 0x20
@@ -481,8 +485,32 @@ internal object WeTypeResourceHooks {
 
     private enum class KeyAttrRole { Fill, Shadow, Border }
 
-    private fun resolveKeyColor(theme: Resources.Theme): Int {
-        val isDarkMode = theme.resources.configuration.uiMode and
+    /**
+     * Overrides the per-key background corner radius. The host reads [KeyData.bgCorner] (a design-unit
+     * value, default 16) for every key and scales it together with the key size, so returning the
+     * user's configured value here applies a uniform, size-proportional corner to all keys. Hooked on
+     * the readable, serialization-stable bean class/getter rather than any obfuscated identifier.
+     */
+    fun hookKeyboardKeyCorner() {
+        runCatching {
+            val keyDataClass = loadClassOrNull(KEY_DATA_CLASS)
+                ?: error("Failed to load KeyData")
+            keyDataClass.getMethod("getBgCorner").hookAfter { param ->
+                // KeyData.getBgCorner() returns a nullable Float; force it to the configured value so
+                // every key (and the host's null-default fallback) uses the same corner radius. The
+                // stored value is the real radius in dp, while bgCorner renders ~10dp smaller than its
+                // value, so we add the offset to make the rendered corner match the dp the user set.
+                val cornerDp = WeTypeSettings.getKeyCornerRadiusXposed()
+                param.result = (cornerDp + KEY_CORNER_BGCORNER_OFFSET).toFloat()
+            }
+            Log.i("Success: Hook WeType keyboard key corner")
+        }.onFailure {
+            Log.i("Failed: Hook WeType keyboard key corner")
+            Log.i(it)
+        }
+    }
+
+    private fun resolveKeyColor(theme: Resources.Theme): Int {        val isDarkMode = theme.resources.configuration.uiMode and
             android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
             android.content.res.Configuration.UI_MODE_NIGHT_YES
         val groupId = if (isDarkMode) DARK_KEY_COLOR_GROUP_ID else LIGHT_KEY_COLOR_GROUP_ID

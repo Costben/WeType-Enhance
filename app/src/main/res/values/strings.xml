@@ -56,6 +56,7 @@
     <string name="settings_preview_mode_dark">Dark mode</string>
     <string name="settings_blur_title">Blur strength</string>
     <string name="settings_corner_title">Corner radius</string>
+    <string name="settings_key_corner_title">Key corner radius</string>
     <string name="settings_alpha_title">Background opacity</string>
     <string name="settings_key_opacity_title">Key opacity</string>
     <string name="settings_toolbar_icon_bg_opacity_title">Toolbar icon bg opacity</string>
