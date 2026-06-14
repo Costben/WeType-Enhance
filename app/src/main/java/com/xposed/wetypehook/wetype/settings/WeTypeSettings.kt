@@ -3,6 +3,7 @@ package com.xposed.wetypehook.wetype.settings
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.graphics.Color
 import de.robv.android.xposed.XSharedPreferences
 
 object WeTypeSettings {
@@ -15,6 +16,8 @@ object WeTypeSettings {
     private const val KEY_KEY_CORNER_RADIUS = "key_corner_radius"
     private const val KEY_EDGE_HIGHLIGHT_ENABLED = "edge_highlight_enabled"
     private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
+    private const val KEY_KEY_OPACITY = "key_opacity"
+    private const val KEY_KEY_OPACITY_MIGRATED = "key_opacity_migrated"
     // Keep the original preference key so existing saved values still migrate cleanly.
     private const val KEY_CANDIDATE_BACKGROUND_ALPHA = "key_color_hook_alpha"
     private const val KEY_CANDIDATE_BACKGROUND_CORNER = "candidate_background_corner"
@@ -40,6 +43,11 @@ object WeTypeSettings {
     const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
     const val DEFAULT_TOOLBAR_ICON_BG_OPACITY = 150
     const val DEFAULT_DISABLE_HOT_UPDATE = true
+
+    private val legacyKeyColorDefaults = mapOf(
+        LIGHT_KEY_COLOR_GROUP_ID to 0xFFfcfcfe.toInt(),
+        DARK_KEY_COLOR_GROUP_ID to 0xFF707070.toInt()
+    )
 
     private val xposedPrefsLock = Any()
     private val xposedPrefsCache = HashMap<String, XSharedPreferences>()
@@ -308,6 +316,8 @@ object WeTypeSettings {
             )
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity.coerceIn(0, 255))
             .putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
+            .putBoolean(KEY_KEY_OPACITY_MIGRATED, true)
+            .remove(KEY_KEY_OPACITY)
         WeTypeAppearanceColorGroups.groups.forEach { group ->
             editor.putInt(
                 "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
@@ -370,6 +380,13 @@ object WeTypeSettings {
     }
 
     private fun SharedPreferences.toSnapshot(): Snapshot {
+        val shouldMigrateLegacyKeyOpacity = contains(KEY_KEY_OPACITY) &&
+            !getBoolean(KEY_KEY_OPACITY_MIGRATED, false)
+        val legacyKeyOpacity = if (shouldMigrateLegacyKeyOpacity) {
+            getInt(KEY_KEY_OPACITY, 255).coerceIn(0, 255)
+        } else {
+            null
+        }
         return Snapshot(
             lightColor = getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR),
             darkColor = getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR),
@@ -404,13 +421,28 @@ object WeTypeSettings {
             ).coerceIn(0, 64),
             toolbarIconBgOpacity = getInt(KEY_TOOLBAR_ICON_BG_OPACITY, DEFAULT_TOOLBAR_ICON_BG_OPACITY).coerceIn(0, 255),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
-                group.id to getInt(
-                    "$KEY_APPEARANCE_COLOR_PREFIX${group.id}",
+                val key = "$KEY_APPEARANCE_COLOR_PREFIX${group.id}"
+                val fallbackColor = if (legacyKeyOpacity != null) {
+                    legacyKeyColorDefaults[group.id] ?: group.defaultColor
+                } else {
                     group.defaultColor
-                )
+                }
+                val color = getInt(key, fallbackColor)
+                group.id to migrateLegacyKeyOpacity(group, color, legacyKeyOpacity)
             },
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, DEFAULT_DISABLE_HOT_UPDATE)
         )
+    }
+
+    private fun migrateLegacyKeyOpacity(
+        group: WeTypeAppearanceColorGroup,
+        color: Int,
+        legacyKeyOpacity: Int?
+    ): Int {
+        if (!group.isKeyColorGroup || legacyKeyOpacity == null || Color.alpha(color) != 0xFF) {
+            return color
+        }
+        return (legacyKeyOpacity shl 24) or (color and 0x00FFFFFF)
     }
 
     private fun SharedPreferences.toSnapshotOrNull(): Snapshot? {
@@ -443,6 +475,7 @@ object WeTypeSettings {
             contains(KEY_KEY_CORNER_RADIUS) ||
             contains(KEY_EDGE_HIGHLIGHT_ENABLED) ||
             contains(KEY_EDGE_HIGHLIGHT_INTENSITY) ||
+            contains(KEY_KEY_OPACITY) ||
             contains(KEY_CANDIDATE_BACKGROUND_ALPHA) ||
             contains(KEY_CANDIDATE_BACKGROUND_CORNER) ||
             contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) ||

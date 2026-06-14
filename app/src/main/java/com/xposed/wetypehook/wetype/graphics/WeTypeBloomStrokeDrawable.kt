@@ -230,13 +230,13 @@ internal class WeTypeBloomStrokeDrawable(
 
         // The highlight reads much brighter on dark keyboards, so dim every shadow layer's opacity
         // in night mode (mirrors the previous bloom behaviour).
-        private const val DARK_MODE_ALPHA_SCALE = 0.2f
+        private const val DARK_MODE_ALPHA_SCALE = 0.25f
 
         private val BOX_SHADOWS = listOf(
-            BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 10f, spread = 0.5f, color = 0x18000000),
             BoxShadow(inset = true, offsetX = 2f, offsetY = 2f, blur = 0.25f, spread = -1.5f, color = 0xB3FFFFFF.toInt()),
             BoxShadow(inset = true, offsetX = 1f, offsetY = 1f, blur = 2f, spread = 0f, color = 0xCCFFFFFF.toInt()),
-            BoxShadow(inset = true, offsetX = -1f, offsetY = -1f, blur = 2f, spread = 0f, color = 0x99FFFFFF.toInt())
+            BoxShadow(inset = true, offsetX = -1f, offsetY = -1f, blur = 2f, spread = 0f, color = 0x99FFFFFF.toInt()),
+            BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 10f, spread = 0.5f, color = 0x18000000)
         )
     }
 }
