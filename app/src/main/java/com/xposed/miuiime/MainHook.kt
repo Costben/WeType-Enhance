@@ -1,6 +1,7 @@
 package com.xposed.miuiime
 
 import android.content.Context
+import android.os.Binder
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import com.github.kyuubiran.ezxhelper.init.EzXHelperInit
@@ -13,6 +14,7 @@ import com.github.kyuubiran.ezxhelper.utils.hookBefore
 import com.github.kyuubiran.ezxhelper.utils.hookReplace
 import com.github.kyuubiran.ezxhelper.utils.hookReturnConstant
 import com.github.kyuubiran.ezxhelper.utils.invokeMethodAuto
+import com.github.kyuubiran.ezxhelper.utils.invokeMethodAutoAs
 import com.github.kyuubiran.ezxhelper.utils.invokeStaticMethodAuto
 import com.github.kyuubiran.ezxhelper.utils.loadClassOrNull
 import com.github.kyuubiran.ezxhelper.utils.putStaticObject
@@ -20,6 +22,7 @@ import com.github.kyuubiran.ezxhelper.utils.sameAs
 import dalvik.system.BaseDexClassLoader
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.callbacks.XC_LoadPackage
+import org.luckypray.dexkit.DexKitBridge
 
 private const val TAG = "miuiime"
 
@@ -28,7 +31,8 @@ class MainHook : IXposedHookLoadPackage {
         "com.iflytek.inputmethod.miui",
         "com.sohu.inputmethod.sogou.xiaomi",
         "com.baidu.input_mi",
-        "com.miui.catcherpatch"
+        "com.miui.catcherpatch",
+        "com.xiaomi.type",
     )
     private var navBarColor: Int? = null
 
@@ -39,10 +43,10 @@ class MainHook : IXposedHookLoadPackage {
         EzXHelperInit.setLogTag(TAG)
         Log.i("miuiime is supported")
 
-        if (lpparam.packageName == "android") {
-            startPermissionHook()
-        } else {
-            startHook(lpparam)
+        when (lpparam.packageName) {
+            "android" -> startPermissionHook()
+            "com.miui.phrase" -> startPackageValidationHook(lpparam)
+            else -> startHook(lpparam)
         }
     }
 
@@ -215,6 +219,44 @@ class MainHook : IXposedHookLoadPackage {
             }
         }.onFailure {
             Log.i("Failed: Hook method isCallingBetweenCustomIME")
+            Log.i(it)
+        }
+    }
+
+    /**
+     * Hook InputProvider的输入法白名单，修复当前输入法无法获得剪贴板的问题
+     */
+    private fun startPackageValidationHook(lpparam: XC_LoadPackage.LoadPackageParam) {
+        runCatching {
+            System.loadLibrary("dexkit")
+            DexKitBridge.create(lpparam.appInfo.sourceDir).use { bridge ->
+                bridge.findMethod {
+                    matcher {
+                        declaredClass = "com.miui.provider.InputProvider"
+                        returnType = "boolean"
+                        usingStrings(
+                            "InputProvider",
+                            "Invalid caller UID: ",
+                            "No package name for UID: ",
+                            "Package validation failed: ",
+                            "Unexpected error during package validation"
+                        )
+                    }
+                }.singleOrNull()?.getMethodInstance(lpparam.classLoader)?.hookBefore { param ->
+                    val callingUid = Binder.getCallingUid()
+                    val context = param.thisObject.invokeMethodAutoAs<Context>("getContext") ?: return@hookBefore
+                    val packagesForUid = context.packageManager.getPackagesForUid(callingUid) ?: return@hookBefore
+                    val currentInputMethodPackageName = Settings.Secure.getString(
+                        context.contentResolver,
+                        Settings.Secure.DEFAULT_INPUT_METHOD
+                    )?.substringBefore('/') ?: return@hookBefore
+                    if (packagesForUid.contains(currentInputMethodPackageName)) {
+                        param.result = true
+                    }
+                }
+            }
+        }.onFailure {
+            Log.i("Failed: Hook package validation")
             Log.i(it)
         }
     }
