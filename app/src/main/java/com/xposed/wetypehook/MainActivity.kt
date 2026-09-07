@@ -703,7 +703,6 @@ private fun WeTypeSettingsScreen(
         }
     }
 
-    val previewColor = currentColor()
     val scrollBehavior = MiuixScrollBehavior(state = rememberTopAppBarState())
 
     Scaffold(
@@ -750,7 +749,7 @@ private fun WeTypeSettingsScreen(
                 .nestedScroll(scrollBehavior.nestedScrollConnection),
             contentPadding = PaddingValues(
                 top = paddingValues.calculateTopPadding(),
-                bottom = 24.dp
+                bottom = 40.dp
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -867,219 +866,37 @@ private fun WeTypeSettingsScreen(
                 }
 
                 2 -> {
-                    // 剪贴板增强分组
-                    item {
-                        SmallTitle(
-                            text = "剪贴板增强"
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                MiuixSwitchWidget(
-                                    title = "跨设备条目可见化持久保存",
-                                    description = "自动将多端同步的剪贴板远程条目转换为本地可见条目保存",
-                                    checked = showCrossDeviceClipboard,
-                                    onCheckedChange = { showCrossDeviceClipboard = it }
-                                )
-                                HorizontalDivider()
-                                MiuixSwitchWidget(
-                                    title = "解除保留上限与时长限制",
-                                    description = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
-                                    checked = removeClipboardRetentionLimit,
-                                    onCheckedChange = { removeClipboardRetentionLimit = it }
-                                )
-                                HorizontalDivider()
-                                MiuixSwitchWidget(
-                                    title = "解除单条文本长度限制",
-                                    description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
-                                    checked = removeClipboardTextLimit,
-                                    onCheckedChange = { removeClipboardTextLimit = it }
-                                )
-                            }
-                        }
-                    }
-
-                    // 键盘 Logo 分组
-                    item {
-                        var logoColorOptionsExpanded by rememberSaveable { mutableStateOf(false) }
-                        SmallTitle(
-                            text = "键盘 Logo"
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                MiuixSwitchWidget(
-                                    title = "启用 Logo 替换",
-                                    description = "关闭则显示输入法原生 Logo",
-                                    checked = logoEnabled,
-                                    onCheckedChange = { logoEnabled = it }
-                                )
-                                HorizontalDivider()
-                                MiuixSwitchWidget(
-                                    title = "显示 Logo",
-                                    description = "关闭则隐藏键盘上的 Logo",
-                                    checked = logoShowEnabled,
-                                    onCheckedChange = { logoShowEnabled = it }
-                                )
-                                HorizontalDivider()
-                                ArrowPreference(
-                                    title = "Logo 主体颜色",
-                                    summary = logoColorModeLabel(logoColorMode),
-                                    onClick = { logoColorOptionsExpanded = !logoColorOptionsExpanded }
-                                )
-                                if (logoColorOptionsExpanded) {
-                                    HorizontalDivider()
-                                    LogoColorModeOption(
-                                        label = "跟随品牌色",
-                                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_BRAND,
-                                        onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_BRAND }
-                                    )
-                                    LogoColorModeOption(
-                                        label = "跟随系统",
-                                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
-                                        onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_SYSTEM }
-                                    )
-                                    LogoColorModeOption(
-                                        label = "自定义",
-                                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM,
-                                        onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_CUSTOM }
-                                    )
-                                }
-                                if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
-                                    HorizontalDivider()
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp)
-                                    ) {
-                                        Text(
-                                            text = "自定义颜色",
-                                            style = MiuixTheme.textStyles.main
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = "输入 #RRGGBB，例如 #23C891",
-                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                            style = MiuixTheme.textStyles.body2
-                                        )
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                        TextField(
-                                            value = logoCustomColorInput,
-                                            onValueChange = { input ->
-                                                val trimmed = input.trim()
-                                                val hasPrefix = trimmed.startsWith("#")
-                                                val body = trimmed.removePrefix("#")
-                                                if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
-                                                    return@TextField
-                                                }
-                                                logoCustomColorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
-                                            },
-                                            singleLine = true,
-                                            modifier = Modifier.fillMaxWidth(),
-                                            label = "#RRGGBB"
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 字体替换分组
-                    item {
-                        var fontModeOptionsExpanded by rememberSaveable { mutableStateOf(false) }
-                        SmallTitle(
-                            text = "字体替换"
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                ArrowPreference(
-                                    title = "字体来源",
-                                    summary = fontModeLabel(fontMode),
-                                    onClick = { fontModeOptionsExpanded = !fontModeOptionsExpanded }
-                                )
-                                if (fontModeOptionsExpanded) {
-                                    HorizontalDivider()
-                                    LogoColorModeOption(
-                                        label = "微信官方",
-                                        selected = fontMode == WeTypeSettings.FONT_MODE_OFFICIAL,
-                                        onClick = { fontMode = WeTypeSettings.FONT_MODE_OFFICIAL }
-                                    )
-                                    LogoColorModeOption(
-                                        label = "模块内置",
-                                        selected = fontMode == WeTypeSettings.FONT_MODE_MODULE,
-                                        onClick = { fontMode = WeTypeSettings.FONT_MODE_MODULE }
-                                    )
-                                    LogoColorModeOption(
-                                        label = "跟随系统",
-                                        selected = fontMode == WeTypeSettings.FONT_MODE_SYSTEM,
-                                        onClick = { fontMode = WeTypeSettings.FONT_MODE_SYSTEM }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // 其他分组
-                    item {
-                        SmallTitle(
-                            text = stringResource(R.string.settings_group_other)
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                MiuixSwitchWidget(
-                                    title = stringResource(R.string.settings_disable_hot_update_title),
-                                    description = stringResource(R.string.settings_disable_hot_update_desc),
-                                    checked = disableHotUpdate,
-                                    onCheckedChange = { disableHotUpdate = it }
-                                )
-                            }
-                        }
-                    }
-
-                    // 操作分组
-                    item {
-                        SmallTitle(
-                            text = stringResource(R.string.settings_group_actions)
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                ArrowPreference(
-                                    title = stringResource(R.string.settings_reset_title),
-                                    summary = stringResource(R.string.settings_reset_desc),
-                                    onClick = ::restoreDefaults
-                                )
-
-                                HorizontalDivider()
-
-                                BasicComponent(
-                                    title = stringResource(R.string.settings_visit_github_title),
-                                    titleColor = BasicComponentDefaults.titleColor(
-                                        color = MiuixTheme.colorScheme.primary
-                                    ),
-                                    onClick = {
-                                        val intent = Intent(
-                                            Intent.ACTION_VIEW,
-                                            Uri.parse("https://github.com/NEORUAA/MIUI_IME_Unlock")
-                                        )
-                                        context.startActivity(intent)
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    FeatureTabContent(
+                        logoEnabled = logoEnabled,
+                        onLogoEnabledChange = { logoEnabled = it },
+                        logoShowEnabled = logoShowEnabled,
+                        onLogoShowEnabledChange = { logoShowEnabled = it },
+                        logoColorMode = logoColorMode,
+                        onLogoColorModeChange = { logoColorMode = it },
+                        logoCustomColorInput = logoCustomColorInput,
+                        onLogoCustomColorInputChange = { logoCustomColorInput = it },
+                        onResetLogo = {
+                            logoEnabled = WeTypeSettings.DEFAULT_LOGO_ENABLED
+                            logoShowEnabled = WeTypeSettings.DEFAULT_LOGO_SHOW_ENABLED
+                            logoColorMode = WeTypeSettings.DEFAULT_LOGO_COLOR_MODE
+                            logoCustomColorInput = formatRgb(WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR)
+                        },
+                        fontMode = fontMode,
+                        onFontModeChange = { fontMode = it },
+                        onResetFont = {
+                            fontMode = WeTypeSettings.DEFAULT_FONT_MODE
+                        },
+                        showCrossDeviceClipboard = showCrossDeviceClipboard,
+                        onShowCrossDeviceClipboardChange = { showCrossDeviceClipboard = it },
+                        removeClipboardRetentionLimit = removeClipboardRetentionLimit,
+                        onRemoveClipboardRetentionLimitChange = { removeClipboardRetentionLimit = it },
+                        removeClipboardTextLimit = removeClipboardTextLimit,
+                        onRemoveClipboardTextLimitChange = { removeClipboardTextLimit = it },
+                        disableHotUpdate = disableHotUpdate,
+                        onDisableHotUpdateChange = { disableHotUpdate = it },
+                        activationStatus = activationStatus,
+                        onRestoreDefaults = ::restoreDefaults
+                    )
                 }
             }
         }
@@ -2693,6 +2510,277 @@ private fun GestureKeyButton(
                 },
                 maxLines = 1
             )
+        }
+    }
+}
+
+private fun LazyListScope.FeatureTabContent(
+    logoEnabled: Boolean,
+    onLogoEnabledChange: (Boolean) -> Unit,
+    logoShowEnabled: Boolean,
+    onLogoShowEnabledChange: (Boolean) -> Unit,
+    logoColorMode: String,
+    onLogoColorModeChange: (String) -> Unit,
+    logoCustomColorInput: String,
+    onLogoCustomColorInputChange: (String) -> Unit,
+    onResetLogo: () -> Unit,
+    fontMode: Int,
+    onFontModeChange: (Int) -> Unit,
+    onResetFont: () -> Unit,
+    showCrossDeviceClipboard: Boolean,
+    onShowCrossDeviceClipboardChange: (Boolean) -> Unit,
+    removeClipboardRetentionLimit: Boolean,
+    onRemoveClipboardRetentionLimitChange: (Boolean) -> Unit,
+    removeClipboardTextLimit: Boolean,
+    onRemoveClipboardTextLimitChange: (Boolean) -> Unit,
+    disableHotUpdate: Boolean,
+    onDisableHotUpdateChange: (Boolean) -> Unit,
+    activationStatus: ModuleActivationTracker.ActivationStatus,
+    onRestoreDefaults: () -> Unit
+) {
+    // 1. 键盘 Logo 卡片
+    item {
+        val context = LocalContext.current
+        var logoColorOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+        SmallTitle(text = "键盘 Logo")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                MiuixSwitchWidget(
+                    title = "启用 Logo 替换",
+                    description = "关闭则显示输入法原生 Logo",
+                    checked = logoEnabled,
+                    onCheckedChange = onLogoEnabledChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "显示 Logo",
+                    description = "关闭则隐藏键盘上的 Logo",
+                    checked = logoShowEnabled,
+                    onCheckedChange = onLogoShowEnabledChange
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = "Logo 主体颜色",
+                    summary = logoColorModeLabel(logoColorMode),
+                    onClick = { logoColorOptionsExpanded = !logoColorOptionsExpanded }
+                )
+                if (logoColorOptionsExpanded) {
+                    HorizontalDivider()
+                    LogoColorModeOption(
+                        label = "跟随品牌色 (官方彩色)",
+                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_BRAND,
+                        onClick = { onLogoColorModeChange(WeTypeSettings.LOGO_COLOR_MODE_BRAND) }
+                    )
+                    LogoColorModeOption(
+                        label = "跟随系统 (自适应黑白)",
+                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
+                        onClick = { onLogoColorModeChange(WeTypeSettings.LOGO_COLOR_MODE_SYSTEM) }
+                    )
+                    LogoColorModeOption(
+                        label = "自定义颜色",
+                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM,
+                        onClick = { onLogoColorModeChange(WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) }
+                    )
+                }
+                if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
+                    HorizontalDivider()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = "自定义颜色",
+                            style = MiuixTheme.textStyles.main
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "输入 #RRGGBB，例如 #23C891",
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            style = MiuixTheme.textStyles.body2
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TextField(
+                            value = logoCustomColorInput,
+                            onValueChange = { input ->
+                                val trimmed = input.trim()
+                                val hasPrefix = trimmed.startsWith("#")
+                                val body = trimmed.removePrefix("#")
+                                if (body.length <= 6 && body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                    onLogoCustomColorInputChange(if (hasPrefix || body.isNotEmpty()) "#$body" else "")
+                                }
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = "#RRGGBB"
+                        )
+                    }
+                }
+                HorizontalDivider()
+                ArrowPreference(
+                    title = "重置 Logo 设置",
+                    summary = "恢复 Logo 默认开启、品牌色状态",
+                    onClick = {
+                        onResetLogo()
+                        Toast.makeText(context, "Logo 设置已重置", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
+    }
+
+    // 2. 字体替换卡片
+    item {
+        val context = LocalContext.current
+        var fontModeOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+        SmallTitle(text = "字体替换")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                ArrowPreference(
+                    title = "字体来源",
+                    summary = fontModeLabel(fontMode),
+                    onClick = { fontModeOptionsExpanded = !fontModeOptionsExpanded }
+                )
+                if (fontModeOptionsExpanded) {
+                    HorizontalDivider()
+                    LogoColorModeOption(
+                        label = "微信官方 (放行宿主原生字体)",
+                        selected = fontMode == WeTypeSettings.FONT_MODE_OFFICIAL,
+                        onClick = { onFontModeChange(WeTypeSettings.FONT_MODE_OFFICIAL) }
+                    )
+                    LogoColorModeOption(
+                        label = "模块内置 (WE-Regular 优化字体)",
+                        selected = fontMode == WeTypeSettings.FONT_MODE_MODULE,
+                        onClick = { onFontModeChange(WeTypeSettings.FONT_MODE_MODULE) }
+                    )
+                    LogoColorModeOption(
+                        label = "跟随系统 (系统默认字体 Typeface.DEFAULT)",
+                        selected = fontMode == WeTypeSettings.FONT_MODE_SYSTEM,
+                        onClick = { onFontModeChange(WeTypeSettings.FONT_MODE_SYSTEM) }
+                    )
+                }
+                HorizontalDivider()
+                ArrowPreference(
+                    title = "重置字体设置",
+                    summary = "恢复跟随系统默认字体",
+                    onClick = {
+                        onResetFont()
+                        Toast.makeText(context, "字体设置已重置", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
+    }
+
+    // 3. 剪贴板增强卡片
+    item {
+        SmallTitle(text = "剪贴板增强")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                MiuixSwitchWidget(
+                    title = "跨设备条目可见化持久保存",
+                    description = "自动将多端同步的剪贴板远程条目转换为本地可见条目保存",
+                    checked = showCrossDeviceClipboard,
+                    onCheckedChange = onShowCrossDeviceClipboardChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "解除保留上限与时长限制",
+                    description = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
+                    checked = removeClipboardRetentionLimit,
+                    onCheckedChange = onRemoveClipboardRetentionLimitChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "解除单条文本长度限制",
+                    description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
+                    checked = removeClipboardTextLimit,
+                    onCheckedChange = onRemoveClipboardTextLimitChange
+                )
+            }
+        }
+    }
+
+    // 4. 进阶系统防护卡片
+    item {
+        SmallTitle(text = "进阶系统防护")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                MiuixSwitchWidget(
+                    title = stringResource(R.string.settings_disable_hot_update_title),
+                    description = stringResource(R.string.settings_disable_hot_update_desc),
+                    checked = disableHotUpdate,
+                    onCheckedChange = onDisableHotUpdateChange
+                )
+            }
+        }
+    }
+
+    // 5. 关于与重置卡片
+    item {
+        val context = LocalContext.current
+        SmallTitle(text = "关于与重置")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                BasicComponent(
+                    title = "模块版本",
+                    summary = "v1.27.1 (Code 33)",
+                    endActions = {
+                        val statusText = if (activationStatus.isActive) "已激活" else "未激活"
+                        val statusBg = if (activationStatus.isActive) ComposeColor(0xFF4F9A71) else ComposeColor(0xFFC86F67)
+                        Box(
+                            modifier = Modifier
+                                .clip(ContinuousRoundedRectangle(999.dp))
+                                .background(statusBg)
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = statusText,
+                                color = ComposeColor.White,
+                                style = MiuixTheme.textStyles.body2,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                )
+                HorizontalDivider()
+                BasicComponent(
+                    title = stringResource(R.string.settings_visit_github_title),
+                    summary = "https://github.com/NEORUAA/MIUI_IME_Unlock",
+                    titleColor = BasicComponentDefaults.titleColor(
+                        color = MiuixTheme.colorScheme.primary
+                    ),
+                    onClick = {
+                        val intent = Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://github.com/NEORUAA/MIUI_IME_Unlock")
+                        )
+                        context.startActivity(intent)
+                    }
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = stringResource(R.string.settings_reset_title),
+                    summary = stringResource(R.string.settings_reset_desc),
+                    onClick = onRestoreDefaults
+                )
+            }
         }
     }
 }
