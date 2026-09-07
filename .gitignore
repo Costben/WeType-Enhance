@@ -17,3 +17,5 @@ local.properties
 original/
 output/
 work/
+.paseo/
+artifacts/
