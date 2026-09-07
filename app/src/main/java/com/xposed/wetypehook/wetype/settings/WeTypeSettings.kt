@@ -43,6 +43,82 @@ object WeTypeSettings {
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
+    const val KEY_SHOW_CROSS_DEVICE_CLIPBOARD = "show_cross_device_clipboard"
+    const val KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT = "remove_clipboard_retention_limit"
+    const val KEY_REMOVE_CLIPBOARD_TEXT_LIMIT = "remove_clipboard_text_limit"
+
+    const val KEY_QWERTY_GESTURE_ENABLED = "qwerty_gesture_enabled"
+    const val KEY_T9_GESTURE_ENABLED = "t9_gesture_enabled"
+    const val KEY_GESTURE_THRESHOLD = "gesture_threshold"
+    const val KEY_T9_GESTURE_THRESHOLD = "t9_gesture_threshold"
+    const val KEY_GESTURE_VIBRATION = "gesture_vibration"
+    const val KEY_T9_GESTURE_VIBRATION = "t9_gesture_vibration"
+    const val KEY_GESTURE_BINDINGS_JSON = "gesture_bindings_json"
+
+    const val DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD = true
+    const val DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT = true
+    const val DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT = true
+
+    const val DEFAULT_QWERTY_GESTURE_ENABLED = true
+    const val DEFAULT_T9_GESTURE_ENABLED = false
+    const val DEFAULT_GESTURE_THRESHOLD = 20
+    const val DEFAULT_T9_GESTURE_THRESHOLD = 20
+    const val DEFAULT_GESTURE_VIBRATION = true
+    const val DEFAULT_T9_GESTURE_VIBRATION = true
+    const val DEFAULT_GESTURE_BINDINGS_JSON = ""
+
+    // 按键底部手势标签（对标 WeType Tool 显示底部标签）。
+    const val KEY_SHOW_GESTURE_KEY_LABELS = "show_gesture_key_labels"
+    const val KEY_GESTURE_LABEL_TEXT_SIZE_SP = "gesture_label_text_size_sp"
+    const val KEY_GESTURE_LABEL_ALPHA = "gesture_label_alpha"
+    const val KEY_GESTURE_LABEL_POSITION = "gesture_label_position"
+    const val KEY_GESTURE_LABEL_MARGIN_TOP_DP = "gesture_label_margin_top_dp"
+    const val KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP = "gesture_label_margin_bottom_dp"
+    const val KEY_GESTURE_LABEL_MARGIN_LEFT_DP = "gesture_label_margin_left_dp"
+    const val KEY_GESTURE_LABEL_MARGIN_RIGHT_DP = "gesture_label_margin_right_dp"
+
+    const val GESTURE_LABEL_POSITION_BOTTOM = 0
+    const val GESTURE_LABEL_POSITION_TOP = 1
+
+    const val DEFAULT_SHOW_GESTURE_KEY_LABELS = true
+    const val DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP = 9
+    const val DEFAULT_GESTURE_LABEL_ALPHA = 153
+    const val DEFAULT_GESTURE_LABEL_POSITION = GESTURE_LABEL_POSITION_BOTTOM
+    const val DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP = 0
+    const val DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP = 3
+    const val DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP = 0
+    const val DEFAULT_GESTURE_LABEL_MARGIN_RIGHT_DP = 0
+
+    const val KEY_LOGO_ENABLED = "logo_enabled"
+    const val KEY_LOGO_SHOW_ENABLED = "logo_show_enabled"
+    const val KEY_LOGO_COLOR_MODE = "logo_color_mode"
+    const val KEY_LOGO_CUSTOM_COLOR = "logo_custom_color"
+
+    const val LOGO_COLOR_MODE_BRAND = "brand"
+    const val LOGO_COLOR_MODE_SYSTEM = "system"
+    const val LOGO_COLOR_MODE_BLACK = "black"
+    const val LOGO_COLOR_MODE_WHITE = "white"
+    const val LOGO_COLOR_MODE_CUSTOM = "custom"
+
+    fun normalizeLogoColorMode(mode: String?): String = when (mode) {
+        LOGO_COLOR_MODE_SYSTEM, LOGO_COLOR_MODE_BLACK, LOGO_COLOR_MODE_WHITE -> LOGO_COLOR_MODE_SYSTEM
+        LOGO_COLOR_MODE_CUSTOM -> LOGO_COLOR_MODE_CUSTOM
+        else -> LOGO_COLOR_MODE_BRAND
+    }
+
+    const val DEFAULT_LOGO_ENABLED = true
+    const val DEFAULT_LOGO_SHOW_ENABLED = true
+    const val DEFAULT_LOGO_COLOR_MODE = LOGO_COLOR_MODE_BRAND
+    const val DEFAULT_LOGO_CUSTOM_COLOR = 0xFF23C891.toInt()
+
+    // 字体来源：键名/语义/默认值与 Z1/Z2 已发布包内逻辑保持一致，已安装端存量设置可直接兼容。
+    // 0=微信官方（放行宿主字体），1=模块内置（assets/WE-Regular.ttf），2=跟随系统（Typeface.DEFAULT）。
+    const val KEY_FONT_MODE = "font_mode"
+    const val FONT_MODE_OFFICIAL = 0
+    const val FONT_MODE_MODULE = 1
+    const val FONT_MODE_SYSTEM = 2
+    const val DEFAULT_FONT_MODE = FONT_MODE_SYSTEM
+
     const val DEFAULT_LIGHT_COLOR = 0xBDD4D4D4.toInt()
     const val DEFAULT_DARK_COLOR = 0x40000000
     const val DEFAULT_BLUR_RADIUS = 60
@@ -95,8 +171,85 @@ object WeTypeSettings {
         val candidatePinyinLeftMarginDp: Int,
         val appearanceColors: Map<String, Int>,
         val toolbarIconBgOpacity: Int,
-        val disableHotUpdate: Boolean
+        val disableHotUpdate: Boolean,
+        val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
+        val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
+        val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        val qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
+        val t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
+        val gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
+        val t9GestureThreshold: Int = DEFAULT_T9_GESTURE_THRESHOLD,
+        val gestureVibration: Boolean = DEFAULT_GESTURE_VIBRATION,
+        val t9GestureVibration: Boolean = DEFAULT_T9_GESTURE_VIBRATION,
+        val gestureBindingsJson: String = DEFAULT_GESTURE_BINDINGS_JSON,
+        val showGestureKeyLabels: Boolean = DEFAULT_SHOW_GESTURE_KEY_LABELS,
+        val gestureLabelTextSizeSp: Int = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
+        val gestureLabelAlpha: Int = DEFAULT_GESTURE_LABEL_ALPHA,
+        val gestureLabelPosition: Int = DEFAULT_GESTURE_LABEL_POSITION,
+        val gestureLabelMarginTopDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
+        val gestureLabelMarginBottomDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
+        val gestureLabelMarginLeftDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
+        val gestureLabelMarginRightDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_RIGHT_DP,
+        val logoEnabled: Boolean = DEFAULT_LOGO_ENABLED,
+        val logoShowEnabled: Boolean = DEFAULT_LOGO_SHOW_ENABLED,
+        val logoColorMode: String = DEFAULT_LOGO_COLOR_MODE,
+        val logoCustomColor: Int = DEFAULT_LOGO_CUSTOM_COLOR,
+        val fontMode: Int = DEFAULT_FONT_MODE
     )
+
+    fun isShowCrossDeviceClipboard(context: Context): Boolean = readSnapshot(context).showCrossDeviceClipboard
+    fun isRemoveClipboardRetentionLimit(context: Context): Boolean = readSnapshot(context).removeClipboardRetentionLimit
+    fun isRemoveClipboardTextLimit(context: Context): Boolean = readSnapshot(context).removeClipboardTextLimit
+
+    fun isQwertyGestureEnabled(context: Context): Boolean = readSnapshot(context).qwertyGestureEnabled
+    fun isT9GestureEnabled(context: Context): Boolean = readSnapshot(context).t9GestureEnabled
+    fun getGestureThreshold(context: Context): Int = readSnapshot(context).gestureThreshold
+    fun getT9GestureThreshold(context: Context): Int = readSnapshot(context).t9GestureThreshold
+    fun isGestureVibration(context: Context): Boolean = readSnapshot(context).gestureVibration
+    fun isT9GestureVibration(context: Context): Boolean = readSnapshot(context).t9GestureVibration
+    fun getGestureBindingsJson(context: Context): String = readSnapshot(context).gestureBindingsJson
+    fun isShowGestureKeyLabels(context: Context): Boolean = readSnapshot(context).showGestureKeyLabels
+    fun getGestureLabelTextSizeSp(context: Context): Int = readSnapshot(context).gestureLabelTextSizeSp
+    fun getGestureLabelAlpha(context: Context): Int = readSnapshot(context).gestureLabelAlpha
+    fun getGestureLabelPosition(context: Context): Int = readSnapshot(context).gestureLabelPosition
+    fun getGestureLabelMarginTopDp(context: Context): Int = readSnapshot(context).gestureLabelMarginTopDp
+    fun getGestureLabelMarginBottomDp(context: Context): Int = readSnapshot(context).gestureLabelMarginBottomDp
+    fun getGestureLabelMarginLeftDp(context: Context): Int = readSnapshot(context).gestureLabelMarginLeftDp
+    fun getGestureLabelMarginRightDp(context: Context): Int = readSnapshot(context).gestureLabelMarginRightDp
+
+    fun isShowCrossDeviceClipboardXposed(): Boolean = readSnapshotXposed().showCrossDeviceClipboard
+    fun isRemoveClipboardRetentionLimitXposed(): Boolean = readSnapshotXposed().removeClipboardRetentionLimit
+    fun isRemoveClipboardTextLimitXposed(): Boolean = readSnapshotXposed().removeClipboardTextLimit
+
+    fun isQwertyGestureEnabledXposed(): Boolean = readSnapshotXposed().qwertyGestureEnabled
+    fun isT9GestureEnabledXposed(): Boolean = readSnapshotXposed().t9GestureEnabled
+    fun getGestureThresholdXposed(): Int = readSnapshotXposed().gestureThreshold
+    fun getT9GestureThresholdXposed(): Int = readSnapshotXposed().t9GestureThreshold
+    fun isGestureVibrationXposed(): Boolean = readSnapshotXposed().gestureVibration
+    fun isT9GestureVibrationXposed(): Boolean = readSnapshotXposed().t9GestureVibration
+    fun getGestureBindingsJsonXposed(): String = readSnapshotXposed().gestureBindingsJson
+    fun isShowGestureKeyLabelsXposed(): Boolean = readSnapshotXposed().showGestureKeyLabels
+    fun getGestureLabelTextSizeSpXposed(): Int = readSnapshotXposed().gestureLabelTextSizeSp
+    fun getGestureLabelAlphaXposed(): Int = readSnapshotXposed().gestureLabelAlpha
+    fun getGestureLabelPositionXposed(): Int = readSnapshotXposed().gestureLabelPosition
+    fun getGestureLabelMarginTopDpXposed(): Int = readSnapshotXposed().gestureLabelMarginTopDp
+    fun getGestureLabelMarginBottomDpXposed(): Int = readSnapshotXposed().gestureLabelMarginBottomDp
+    fun getGestureLabelMarginLeftDpXposed(): Int = readSnapshotXposed().gestureLabelMarginLeftDp
+    fun getGestureLabelMarginRightDpXposed(): Int = readSnapshotXposed().gestureLabelMarginRightDp
+
+    fun isLogoEnabled(context: Context): Boolean = readSnapshot(context).logoEnabled
+    fun isLogoShowEnabled(context: Context): Boolean = readSnapshot(context).logoShowEnabled
+    fun getLogoColorMode(context: Context): String = readSnapshot(context).logoColorMode
+    fun getLogoCustomColor(context: Context): Int = readSnapshot(context).logoCustomColor
+
+    fun isLogoEnabledXposed(): Boolean = readSnapshotXposed().logoEnabled
+    fun isLogoShowEnabledXposed(): Boolean = readSnapshotXposed().logoShowEnabled
+    fun getLogoColorModeXposed(): String = readSnapshotXposed().logoColorMode
+    fun getLogoCustomColorXposed(): Int = readSnapshotXposed().logoCustomColor
+
+    fun getFontMode(context: Context): Int = readSnapshot(context).fontMode
+
+    fun getFontModeXposed(): Int = readSnapshotXposed().fontMode
 
     fun getLightColor(context: Context): Int = readSnapshot(context).lightColor
 
@@ -286,6 +439,29 @@ object WeTypeSettings {
         toolbarIconBgOpacity: Int,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
+        showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
+        removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
+        removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
+        t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
+        gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
+        t9GestureThreshold: Int = DEFAULT_T9_GESTURE_THRESHOLD,
+        gestureVibration: Boolean = DEFAULT_GESTURE_VIBRATION,
+        t9GestureVibration: Boolean = DEFAULT_T9_GESTURE_VIBRATION,
+        gestureBindingsJson: String = DEFAULT_GESTURE_BINDINGS_JSON,
+        showGestureKeyLabels: Boolean = DEFAULT_SHOW_GESTURE_KEY_LABELS,
+        gestureLabelTextSizeSp: Int = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
+        gestureLabelAlpha: Int = DEFAULT_GESTURE_LABEL_ALPHA,
+        gestureLabelPosition: Int = DEFAULT_GESTURE_LABEL_POSITION,
+        gestureLabelMarginTopDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
+        gestureLabelMarginBottomDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
+        gestureLabelMarginLeftDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
+        gestureLabelMarginRightDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_RIGHT_DP,
+        logoEnabled: Boolean = DEFAULT_LOGO_ENABLED,
+        logoShowEnabled: Boolean = DEFAULT_LOGO_SHOW_ENABLED,
+        logoColorMode: String = DEFAULT_LOGO_COLOR_MODE,
+        logoCustomColor: Int = DEFAULT_LOGO_CUSTOM_COLOR,
+        fontMode: Int = DEFAULT_FONT_MODE,
         onPersisted: (Boolean) -> Unit = {}
     ): Boolean {
         val sanitizedAppearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
@@ -307,6 +483,32 @@ object WeTypeSettings {
             toolbarIconBgOpacity = toolbarIconBgOpacity,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
+            showCrossDeviceClipboard = showCrossDeviceClipboard,
+            removeClipboardRetentionLimit = removeClipboardRetentionLimit,
+            removeClipboardTextLimit = removeClipboardTextLimit,
+            qwertyGestureEnabled = qwertyGestureEnabled,
+            t9GestureEnabled = t9GestureEnabled,
+            gestureThreshold = gestureThreshold,
+            t9GestureThreshold = t9GestureThreshold,
+            gestureVibration = gestureVibration,
+            t9GestureVibration = t9GestureVibration,
+            gestureBindingsJson = gestureBindingsJson,
+            showGestureKeyLabels = showGestureKeyLabels,
+            gestureLabelTextSizeSp = gestureLabelTextSizeSp.coerceIn(6, 16),
+            gestureLabelAlpha = gestureLabelAlpha.coerceIn(0, 255),
+            gestureLabelPosition = gestureLabelPosition.coerceIn(
+                GESTURE_LABEL_POSITION_BOTTOM,
+                GESTURE_LABEL_POSITION_TOP
+            ),
+            gestureLabelMarginTopDp = gestureLabelMarginTopDp.coerceIn(0, 24),
+            gestureLabelMarginBottomDp = gestureLabelMarginBottomDp.coerceIn(0, 24),
+            gestureLabelMarginLeftDp = gestureLabelMarginLeftDp.coerceIn(0, 24),
+            gestureLabelMarginRightDp = gestureLabelMarginRightDp.coerceIn(0, 24),
+            logoEnabled = logoEnabled,
+            logoShowEnabled = logoShowEnabled,
+            logoColorMode = logoColorMode,
+            logoCustomColor = logoCustomColor,
+            fontMode = fontMode,
             onPersisted = onPersisted
         )
     }
@@ -394,6 +596,29 @@ object WeTypeSettings {
         toolbarIconBgOpacity: Int,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
+        showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
+        removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
+        removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
+        t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
+        gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
+        t9GestureThreshold: Int = DEFAULT_T9_GESTURE_THRESHOLD,
+        gestureVibration: Boolean = DEFAULT_GESTURE_VIBRATION,
+        t9GestureVibration: Boolean = DEFAULT_T9_GESTURE_VIBRATION,
+        gestureBindingsJson: String = DEFAULT_GESTURE_BINDINGS_JSON,
+        showGestureKeyLabels: Boolean = DEFAULT_SHOW_GESTURE_KEY_LABELS,
+        gestureLabelTextSizeSp: Int = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
+        gestureLabelAlpha: Int = DEFAULT_GESTURE_LABEL_ALPHA,
+        gestureLabelPosition: Int = DEFAULT_GESTURE_LABEL_POSITION,
+        gestureLabelMarginTopDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
+        gestureLabelMarginBottomDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
+        gestureLabelMarginLeftDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
+        gestureLabelMarginRightDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_RIGHT_DP,
+        logoEnabled: Boolean = DEFAULT_LOGO_ENABLED,
+        logoShowEnabled: Boolean = DEFAULT_LOGO_SHOW_ENABLED,
+        logoColorMode: String = DEFAULT_LOGO_COLOR_MODE,
+        logoCustomColor: Int = DEFAULT_LOGO_CUSTOM_COLOR,
+        fontMode: Int = DEFAULT_FONT_MODE,
         onPersisted: (Boolean) -> Unit
     ): Boolean {
         val snapshot = Snapshot(
@@ -415,7 +640,33 @@ object WeTypeSettings {
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 group.id to (appearanceColors[group.id] ?: group.defaultColor)
             },
-            disableHotUpdate = disableHotUpdate
+            disableHotUpdate = disableHotUpdate,
+            showCrossDeviceClipboard = showCrossDeviceClipboard,
+            removeClipboardRetentionLimit = removeClipboardRetentionLimit,
+            removeClipboardTextLimit = removeClipboardTextLimit,
+            qwertyGestureEnabled = qwertyGestureEnabled,
+            t9GestureEnabled = t9GestureEnabled,
+            gestureThreshold = gestureThreshold.coerceIn(10, 48),
+            t9GestureThreshold = t9GestureThreshold.coerceIn(10, 48),
+            gestureVibration = gestureVibration,
+            t9GestureVibration = t9GestureVibration,
+            gestureBindingsJson = gestureBindingsJson,
+            showGestureKeyLabels = showGestureKeyLabels,
+            gestureLabelTextSizeSp = gestureLabelTextSizeSp.coerceIn(6, 16),
+            gestureLabelAlpha = gestureLabelAlpha.coerceIn(0, 255),
+            gestureLabelPosition = gestureLabelPosition.coerceIn(
+                GESTURE_LABEL_POSITION_BOTTOM,
+                GESTURE_LABEL_POSITION_TOP
+            ),
+            gestureLabelMarginTopDp = gestureLabelMarginTopDp.coerceIn(0, 24),
+            gestureLabelMarginBottomDp = gestureLabelMarginBottomDp.coerceIn(0, 24),
+            gestureLabelMarginLeftDp = gestureLabelMarginLeftDp.coerceIn(0, 24),
+            gestureLabelMarginRightDp = gestureLabelMarginRightDp.coerceIn(0, 24),
+            logoEnabled = logoEnabled,
+            logoShowEnabled = logoShowEnabled,
+            logoColorMode = normalizeLogoColorMode(logoColorMode),
+            logoCustomColor = logoCustomColor,
+            fontMode = fontMode.coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM)
         )
         val appContext = context.applicationContext ?: context
         val localPreferences = appPreferences(appContext)
@@ -476,6 +727,29 @@ object WeTypeSettings {
             )
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, snapshot.toolbarIconBgOpacity)
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
+            .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
+            .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
+            .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
+            .putBoolean(KEY_QWERTY_GESTURE_ENABLED, snapshot.qwertyGestureEnabled)
+            .putBoolean(KEY_T9_GESTURE_ENABLED, snapshot.t9GestureEnabled)
+            .putInt(KEY_GESTURE_THRESHOLD, snapshot.gestureThreshold)
+            .putInt(KEY_T9_GESTURE_THRESHOLD, snapshot.t9GestureThreshold)
+            .putBoolean(KEY_GESTURE_VIBRATION, snapshot.gestureVibration)
+            .putBoolean(KEY_T9_GESTURE_VIBRATION, snapshot.t9GestureVibration)
+            .putString(KEY_GESTURE_BINDINGS_JSON, snapshot.gestureBindingsJson)
+            .putBoolean(KEY_SHOW_GESTURE_KEY_LABELS, snapshot.showGestureKeyLabels)
+            .putInt(KEY_GESTURE_LABEL_TEXT_SIZE_SP, snapshot.gestureLabelTextSizeSp)
+            .putInt(KEY_GESTURE_LABEL_ALPHA, snapshot.gestureLabelAlpha)
+            .putInt(KEY_GESTURE_LABEL_POSITION, snapshot.gestureLabelPosition)
+            .putInt(KEY_GESTURE_LABEL_MARGIN_TOP_DP, snapshot.gestureLabelMarginTopDp)
+            .putInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, snapshot.gestureLabelMarginBottomDp)
+            .putInt(KEY_GESTURE_LABEL_MARGIN_LEFT_DP, snapshot.gestureLabelMarginLeftDp)
+            .putInt(KEY_GESTURE_LABEL_MARGIN_RIGHT_DP, snapshot.gestureLabelMarginRightDp)
+            .putBoolean(KEY_LOGO_ENABLED, snapshot.logoEnabled)
+            .putBoolean(KEY_LOGO_SHOW_ENABLED, snapshot.logoShowEnabled)
+            .putString(KEY_LOGO_COLOR_MODE, snapshot.logoColorMode)
+            .putInt(KEY_LOGO_CUSTOM_COLOR, snapshot.logoCustomColor)
+            .putInt(KEY_FONT_MODE, snapshot.fontMode)
             .putBoolean(KEY_KEY_OPACITY_MIGRATED, true)
             .remove(KEY_KEY_OPACITY)
         WeTypeAppearanceColorGroups.groups.forEach { group ->
@@ -605,6 +879,29 @@ object WeTypeSettings {
         putInt(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP, candidatePinyinLeftMarginDp)
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
+        putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
+        putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
+        putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
+        putBoolean(KEY_QWERTY_GESTURE_ENABLED, qwertyGestureEnabled)
+        putBoolean(KEY_T9_GESTURE_ENABLED, t9GestureEnabled)
+        putInt(KEY_GESTURE_THRESHOLD, gestureThreshold)
+        putInt(KEY_T9_GESTURE_THRESHOLD, t9GestureThreshold)
+        putBoolean(KEY_GESTURE_VIBRATION, gestureVibration)
+        putBoolean(KEY_T9_GESTURE_VIBRATION, t9GestureVibration)
+        putString(KEY_GESTURE_BINDINGS_JSON, gestureBindingsJson)
+        putBoolean(KEY_SHOW_GESTURE_KEY_LABELS, showGestureKeyLabels)
+        putInt(KEY_GESTURE_LABEL_TEXT_SIZE_SP, gestureLabelTextSizeSp)
+        putInt(KEY_GESTURE_LABEL_ALPHA, gestureLabelAlpha)
+        putInt(KEY_GESTURE_LABEL_POSITION, gestureLabelPosition)
+        putInt(KEY_GESTURE_LABEL_MARGIN_TOP_DP, gestureLabelMarginTopDp)
+        putInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, gestureLabelMarginBottomDp)
+        putInt(KEY_GESTURE_LABEL_MARGIN_LEFT_DP, gestureLabelMarginLeftDp)
+        putInt(KEY_GESTURE_LABEL_MARGIN_RIGHT_DP, gestureLabelMarginRightDp)
+        putBoolean(KEY_LOGO_ENABLED, logoEnabled)
+        putBoolean(KEY_LOGO_SHOW_ENABLED, logoShowEnabled)
+        putString(KEY_LOGO_COLOR_MODE, logoColorMode)
+        putInt(KEY_LOGO_CUSTOM_COLOR, logoCustomColor)
+        putInt(KEY_FONT_MODE, fontMode)
         putBundle(
             EXTRA_APPEARANCE_COLORS,
             Bundle().apply {
@@ -656,7 +953,38 @@ object WeTypeSettings {
                 KEY_TOOLBAR_ICON_BG_OPACITY,
                 defaults.toolbarIconBgOpacity
             ).coerceIn(0, 255),
-            disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate)
+            disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate),
+            showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
+            removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
+            removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
+            qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, defaults.qwertyGestureEnabled),
+            t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, defaults.t9GestureEnabled),
+            gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, defaults.gestureThreshold).coerceIn(10, 48),
+            t9GestureThreshold = getInt(KEY_T9_GESTURE_THRESHOLD, defaults.t9GestureThreshold).coerceIn(10, 48),
+            gestureVibration = getBoolean(KEY_GESTURE_VIBRATION, defaults.gestureVibration),
+            t9GestureVibration = getBoolean(KEY_T9_GESTURE_VIBRATION, defaults.t9GestureVibration),
+            gestureBindingsJson = getString(KEY_GESTURE_BINDINGS_JSON) ?: defaults.gestureBindingsJson,
+            showGestureKeyLabels = getBoolean(KEY_SHOW_GESTURE_KEY_LABELS, defaults.showGestureKeyLabels),
+            gestureLabelTextSizeSp = getInt(KEY_GESTURE_LABEL_TEXT_SIZE_SP, defaults.gestureLabelTextSizeSp)
+                .coerceIn(6, 16),
+            gestureLabelAlpha = getInt(KEY_GESTURE_LABEL_ALPHA, defaults.gestureLabelAlpha)
+                .coerceIn(0, 255),
+            gestureLabelPosition = getInt(KEY_GESTURE_LABEL_POSITION, defaults.gestureLabelPosition)
+                .coerceIn(GESTURE_LABEL_POSITION_BOTTOM, GESTURE_LABEL_POSITION_TOP),
+            gestureLabelMarginTopDp = getInt(KEY_GESTURE_LABEL_MARGIN_TOP_DP, defaults.gestureLabelMarginTopDp)
+                .coerceIn(0, 24),
+            gestureLabelMarginBottomDp = getInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, defaults.gestureLabelMarginBottomDp)
+                .coerceIn(0, 24),
+            gestureLabelMarginLeftDp = getInt(KEY_GESTURE_LABEL_MARGIN_LEFT_DP, defaults.gestureLabelMarginLeftDp)
+                .coerceIn(0, 24),
+            gestureLabelMarginRightDp = getInt(KEY_GESTURE_LABEL_MARGIN_RIGHT_DP, defaults.gestureLabelMarginRightDp)
+                .coerceIn(0, 24),
+            logoEnabled = getBoolean(KEY_LOGO_ENABLED, defaults.logoEnabled),
+            logoShowEnabled = getBoolean(KEY_LOGO_SHOW_ENABLED, defaults.logoShowEnabled),
+            logoColorMode = normalizeLogoColorMode(getString(KEY_LOGO_COLOR_MODE) ?: defaults.logoColorMode),
+            logoCustomColor = getInt(KEY_LOGO_CUSTOM_COLOR, defaults.logoCustomColor),
+            fontMode = getInt(KEY_FONT_MODE, defaults.fontMode)
+                .coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM)
         )
     }
 
@@ -711,7 +1039,38 @@ object WeTypeSettings {
                 val color = getInt(key, fallbackColor)
                 group.id to migrateLegacyKeyOpacity(group, color, legacyKeyOpacity)
             },
-            disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, DEFAULT_DISABLE_HOT_UPDATE)
+            disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, DEFAULT_DISABLE_HOT_UPDATE),
+            showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD),
+            removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
+            removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
+            qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, DEFAULT_QWERTY_GESTURE_ENABLED),
+            t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, DEFAULT_T9_GESTURE_ENABLED),
+            gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, DEFAULT_GESTURE_THRESHOLD).coerceIn(10, 48),
+            t9GestureThreshold = getInt(KEY_T9_GESTURE_THRESHOLD, DEFAULT_T9_GESTURE_THRESHOLD).coerceIn(10, 48),
+            gestureVibration = getBoolean(KEY_GESTURE_VIBRATION, DEFAULT_GESTURE_VIBRATION),
+            t9GestureVibration = getBoolean(KEY_T9_GESTURE_VIBRATION, DEFAULT_T9_GESTURE_VIBRATION),
+            gestureBindingsJson = getString(KEY_GESTURE_BINDINGS_JSON, DEFAULT_GESTURE_BINDINGS_JSON) ?: DEFAULT_GESTURE_BINDINGS_JSON,
+            showGestureKeyLabels = getBoolean(KEY_SHOW_GESTURE_KEY_LABELS, DEFAULT_SHOW_GESTURE_KEY_LABELS),
+            gestureLabelTextSizeSp = getInt(KEY_GESTURE_LABEL_TEXT_SIZE_SP, DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP)
+                .coerceIn(6, 16),
+            gestureLabelAlpha = getInt(KEY_GESTURE_LABEL_ALPHA, DEFAULT_GESTURE_LABEL_ALPHA)
+                .coerceIn(0, 255),
+            gestureLabelPosition = getInt(KEY_GESTURE_LABEL_POSITION, DEFAULT_GESTURE_LABEL_POSITION)
+                .coerceIn(GESTURE_LABEL_POSITION_BOTTOM, GESTURE_LABEL_POSITION_TOP),
+            gestureLabelMarginTopDp = getInt(KEY_GESTURE_LABEL_MARGIN_TOP_DP, DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP)
+                .coerceIn(0, 24),
+            gestureLabelMarginBottomDp = getInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP)
+                .coerceIn(0, 24),
+            gestureLabelMarginLeftDp = getInt(KEY_GESTURE_LABEL_MARGIN_LEFT_DP, DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP)
+                .coerceIn(0, 24),
+            gestureLabelMarginRightDp = getInt(KEY_GESTURE_LABEL_MARGIN_RIGHT_DP, DEFAULT_GESTURE_LABEL_MARGIN_RIGHT_DP)
+                .coerceIn(0, 24),
+            logoEnabled = getBoolean(KEY_LOGO_ENABLED, DEFAULT_LOGO_ENABLED),
+            logoShowEnabled = getBoolean(KEY_LOGO_SHOW_ENABLED, DEFAULT_LOGO_SHOW_ENABLED),
+            logoColorMode = normalizeLogoColorMode(getString(KEY_LOGO_COLOR_MODE, DEFAULT_LOGO_COLOR_MODE)),
+            logoCustomColor = getInt(KEY_LOGO_CUSTOM_COLOR, DEFAULT_LOGO_CUSTOM_COLOR),
+            fontMode = getInt(KEY_FONT_MODE, DEFAULT_FONT_MODE)
+                .coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM)
         )
     }
 
@@ -745,7 +1104,30 @@ object WeTypeSettings {
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         toolbarIconBgOpacity = DEFAULT_TOOLBAR_ICON_BG_OPACITY,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
-        disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE
+        disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
+        showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
+        removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
+        removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        qwertyGestureEnabled = DEFAULT_QWERTY_GESTURE_ENABLED,
+        t9GestureEnabled = DEFAULT_T9_GESTURE_ENABLED,
+        gestureThreshold = DEFAULT_GESTURE_THRESHOLD,
+        t9GestureThreshold = DEFAULT_T9_GESTURE_THRESHOLD,
+        gestureVibration = DEFAULT_GESTURE_VIBRATION,
+        t9GestureVibration = DEFAULT_T9_GESTURE_VIBRATION,
+        gestureBindingsJson = DEFAULT_GESTURE_BINDINGS_JSON,
+        showGestureKeyLabels = DEFAULT_SHOW_GESTURE_KEY_LABELS,
+        gestureLabelTextSizeSp = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
+        gestureLabelAlpha = DEFAULT_GESTURE_LABEL_ALPHA,
+        gestureLabelPosition = DEFAULT_GESTURE_LABEL_POSITION,
+        gestureLabelMarginTopDp = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
+        gestureLabelMarginBottomDp = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
+        gestureLabelMarginLeftDp = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
+        gestureLabelMarginRightDp = DEFAULT_GESTURE_LABEL_MARGIN_RIGHT_DP,
+        logoEnabled = DEFAULT_LOGO_ENABLED,
+        logoShowEnabled = DEFAULT_LOGO_SHOW_ENABLED,
+        logoColorMode = DEFAULT_LOGO_COLOR_MODE,
+        logoCustomColor = DEFAULT_LOGO_CUSTOM_COLOR,
+        fontMode = DEFAULT_FONT_MODE
     )
 
     private fun SharedPreferences.containsAnyPersistedSetting(): Boolean {
@@ -762,7 +1144,30 @@ object WeTypeSettings {
             contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) ||
             contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) ||
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
-            contains(KEY_DISABLE_HOT_UPDATE)
+            contains(KEY_DISABLE_HOT_UPDATE) ||
+            contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
+            contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
+            contains(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT) ||
+            contains(KEY_QWERTY_GESTURE_ENABLED) ||
+            contains(KEY_T9_GESTURE_ENABLED) ||
+            contains(KEY_GESTURE_THRESHOLD) ||
+            contains(KEY_T9_GESTURE_THRESHOLD) ||
+            contains(KEY_GESTURE_VIBRATION) ||
+            contains(KEY_T9_GESTURE_VIBRATION) ||
+            contains(KEY_GESTURE_BINDINGS_JSON) ||
+            contains(KEY_SHOW_GESTURE_KEY_LABELS) ||
+            contains(KEY_GESTURE_LABEL_TEXT_SIZE_SP) ||
+            contains(KEY_GESTURE_LABEL_ALPHA) ||
+            contains(KEY_GESTURE_LABEL_POSITION) ||
+            contains(KEY_GESTURE_LABEL_MARGIN_TOP_DP) ||
+            contains(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP) ||
+            contains(KEY_GESTURE_LABEL_MARGIN_LEFT_DP) ||
+            contains(KEY_GESTURE_LABEL_MARGIN_RIGHT_DP) ||
+            contains(KEY_LOGO_ENABLED) ||
+            contains(KEY_LOGO_SHOW_ENABLED) ||
+            contains(KEY_LOGO_COLOR_MODE) ||
+            contains(KEY_LOGO_CUSTOM_COLOR) ||
+            contains(KEY_FONT_MODE)
         ) {
             return true
         }

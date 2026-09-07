@@ -17,6 +17,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
+import com.xposed.wetypehook.wetype.hook.WeTypeClipboardHooks
+import com.xposed.wetypehook.wetype.hook.WeTypeGestureHooks
+import com.xposed.wetypehook.wetype.hook.WeTypeKeyLabelHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeUpdateHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
@@ -168,8 +171,9 @@ class MainHook : XposedModule() {
                 }
             }
         } else {
-            recordActiveTarget(ActiveTarget(TARGET_KIND_PACKAGE, packageName))
-            startHook(packageName, param.classLoader, isMiuiImeSupport)
+            val sourceDir = param.applicationInfo.sourceDir
+            recordActiveTarget(ActiveTarget(TARGET_KIND_PACKAGE, packageName, sourceDir = sourceDir))
+            startHook(packageName, param.classLoader, sourceDir, isMiuiImeSupport)
         }
     }
 
@@ -225,7 +229,7 @@ class MainHook : XposedModule() {
                 }
 
                 TARGET_KIND_PACKAGE -> target.packageName?.let { packageName ->
-                    startHook(packageName, classLoader, isMiuiImeSupport)
+                    startHook(packageName, classLoader, target.sourceDir, isMiuiImeSupport)
                     bottomManagersToReconcile += reinstallDynamicBottomManagerHooks(
                         param.oldHookHandles,
                         packageName
@@ -245,12 +249,13 @@ class MainHook : XposedModule() {
     private fun startHook(
         packageName: String,
         classLoader: ClassLoader,
+        sourceDir: String?,
         isMiuiImeSupport: Boolean
     ) {
         val isWeType = packageName == WETYPE_PACKAGE
 
         if (isWeType) {
-            installWeTypeHooks(packageName)
+            installWeTypeHooks(packageName, sourceDir, classLoader)
         }
 
         if (!isMiuiImeSupport) return
@@ -278,7 +283,7 @@ class MainHook : XposedModule() {
         Log.i("Hook MIUI IME Done!")
     }
 
-    private fun installWeTypeHooks(sourcePackage: String) {
+    private fun installWeTypeHooks(sourcePackage: String, sourceDir: String?, classLoader: ClassLoader) {
         if (frameworkProperties and XposedInterface.PROP_CAP_REMOTE != 0L) {
             runCatching {
                 WeTypeSettings.bindRemotePreferences(
@@ -310,6 +315,9 @@ class MainHook : XposedModule() {
         HookEnvironment.withHookScope("wetype.about-entry") { hookWeTypeAboutLogoEntry() }
         HookEnvironment.withHookScope("wetype.keyboard-logo") { WeTypeResourceHooks.hookKeyboardLogo() }
         HookEnvironment.withHookScope("wetype.toolbar-icon") { WeTypeResourceHooks.hookToolbarIconBackground() }
+        HookEnvironment.withHookScope("wetype.clipboard") { WeTypeClipboardHooks.install(sourceDir, classLoader) }
+        HookEnvironment.withHookScope("wetype.gesture") { WeTypeGestureHooks.install(sourceDir, classLoader) }
+        HookEnvironment.withHookScope("wetype.keylabel") { WeTypeKeyLabelHooks.install(sourceDir, classLoader) }
     }
 
     private fun installBaseImeHooks(forceTransparentBottomView: Boolean) {
@@ -615,6 +623,7 @@ class MainHook : XposedModule() {
         }.hookAfter { param ->
             val service = param.thisObject as? InputMethodService ?: return@hookAfter
             if (service.packageName != sourcePackage) return@hookAfter
+            com.xposed.wetypehook.wetype.gesture.GestureActionExecutor.activeInputMethodService = WeakReference(service)
             WeTypeSettings.ensureHostSnapshot(service)
             notifyActivationHeartbeat(service, sourcePackage)
         }

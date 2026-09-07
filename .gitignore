@@ -13,3 +13,7 @@ local.properties
 .settings
 *.log
 /wetype_work_space
+*.apk
+original/
+output/
+work/

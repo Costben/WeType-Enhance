@@ -17,6 +17,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,13 +29,17 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CornerSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -67,16 +72,21 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.view.WindowCompat
 import com.kyant.capsule.ContinuousRoundedRectangle
+import com.xposed.wetypehook.wetype.gesture.GestureAction
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
+import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
@@ -452,6 +462,75 @@ private fun WeTypeSettingsScreen(
     var disableHotUpdate by rememberSaveable {
         mutableStateOf(snapshot.disableHotUpdate)
     }
+    var showCrossDeviceClipboard by rememberSaveable {
+        mutableStateOf(snapshot.showCrossDeviceClipboard)
+    }
+    var removeClipboardRetentionLimit by rememberSaveable {
+        mutableStateOf(snapshot.removeClipboardRetentionLimit)
+    }
+    var removeClipboardTextLimit by rememberSaveable {
+        mutableStateOf(snapshot.removeClipboardTextLimit)
+    }
+    var qwertyGestureEnabled by rememberSaveable {
+        mutableStateOf(snapshot.qwertyGestureEnabled)
+    }
+    var t9GestureEnabled by rememberSaveable {
+        mutableStateOf(snapshot.t9GestureEnabled)
+    }
+    var gestureThreshold by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureThreshold)
+    }
+    var t9GestureThreshold by rememberSaveable {
+        mutableIntStateOf(snapshot.t9GestureThreshold)
+    }
+    var gestureVibration by rememberSaveable {
+        mutableStateOf(snapshot.gestureVibration)
+    }
+    var t9GestureVibration by rememberSaveable {
+        mutableStateOf(snapshot.t9GestureVibration)
+    }
+    var gestureBindingsJson by rememberSaveable {
+        mutableStateOf(snapshot.gestureBindingsJson)
+    }
+    var showGestureKeyLabels by rememberSaveable {
+        mutableStateOf(snapshot.showGestureKeyLabels)
+    }
+    var gestureLabelTextSizeSp by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureLabelTextSizeSp)
+    }
+    var gestureLabelAlpha by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureLabelAlpha)
+    }
+    var gestureLabelPosition by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureLabelPosition)
+    }
+    var gestureLabelMarginTopDp by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureLabelMarginTopDp)
+    }
+    var gestureLabelMarginBottomDp by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureLabelMarginBottomDp)
+    }
+    var gestureLabelMarginLeftDp by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureLabelMarginLeftDp)
+    }
+    var gestureLabelMarginRightDp by rememberSaveable {
+        mutableIntStateOf(snapshot.gestureLabelMarginRightDp)
+    }
+    var logoEnabled by rememberSaveable {
+        mutableStateOf(snapshot.logoEnabled)
+    }
+    var logoShowEnabled by rememberSaveable {
+        mutableStateOf(snapshot.logoShowEnabled)
+    }
+    var logoColorMode by rememberSaveable {
+        mutableStateOf(WeTypeSettings.normalizeLogoColorMode(snapshot.logoColorMode))
+    }
+    var logoCustomColorInput by rememberSaveable {
+        mutableStateOf(formatRgb(snapshot.logoCustomColor))
+    }
+    var fontMode by rememberSaveable {
+        mutableIntStateOf(snapshot.fontMode)
+    }
     val appearanceGroupColors = rememberSaveable(
         saver = listSaver(
             save = { it.toList() },
@@ -522,6 +601,29 @@ private fun WeTypeSettingsScreen(
             toolbarIconBgOpacity = toolbarIconBgOpacity,
             appearanceColors = currentAppearanceColors(),
             disableHotUpdate = disableHotUpdate,
+            showCrossDeviceClipboard = showCrossDeviceClipboard,
+            removeClipboardRetentionLimit = removeClipboardRetentionLimit,
+            removeClipboardTextLimit = removeClipboardTextLimit,
+            qwertyGestureEnabled = qwertyGestureEnabled,
+            t9GestureEnabled = t9GestureEnabled,
+            gestureThreshold = gestureThreshold,
+            t9GestureThreshold = t9GestureThreshold,
+            gestureVibration = gestureVibration,
+            t9GestureVibration = t9GestureVibration,
+            gestureBindingsJson = gestureBindingsJson,
+            showGestureKeyLabels = showGestureKeyLabels,
+            gestureLabelTextSizeSp = gestureLabelTextSizeSp,
+            gestureLabelAlpha = gestureLabelAlpha,
+            gestureLabelPosition = gestureLabelPosition,
+            gestureLabelMarginTopDp = gestureLabelMarginTopDp,
+            gestureLabelMarginBottomDp = gestureLabelMarginBottomDp,
+            gestureLabelMarginLeftDp = gestureLabelMarginLeftDp,
+            gestureLabelMarginRightDp = gestureLabelMarginRightDp,
+            logoEnabled = logoEnabled,
+            logoShowEnabled = logoShowEnabled,
+            logoColorMode = logoColorMode,
+            logoCustomColor = parseLogoCustomColor(logoCustomColorInput),
+            fontMode = fontMode,
             onPersisted = { saved ->
                 Toast.makeText(
                     context,
@@ -547,6 +649,29 @@ private fun WeTypeSettingsScreen(
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
+        showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
+        removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
+        removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT
+        qwertyGestureEnabled = WeTypeSettings.DEFAULT_QWERTY_GESTURE_ENABLED
+        t9GestureEnabled = WeTypeSettings.DEFAULT_T9_GESTURE_ENABLED
+        gestureThreshold = WeTypeSettings.DEFAULT_GESTURE_THRESHOLD
+        t9GestureThreshold = WeTypeSettings.DEFAULT_T9_GESTURE_THRESHOLD
+        gestureVibration = WeTypeSettings.DEFAULT_GESTURE_VIBRATION
+        t9GestureVibration = WeTypeSettings.DEFAULT_T9_GESTURE_VIBRATION
+        gestureBindingsJson = WeTypeSettings.DEFAULT_GESTURE_BINDINGS_JSON
+        showGestureKeyLabels = WeTypeSettings.DEFAULT_SHOW_GESTURE_KEY_LABELS
+        gestureLabelTextSizeSp = WeTypeSettings.DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP
+        gestureLabelAlpha = WeTypeSettings.DEFAULT_GESTURE_LABEL_ALPHA
+        gestureLabelPosition = WeTypeSettings.DEFAULT_GESTURE_LABEL_POSITION
+        gestureLabelMarginTopDp = WeTypeSettings.DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP
+        gestureLabelMarginBottomDp = WeTypeSettings.DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP
+        gestureLabelMarginLeftDp = WeTypeSettings.DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP
+        gestureLabelMarginRightDp = WeTypeSettings.DEFAULT_GESTURE_LABEL_MARGIN_RIGHT_DP
+        logoEnabled = WeTypeSettings.DEFAULT_LOGO_ENABLED
+        logoShowEnabled = WeTypeSettings.DEFAULT_LOGO_SHOW_ENABLED
+        logoColorMode = WeTypeSettings.DEFAULT_LOGO_COLOR_MODE
+        logoCustomColorInput = formatRgb(WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR)
+        fontMode = WeTypeSettings.DEFAULT_FONT_MODE
         appearanceGroups.forEachIndexed { index, group ->
             appearanceGroupColors[index] = group.defaultColor
         }
@@ -847,6 +972,298 @@ private fun WeTypeSettingsScreen(
                             max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
                             onValueChange = { candidateBackgroundCorner = it }
                         )
+                    }
+                }
+            }
+
+            // 剪贴板增强分组
+            item {
+                SmallTitle(
+                    text = "剪贴板增强"
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        MiuixSwitchWidget(
+                            title = "跨设备条目可见化持久保存",
+                            description = "自动将多端同步的剪贴板远程条目转换为本地可见条目保存",
+                            checked = showCrossDeviceClipboard,
+                            onCheckedChange = { showCrossDeviceClipboard = it }
+                        )
+                        HorizontalDivider()
+                        MiuixSwitchWidget(
+                            title = "解除保留上限与时长限制",
+                            description = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
+                            checked = removeClipboardRetentionLimit,
+                            onCheckedChange = { removeClipboardRetentionLimit = it }
+                        )
+                        HorizontalDivider()
+                        MiuixSwitchWidget(
+                            title = "解除单条文本长度限制",
+                            description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
+                            checked = removeClipboardTextLimit,
+                            onCheckedChange = { removeClipboardTextLimit = it }
+                        )
+                    }
+                }
+            }
+
+            // 按键下滑手势分组
+            item {
+                var gestureLabelPositionOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+                SmallTitle(
+                    text = "按键下滑手势"
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        MiuixSwitchWidget(
+                            title = "启用 26 键 QWERTY 下滑手势",
+                            description = "默认 Z=全选 / X=剪切 / C=复制 / V=粘贴",
+                            checked = qwertyGestureEnabled,
+                            onCheckedChange = { qwertyGestureEnabled = it }
+                        )
+                        HorizontalDivider()
+                        MiuixSwitchWidget(
+                            title = "启用九宫格 T9 下滑手势",
+                            description = "支持 1~9 号键位下滑触发绑定动作",
+                            checked = t9GestureEnabled,
+                            onCheckedChange = { t9GestureEnabled = it }
+                        )
+                        HorizontalDivider()
+                        MiuixSwitchWidget(
+                            title = "手势触发触觉反馈",
+                            description = "触发手势动作时调用系统键盘触觉振动",
+                            checked = gestureVibration,
+                            onCheckedChange = { gestureVibration = it }
+                        )
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "QWERTY 触发滑动阈值: ${gestureThreshold} dp",
+                            value = gestureThreshold,
+                            max = 48,
+                            onValueChange = { gestureThreshold = it.coerceIn(10, 48) }
+                        )
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "T9 触发滑动阈值: ${t9GestureThreshold} dp",
+                            value = t9GestureThreshold,
+                            max = 48,
+                            onValueChange = { t9GestureThreshold = it.coerceIn(10, 48) }
+                        )
+                        HorizontalDivider()
+                        MiuixSwitchWidget(
+                            title = "显示按键手势标签",
+                            description = "在已绑定手势的按键上显示动作名",
+                            checked = showGestureKeyLabels,
+                            onCheckedChange = { showGestureKeyLabels = it }
+                        )
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "标签文字大小: ${gestureLabelTextSizeSp} sp",
+                            value = gestureLabelTextSizeSp,
+                            max = 16,
+                            onValueChange = { gestureLabelTextSizeSp = it.coerceIn(6, 16) }
+                        )
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "标签不透明度: ${gestureLabelAlpha}",
+                            value = gestureLabelAlpha,
+                            max = 255,
+                            onValueChange = { gestureLabelAlpha = it.coerceIn(0, 255) }
+                        )
+                        HorizontalDivider()
+                        ArrowPreference(
+                            title = "标签位置",
+                            summary = gestureLabelPositionLabel(gestureLabelPosition),
+                            onClick = { gestureLabelPositionOptionsExpanded = !gestureLabelPositionOptionsExpanded }
+                        )
+                        if (gestureLabelPositionOptionsExpanded) {
+                            HorizontalDivider()
+                            LogoColorModeOption(
+                                label = "底部",
+                                selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM,
+                                onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM }
+                            )
+                            LogoColorModeOption(
+                                label = "顶部",
+                                selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_TOP,
+                                onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_TOP }
+                            )
+                        }
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "标签上边距: ${gestureLabelMarginTopDp} dp",
+                            value = gestureLabelMarginTopDp,
+                            max = 24,
+                            onValueChange = { gestureLabelMarginTopDp = it.coerceIn(0, 24) }
+                        )
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "标签下边距: ${gestureLabelMarginBottomDp} dp",
+                            value = gestureLabelMarginBottomDp,
+                            max = 24,
+                            onValueChange = { gestureLabelMarginBottomDp = it.coerceIn(0, 24) }
+                        )
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "标签左边距: ${gestureLabelMarginLeftDp} dp",
+                            value = gestureLabelMarginLeftDp,
+                            max = 24,
+                            onValueChange = { gestureLabelMarginLeftDp = it.coerceIn(0, 24) }
+                        )
+                        HorizontalDivider()
+                        SliderPreferenceItem(
+                            title = "标签右边距: ${gestureLabelMarginRightDp} dp",
+                            value = gestureLabelMarginRightDp,
+                            max = 24,
+                            onValueChange = { gestureLabelMarginRightDp = it.coerceIn(0, 24) }
+                        )
+                    }
+                }
+            }
+
+            // 按键手势映射自定义分组
+            item {
+                SmallTitle(
+                    text = "按键手势映射自定义"
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    GestureKeyBindingEditor(
+                        bindingsJson = gestureBindingsJson,
+                        onBindingsChange = { gestureBindingsJson = it }
+                    )
+                }
+            }
+
+            // 字体替换分组
+            item {
+                var fontModeOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+                SmallTitle(
+                    text = "字体替换"
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        ArrowPreference(
+                            title = "字体来源",
+                            summary = fontModeLabel(fontMode),
+                            onClick = { fontModeOptionsExpanded = !fontModeOptionsExpanded }
+                        )
+                        if (fontModeOptionsExpanded) {
+                            HorizontalDivider()
+                            LogoColorModeOption(
+                                label = "微信官方",
+                                selected = fontMode == WeTypeSettings.FONT_MODE_OFFICIAL,
+                                onClick = { fontMode = WeTypeSettings.FONT_MODE_OFFICIAL }
+                            )
+                            LogoColorModeOption(
+                                label = "模块内置",
+                                selected = fontMode == WeTypeSettings.FONT_MODE_MODULE,
+                                onClick = { fontMode = WeTypeSettings.FONT_MODE_MODULE }
+                            )
+                            LogoColorModeOption(
+                                label = "跟随系统",
+                                selected = fontMode == WeTypeSettings.FONT_MODE_SYSTEM,
+                                onClick = { fontMode = WeTypeSettings.FONT_MODE_SYSTEM }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 键盘 Logo 分组
+            item {
+                var logoColorOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+                SmallTitle(
+                    text = "键盘 Logo"
+                )
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    insideMargin = PaddingValues(0.dp)
+                ) {
+                    Column {
+                        MiuixSwitchWidget(
+                            title = "启用 Logo 替换",
+                            description = "关闭则显示输入法原生 Logo",
+                            checked = logoEnabled,
+                            onCheckedChange = { logoEnabled = it }
+                        )
+                        HorizontalDivider()
+                        MiuixSwitchWidget(
+                            title = "显示 Logo",
+                            description = "关闭则隐藏键盘上的 Logo",
+                            checked = logoShowEnabled,
+                            onCheckedChange = { logoShowEnabled = it }
+                        )
+                        HorizontalDivider()
+                        ArrowPreference(
+                            title = "Logo 主体颜色",
+                            summary = logoColorModeLabel(logoColorMode),
+                            onClick = { logoColorOptionsExpanded = !logoColorOptionsExpanded }
+                        )
+                        if (logoColorOptionsExpanded) {
+                            HorizontalDivider()
+                            LogoColorModeOption(
+                                label = "跟随品牌色",
+                                selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_BRAND,
+                                onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_BRAND }
+                            )
+                            LogoColorModeOption(
+                                label = "跟随系统",
+                                selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
+                                onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_SYSTEM }
+                            )
+                            LogoColorModeOption(
+                                label = "自定义",
+                                selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM,
+                                onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_CUSTOM }
+                            )
+                        }
+                        if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
+                            HorizontalDivider()
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
+                            ) {
+                                Text(
+                                    text = "自定义颜色",
+                                    style = MiuixTheme.textStyles.main
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "输入 #RRGGBB，例如 #23C891",
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    style = MiuixTheme.textStyles.body2
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                TextField(
+                                    value = logoCustomColorInput,
+                                    onValueChange = { input ->
+                                        val trimmed = input.trim()
+                                        val hasPrefix = trimmed.startsWith("#")
+                                        val body = trimmed.removePrefix("#")
+                                        if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                            return@TextField
+                                        }
+                                        logoCustomColorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+                                    },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = "#RRGGBB"
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1416,6 +1833,50 @@ private fun MiuixSwitchWidget(
 private fun previewTextColor(color: Int): ComposeColor =
     if (isLightColor(color)) ComposeColor.Black else ComposeColor.White
 
+private fun logoColorModeLabel(mode: String): String = when (mode) {
+    WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
+    WeTypeSettings.LOGO_COLOR_MODE_BLACK,
+    WeTypeSettings.LOGO_COLOR_MODE_WHITE -> "跟随系统"
+    WeTypeSettings.LOGO_COLOR_MODE_CUSTOM -> "自定义"
+    else -> "跟随品牌色"
+}
+
+private fun fontModeLabel(mode: Int): String = when (mode) {
+    WeTypeSettings.FONT_MODE_OFFICIAL -> "微信官方"
+    WeTypeSettings.FONT_MODE_MODULE -> "模块内置"
+    else -> "跟随系统"
+}
+
+private fun gestureLabelPositionLabel(position: Int): String = when (position) {
+    WeTypeSettings.GESTURE_LABEL_POSITION_TOP -> "顶部"
+    else -> "底部"
+}
+
+private fun parseLogoCustomColor(input: String): Int {
+    return parseRgbColor(input) ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR
+}
+
+@Composable
+private fun LogoColorModeOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    BasicComponent(
+        title = label,
+        onClick = onClick,
+        endActions = {
+            if (selected) {
+                Icon(
+                    imageVector = MiuixIcons.Ok,
+                    contentDescription = null,
+                    tint = MiuixTheme.colorScheme.primary
+                )
+            }
+        }
+    )
+}
+
 private fun formatRgb(color: Int): String = String.format("#%06X", color and 0xFFFFFF)
 
 private fun formatArgb(color: Int): String = String.format("#%08X", color)
@@ -1465,4 +1926,393 @@ private fun isLightColor(color: Int): Boolean {
     val luminance =
         (Color.red(color) * 0.299 + Color.green(color) * 0.587 + Color.blue(color) * 0.114) / 255
     return luminance > 0.5
+}
+
+@Composable
+private fun GestureKeyBindingEditor(
+    bindingsJson: String,
+    onBindingsChange: (String) -> Unit
+) {
+    var selectedKeyboardTab by rememberSaveable { mutableIntStateOf(0) }
+    var editingKey by remember { mutableStateOf<Char?>(null) }
+    val bindings = remember(bindingsJson) { WeTypeGestureSettings.parseBindings(bindingsJson) }
+    val context = LocalContext.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        // Tab 切换：26键 (QWERTY) 与 九宫格 (T9)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selectedKeyboardTab == 0) MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        else MiuixTheme.colorScheme.surfaceContainerHigh
+                    )
+                    .clickable { selectedKeyboardTab = 0 }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "26 键 (QWERTY)",
+                    style = MiuixTheme.textStyles.main,
+                    color = if (selectedKeyboardTab == 0) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
+                    fontWeight = if (selectedKeyboardTab == 0) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selectedKeyboardTab == 1) MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        else MiuixTheme.colorScheme.surfaceContainerHigh
+                    )
+                    .clickable { selectedKeyboardTab = 1 }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "九宫格 (T9)",
+                    style = MiuixTheme.textStyles.main,
+                    color = if (selectedKeyboardTab == 1) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
+                    fontWeight = if (selectedKeyboardTab == 1) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        if (selectedKeyboardTab == 0) {
+            val row1 = listOf('q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p')
+            val row2 = listOf('a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l')
+            val row3 = listOf('z', 'x', 'c', 'v', 'b', 'n', 'm')
+
+            // Row 1
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                row1.forEach { char ->
+                    Box(modifier = Modifier.weight(1f)) {
+                        GestureKeyButton(
+                            keyLabel = char.uppercaseChar().toString(),
+                            action = bindings[char] ?: GestureAction.None,
+                            onClick = { editingKey = char }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Row 2
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                row2.forEach { char ->
+                    Box(modifier = Modifier.weight(1f)) {
+                        GestureKeyButton(
+                            keyLabel = char.uppercaseChar().toString(),
+                            action = bindings[char] ?: GestureAction.None,
+                            onClick = { editingKey = char }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Row 3
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 28.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                row3.forEach { char ->
+                    Box(modifier = Modifier.weight(1f)) {
+                        GestureKeyButton(
+                            keyLabel = char.uppercaseChar().toString(),
+                            action = bindings[char] ?: GestureAction.None,
+                            onClick = { editingKey = char }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Row 4: Space
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 40.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    GestureKeyButton(
+                        keyLabel = "空格 (Space)",
+                        action = bindings[' '] ?: GestureAction.None,
+                        onClick = { editingKey = ' ' }
+                    )
+                }
+            }
+        } else {
+            val t9Rows = listOf(
+                listOf('1', '2', '3'),
+                listOf('4', '5', '6'),
+                listOf('7', '8', '9')
+            )
+            t9Rows.forEachIndexed { index, row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    row.forEach { char ->
+                        Box(modifier = Modifier.weight(1f)) {
+                            GestureKeyButton(
+                                keyLabel = char.toString(),
+                                action = bindings[char] ?: GestureAction.None,
+                                onClick = { editingKey = char }
+                            )
+                        }
+                    }
+                }
+                if (index < t9Rows.size - 1) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 快捷操作按钮：恢复默认 / 清空全部
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MiuixTheme.colorScheme.surfaceContainerHigh)
+                    .clickable {
+                        onBindingsChange(WeTypeSettings.DEFAULT_GESTURE_BINDINGS_JSON)
+                        Toast.makeText(context, "已恢复默认预设 (Z=全选 / X=剪切 / C=复制 / V=粘贴)", Toast.LENGTH_SHORT).show()
+                    }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "恢复默认预设",
+                    style = MiuixTheme.textStyles.main,
+                    color = MiuixTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MiuixTheme.colorScheme.surfaceContainerHigh)
+                    .clickable {
+                        onBindingsChange(WeTypeGestureSettings.serializeBindings(emptyMap()))
+                        Toast.makeText(context, "已清空所有按键手势绑定", Toast.LENGTH_SHORT).show()
+                    }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "清空全部按键",
+                    style = MiuixTheme.textStyles.main,
+                    color = ComposeColor(0xFFE53935),
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+
+    // 动作选择对话框
+    editingKey?.let { targetChar ->
+        val currentAction = bindings[targetChar] ?: GestureAction.None
+        val keyName = if (targetChar == ' ') "空格 (Space)" else targetChar.uppercaseChar().toString()
+        val scrollState = rememberScrollState()
+
+        Dialog(onDismissRequest = { editingKey = null }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                insideMargin = PaddingValues(16.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "设置按键 [$keyName] 下滑动作",
+                        style = MiuixTheme.textStyles.title4,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "选择下滑此按键时触发的操作 (共 24 种动作)",
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider()
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                            .verticalScroll(scrollState)
+                    ) {
+                        GestureAction.entries.forEach { action ->
+                            val isSelected = action == currentAction
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (isSelected) MiuixTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                        else ComposeColor.Transparent
+                                    )
+                                    .clickable {
+                                        val newMap = bindings.toMutableMap()
+                                        if (action == GestureAction.None) {
+                                            newMap.remove(targetChar)
+                                        } else {
+                                            newMap[targetChar] = action
+                                        }
+                                        onBindingsChange(WeTypeGestureSettings.serializeBindings(newMap))
+                                        editingKey = null
+                                        Toast.makeText(context, "[$keyName] 已绑定: ${action.title}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${action.id}. ${action.title}",
+                                        style = MiuixTheme.textStyles.main,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface
+                                    )
+                                    if (action.shortTitle.isNotEmpty() && action.shortTitle != "\\") {
+                                        Text(
+                                            text = "按键标签: ${action.shortTitle}",
+                                            style = MiuixTheme.textStyles.body2,
+                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                        )
+                                    }
+                                }
+                                if (isSelected) {
+                                    Text(
+                                        text = "✓",
+                                        style = MiuixTheme.textStyles.title4,
+                                        color = MiuixTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { editingKey = null }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = "取消",
+                                style = MiuixTheme.textStyles.main,
+                                color = MiuixTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GestureKeyButton(
+    keyLabel: String,
+    action: GestureAction,
+    onClick: () -> Unit
+) {
+    val isBound = action != GestureAction.None && action != GestureAction.Disable
+    val isDisable = action == GestureAction.Disable
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .border(
+                width = if (isBound) 1.5.dp else 0.5.dp,
+                color = when {
+                    isBound -> MiuixTheme.colorScheme.primary
+                    isDisable -> ComposeColor(0xFFE53935)
+                    else -> MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)
+                },
+                shape = RoundedCornerShape(6.dp)
+            )
+            .background(
+                when {
+                    isBound -> MiuixTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    isDisable -> ComposeColor(0xFFE53935).copy(alpha = 0.08f)
+                    else -> MiuixTheme.colorScheme.surfaceContainerHigh
+                }
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp, horizontal = 2.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = keyLabel,
+                style = MiuixTheme.textStyles.body2,
+                fontWeight = FontWeight.Bold,
+                color = when {
+                    isBound -> MiuixTheme.colorScheme.primary
+                    isDisable -> ComposeColor(0xFFE53935)
+                    else -> MiuixTheme.colorScheme.onSurface
+                },
+                maxLines = 1
+            )
+            Text(
+                text = when {
+                    isBound -> action.shortTitle
+                    isDisable -> "禁用"
+                    else -> "-"
+                },
+                fontSize = 9.sp,
+                fontWeight = if (isBound) FontWeight.SemiBold else FontWeight.Normal,
+                color = when {
+                    isBound -> MiuixTheme.colorScheme.primary
+                    isDisable -> ComposeColor(0xFFE53935)
+                    else -> MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.6f)
+                },
+                maxLines = 1
+            )
+        }
+    }
 }

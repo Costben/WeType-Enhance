@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.util.TypedValue
 import android.view.View
@@ -132,7 +133,14 @@ internal object WeTypeResourceHooks {
                 String::class.java
             ).hookBefore { param ->
                 if (param.args[1] != fontAsset) return@hookBefore
-                param.result = Typeface.createFromAsset(getModuleAssetManager(), moduleFontAsset)
+                // 与 Z1 版一致的三态语义：0=微信官方（放行宿主原字体），1=模块内置，
+                // 2=跟随系统（Typeface.DEFAULT）。未知值按官方处理，直接放行。
+                when (WeTypeSettings.getFontModeXposed()) {
+                    WeTypeSettings.FONT_MODE_MODULE -> param.result =
+                        Typeface.createFromAsset(getModuleAssetManager(), moduleFontAsset)
+                    WeTypeSettings.FONT_MODE_SYSTEM -> param.result = Typeface.DEFAULT
+                    else -> return@hookBefore
+                }
             }
             Log.i("Success: Hook WeType font replacement")
         }.onFailure {
@@ -747,18 +755,25 @@ internal object WeTypeResourceHooks {
             ).hookBefore { param ->
                 val imageView = param.thisObject as? ImageView ?: return@hookBefore
                 if (imageView.id != logoIvId || restoringLogoDrawable.get() == true) return@hookBefore
+                if (!WeTypeSettings.isLogoEnabledXposed()) return@hookBefore
 
                 val resId = param.args[0] as? Int ?: return@hookBefore
                 synchronized(replacedLogoStates) {
                     replacedLogoStates[imageView] = LogoHostState(resourceId = resId)
                 }
                 imageView.setTag(LOGO_RESOURCE_TAG_KEY, resId)
-                val alpha = if (isDarkLogoResource(resId, darkLogoResIds, imageView.resources)) {
+                if (!WeTypeSettings.isLogoShowEnabledXposed()) {
+                    imageView.setImageDrawable(ColorDrawable(Color.TRANSPARENT))
+                    param.result = null
+                    return@hookBefore
+                }
+                val isDark = isDarkLogoResource(resId, darkLogoResIds, imageView.resources)
+                val alpha = if (isDark) {
                     LOGO_DARK_BG_ALPHA_FRACTION
                 } else {
                     LOGO_LIGHT_BG_ALPHA_FRACTION
                 }
-                imageView.setImageDrawable(WeTypeIconDrawable(alpha))
+                imageView.setImageDrawable(WeTypeIconDrawable(alpha, isDark))
                 param.result = null
             }
             ImageView::class.java.getMethod(
@@ -767,6 +782,7 @@ internal object WeTypeResourceHooks {
             ).hookBefore { param ->
                 val imageView = param.thisObject as? ImageView ?: return@hookBefore
                 if (imageView.id != logoIvId || restoringLogoDrawable.get() == true) return@hookBefore
+                if (!WeTypeSettings.isLogoEnabledXposed()) return@hookBefore
 
                 val drawableArg = param.args.getOrNull(0)
                 if (drawableArg is WeTypeIconDrawable) return@hookBefore
@@ -774,13 +790,18 @@ internal object WeTypeResourceHooks {
                     replacedLogoStates[imageView] = LogoHostState(drawable = drawableArg as? Drawable)
                 }
                 imageView.setTag(LOGO_RESOURCE_TAG_KEY, null)
+                if (!WeTypeSettings.isLogoShowEnabledXposed()) {
+                    param.args[0] = ColorDrawable(Color.TRANSPARENT)
+                    return@hookBefore
+                }
                 var alpha = LOGO_LIGHT_BG_ALPHA_FRACTION
                 val uiMode = imageView.resources.configuration.uiMode and
                     android.content.res.Configuration.UI_MODE_NIGHT_MASK
-                if (uiMode == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
+                val isDark = uiMode == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                if (isDark) {
                     alpha = LOGO_DARK_BG_ALPHA_FRACTION
                 }
-                param.args[0] = WeTypeIconDrawable(alpha)
+                param.args[0] = WeTypeIconDrawable(alpha, isDark)
             }
             Log.i("Success: Hook WeType keyboard logo")
         }.onFailure {
@@ -827,7 +848,8 @@ internal object WeTypeResourceHooks {
                 imageView.setImageDrawable(
                     WeTypeIconDrawable(
                         if (isDark) LOGO_DARK_BG_ALPHA_FRACTION
-                        else LOGO_LIGHT_BG_ALPHA_FRACTION
+                        else LOGO_LIGHT_BG_ALPHA_FRACTION,
+                        isDark = isDark
                     )
                 )
             }

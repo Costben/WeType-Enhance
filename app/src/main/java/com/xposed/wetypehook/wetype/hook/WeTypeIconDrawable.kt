@@ -1,5 +1,6 @@
 package com.xposed.wetypehook.wetype.hook
 
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -7,13 +8,15 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
+import android.view.View
 import androidx.annotation.FloatRange
 import androidx.core.graphics.PathParser
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 
 internal class WeTypeIconDrawable(
     @FloatRange(from = 0.0, to = 1.0)
-    private val backgroundAlphaFraction: Float
+    private val backgroundAlphaFraction: Float,
+    private val isDark: Boolean = backgroundAlphaFraction <= 0.5f
 ) : Drawable() {
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -30,7 +33,8 @@ internal class WeTypeIconDrawable(
         val userOpacity = WeTypeSettings.getToolbarIconBgOpacityXposed()
         val bgAlpha = (userOpacity * backgroundAlphaFraction).toInt().coerceIn(0, 255)
 
-        accentPaint.color = WeTypeSettings.getAppearanceColorXposed("theme_color")
+        // Logo 主体（"微"字形）用选定色，白色圆底保持不变。
+        accentPaint.color = resolveLogoAccentColor()
         backgroundPaint.alpha = resolveAlpha(bgAlpha)
         accentPaint.alpha = resolveAlpha(Color.alpha(accentPaint.color))
 
@@ -61,6 +65,31 @@ internal class WeTypeIconDrawable(
     override fun getIntrinsicHeight(): Int = VIEWPORT_SIZE.toInt()
 
     private fun resolveAlpha(sourceAlpha: Int): Int = (sourceAlpha * drawableAlpha) / 255
+
+    private fun isNightMode(): Boolean {
+        val view = callback as? View
+        if (view != null) {
+            val uiMode = view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+            if (uiMode == Configuration.UI_MODE_NIGHT_YES) return true
+            if (uiMode == Configuration.UI_MODE_NIGHT_NO) return false
+            val bgColor: Int? = runCatching { WeTypeSettings.getCurrentBackgroundColorXposed(view.context) }.getOrNull()
+            if (bgColor != null && Color.alpha(bgColor) > 50) {
+                val luminance = (Color.red(bgColor) * 0.299 + Color.green(bgColor) * 0.587 + Color.blue(bgColor) * 0.114) / 255
+                return luminance < 0.5
+            }
+        }
+        return isDark
+    }
+
+    private fun resolveLogoAccentColor(): Int {
+        return when (WeTypeSettings.getLogoColorModeXposed()) {
+            WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
+            WeTypeSettings.LOGO_COLOR_MODE_BLACK,
+            WeTypeSettings.LOGO_COLOR_MODE_WHITE -> if (isNightMode()) Color.WHITE else Color.BLACK
+            WeTypeSettings.LOGO_COLOR_MODE_CUSTOM -> WeTypeSettings.getLogoCustomColorXposed()
+            else -> WeTypeSettings.getAppearanceColorXposed("theme_color")
+        }
+    }
 
     private var drawableAlpha: Int = 255
 
