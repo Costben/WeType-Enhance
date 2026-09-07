@@ -832,138 +832,38 @@ private fun WeTypeSettingsScreen(
                 }
 
                 1 -> {
-                    // 按键下滑手势分组
-                    item {
-                        var gestureLabelPositionOptionsExpanded by rememberSaveable { mutableStateOf(false) }
-                        SmallTitle(
-                            text = "按键下滑手势"
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                MiuixSwitchWidget(
-                                    title = "启用 26 键 QWERTY 下滑手势",
-                                    description = "默认 Z=全选 / X=剪切 / C=复制 / V=粘贴",
-                                    checked = qwertyGestureEnabled,
-                                    onCheckedChange = { qwertyGestureEnabled = it }
-                                )
-                                HorizontalDivider()
-                                MiuixSwitchWidget(
-                                    title = "启用九宫格 T9 下滑手势",
-                                    description = "支持 1~9 号键位下滑触发绑定动作",
-                                    checked = t9GestureEnabled,
-                                    onCheckedChange = { t9GestureEnabled = it }
-                                )
-                                HorizontalDivider()
-                                MiuixSwitchWidget(
-                                    title = "手势触发触觉反馈",
-                                    description = "触发手势动作时调用系统键盘触觉振动",
-                                    checked = gestureVibration,
-                                    onCheckedChange = { gestureVibration = it }
-                                )
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "QWERTY 触发滑动阈值: ${gestureThreshold} dp",
-                                    value = gestureThreshold,
-                                    max = 48,
-                                    onValueChange = { gestureThreshold = it.coerceIn(10, 48) }
-                                )
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "T9 触发滑动阈值: ${t9GestureThreshold} dp",
-                                    value = t9GestureThreshold,
-                                    max = 48,
-                                    onValueChange = { t9GestureThreshold = it.coerceIn(10, 48) }
-                                )
-                                HorizontalDivider()
-                                MiuixSwitchWidget(
-                                    title = "显示按键手势标签",
-                                    description = "在已绑定手势的按键上显示动作名",
-                                    checked = showGestureKeyLabels,
-                                    onCheckedChange = { showGestureKeyLabels = it }
-                                )
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "标签文字大小: ${gestureLabelTextSizeSp} sp",
-                                    value = gestureLabelTextSizeSp,
-                                    max = 16,
-                                    onValueChange = { gestureLabelTextSizeSp = it.coerceIn(6, 16) }
-                                )
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "标签不透明度: ${gestureLabelAlpha}",
-                                    value = gestureLabelAlpha,
-                                    max = 255,
-                                    onValueChange = { gestureLabelAlpha = it.coerceIn(0, 255) }
-                                )
-                                HorizontalDivider()
-                                ArrowPreference(
-                                    title = "标签位置",
-                                    summary = gestureLabelPositionLabel(gestureLabelPosition),
-                                    onClick = { gestureLabelPositionOptionsExpanded = !gestureLabelPositionOptionsExpanded }
-                                )
-                                if (gestureLabelPositionOptionsExpanded) {
-                                    HorizontalDivider()
-                                    LogoColorModeOption(
-                                        label = "底部",
-                                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM,
-                                        onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM }
-                                    )
-                                    LogoColorModeOption(
-                                        label = "顶部",
-                                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_TOP,
-                                        onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_TOP }
-                                    )
-                                }
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "标签上边距: ${gestureLabelMarginTopDp} dp",
-                                    value = gestureLabelMarginTopDp,
-                                    max = 24,
-                                    onValueChange = { gestureLabelMarginTopDp = it.coerceIn(0, 24) }
-                                )
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "标签下边距: ${gestureLabelMarginBottomDp} dp",
-                                    value = gestureLabelMarginBottomDp,
-                                    max = 24,
-                                    onValueChange = { gestureLabelMarginBottomDp = it.coerceIn(0, 24) }
-                                )
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "标签左边距: ${gestureLabelMarginLeftDp} dp",
-                                    value = gestureLabelMarginLeftDp,
-                                    max = 24,
-                                    onValueChange = { gestureLabelMarginLeftDp = it.coerceIn(0, 24) }
-                                )
-                                HorizontalDivider()
-                                SliderPreferenceItem(
-                                    title = "标签右边距: ${gestureLabelMarginRightDp} dp",
-                                    value = gestureLabelMarginRightDp,
-                                    max = 24,
-                                    onValueChange = { gestureLabelMarginRightDp = it.coerceIn(0, 24) }
-                                )
-                            }
-                        }
-                    }
-
-                    // 按键手势映射自定义分组
-                    item {
-                        SmallTitle(
-                            text = "按键手势映射自定义"
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            GestureKeyBindingEditor(
-                                bindingsJson = gestureBindingsJson,
-                                onBindingsChange = { gestureBindingsJson = it }
-                            )
-                        }
-                    }
+                    GestureTabContent(
+                        qwertyGestureEnabled = qwertyGestureEnabled,
+                        onQwertyGestureEnabledChange = { qwertyGestureEnabled = it },
+                        t9GestureEnabled = t9GestureEnabled,
+                        onT9GestureEnabledChange = { t9GestureEnabled = it },
+                        gestureVibration = gestureVibration,
+                        onGestureVibrationChange = { gestureVibration = it },
+                        t9GestureVibration = t9GestureVibration,
+                        onT9GestureVibrationChange = { t9GestureVibration = it },
+                        gestureThreshold = gestureThreshold,
+                        onGestureThresholdChange = { gestureThreshold = it },
+                        t9GestureThreshold = t9GestureThreshold,
+                        onT9GestureThresholdChange = { t9GestureThreshold = it },
+                        showGestureKeyLabels = showGestureKeyLabels,
+                        onShowGestureKeyLabelsChange = { showGestureKeyLabels = it },
+                        gestureLabelTextSizeSp = gestureLabelTextSizeSp,
+                        onGestureLabelTextSizeSpChange = { gestureLabelTextSizeSp = it },
+                        gestureLabelAlpha = gestureLabelAlpha,
+                        onGestureLabelAlphaChange = { gestureLabelAlpha = it },
+                        gestureLabelPosition = gestureLabelPosition,
+                        onGestureLabelPositionChange = { gestureLabelPosition = it },
+                        gestureLabelMarginTopDp = gestureLabelMarginTopDp,
+                        onGestureLabelMarginTopDpChange = { gestureLabelMarginTopDp = it },
+                        gestureLabelMarginBottomDp = gestureLabelMarginBottomDp,
+                        onGestureLabelMarginBottomDpChange = { gestureLabelMarginBottomDp = it },
+                        gestureLabelMarginLeftDp = gestureLabelMarginLeftDp,
+                        onGestureLabelMarginLeftDpChange = { gestureLabelMarginLeftDp = it },
+                        gestureLabelMarginRightDp = gestureLabelMarginRightDp,
+                        onGestureLabelMarginRightDpChange = { gestureLabelMarginRightDp = it },
+                        gestureBindingsJson = gestureBindingsJson,
+                        onGestureBindingsJsonChange = { gestureBindingsJson = it }
+                    )
                 }
 
                 2 -> {
@@ -2215,6 +2115,197 @@ private fun isLightColor(color: Int): Boolean {
     val luminance =
         (Color.red(color) * 0.299 + Color.green(color) * 0.587 + Color.blue(color) * 0.114) / 255
     return luminance > 0.5
+}
+
+private fun LazyListScope.GestureTabContent(
+    qwertyGestureEnabled: Boolean,
+    onQwertyGestureEnabledChange: (Boolean) -> Unit,
+    t9GestureEnabled: Boolean,
+    onT9GestureEnabledChange: (Boolean) -> Unit,
+    gestureVibration: Boolean,
+    onGestureVibrationChange: (Boolean) -> Unit,
+    t9GestureVibration: Boolean,
+    onT9GestureVibrationChange: (Boolean) -> Unit,
+    gestureThreshold: Int,
+    onGestureThresholdChange: (Int) -> Unit,
+    t9GestureThreshold: Int,
+    onT9GestureThresholdChange: (Int) -> Unit,
+    showGestureKeyLabels: Boolean,
+    onShowGestureKeyLabelsChange: (Boolean) -> Unit,
+    gestureLabelTextSizeSp: Int,
+    onGestureLabelTextSizeSpChange: (Int) -> Unit,
+    gestureLabelAlpha: Int,
+    onGestureLabelAlphaChange: (Int) -> Unit,
+    gestureLabelPosition: Int,
+    onGestureLabelPositionChange: (Int) -> Unit,
+    gestureLabelMarginTopDp: Int,
+    onGestureLabelMarginTopDpChange: (Int) -> Unit,
+    gestureLabelMarginBottomDp: Int,
+    onGestureLabelMarginBottomDpChange: (Int) -> Unit,
+    gestureLabelMarginLeftDp: Int,
+    onGestureLabelMarginLeftDpChange: (Int) -> Unit,
+    gestureLabelMarginRightDp: Int,
+    onGestureLabelMarginRightDpChange: (Int) -> Unit,
+    gestureBindingsJson: String,
+    onGestureBindingsJsonChange: (String) -> Unit
+) {
+    // 1. 手势总控卡片
+    item {
+        SmallTitle(text = "手势总控")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                MiuixSwitchWidget(
+                    title = "启用 26 键 QWERTY 下滑手势",
+                    description = "全键盘按键向下滑动触发绑定动作 (默认 Z/X/C/V)",
+                    checked = qwertyGestureEnabled,
+                    onCheckedChange = onQwertyGestureEnabledChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "启用九宫格 T9 下滑手势",
+                    description = "支持 1~9 号键位向下滑动触发绑定动作",
+                    checked = t9GestureEnabled,
+                    onCheckedChange = onT9GestureEnabledChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "QWERTY 手势触觉反馈",
+                    description = "26 键手势触发时调用键盘触觉振动",
+                    checked = gestureVibration,
+                    onCheckedChange = onGestureVibrationChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "T9 九宫格手势触觉反馈",
+                    description = "九宫格手势触发时调用键盘触觉振动",
+                    checked = t9GestureVibration,
+                    onCheckedChange = onT9GestureVibrationChange
+                )
+            }
+        }
+    }
+
+    // 2. 灵敏度阈值卡片
+    item {
+        SmallTitle(text = "灵敏度阈值")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                SliderPreferenceItem(
+                    title = "QWERTY 触发滑动阈值: ${gestureThreshold} dp",
+                    value = gestureThreshold,
+                    max = 48,
+                    onValueChange = { onGestureThresholdChange(it.coerceIn(10, 48)) }
+                )
+                HorizontalDivider()
+                SliderPreferenceItem(
+                    title = "T9 触发滑动阈值: ${t9GestureThreshold} dp",
+                    value = t9GestureThreshold,
+                    max = 48,
+                    onValueChange = { onT9GestureThresholdChange(it.coerceIn(10, 48)) }
+                )
+            }
+        }
+    }
+
+    // 3. 标签样式卡片
+    item {
+        var gestureLabelPositionOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+        SmallTitle(text = "标签样式")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                MiuixSwitchWidget(
+                    title = "显示按键手势标签",
+                    description = "在已绑定手势的按键上显示动作名称角标",
+                    checked = showGestureKeyLabels,
+                    onCheckedChange = onShowGestureKeyLabelsChange
+                )
+                HorizontalDivider()
+                SliderPreferenceItem(
+                    title = "标签文字大小: ${gestureLabelTextSizeSp} sp",
+                    value = gestureLabelTextSizeSp,
+                    max = 16,
+                    onValueChange = { onGestureLabelTextSizeSpChange(it.coerceIn(6, 16)) }
+                )
+                HorizontalDivider()
+                SliderPreferenceItem(
+                    title = "标签不透明度: ${gestureLabelAlpha}",
+                    value = gestureLabelAlpha,
+                    max = 255,
+                    onValueChange = { onGestureLabelAlphaChange(it.coerceIn(0, 255)) }
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = "标签位置",
+                    summary = gestureLabelPositionLabel(gestureLabelPosition),
+                    onClick = { gestureLabelPositionOptionsExpanded = !gestureLabelPositionOptionsExpanded }
+                )
+                if (gestureLabelPositionOptionsExpanded) {
+                    HorizontalDivider()
+                    LogoColorModeOption(
+                        label = "底部",
+                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM,
+                        onClick = { onGestureLabelPositionChange(WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM) }
+                    )
+                    LogoColorModeOption(
+                        label = "顶部",
+                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_TOP,
+                        onClick = { onGestureLabelPositionChange(WeTypeSettings.GESTURE_LABEL_POSITION_TOP) }
+                    )
+                }
+                HorizontalDivider()
+                SliderPreferenceItem(
+                    title = "标签上边距: ${gestureLabelMarginTopDp} dp",
+                    value = gestureLabelMarginTopDp,
+                    max = 24,
+                    onValueChange = { onGestureLabelMarginTopDpChange(it.coerceIn(0, 24)) }
+                )
+                HorizontalDivider()
+                SliderPreferenceItem(
+                    title = "标签下边距: ${gestureLabelMarginBottomDp} dp",
+                    value = gestureLabelMarginBottomDp,
+                    max = 24,
+                    onValueChange = { onGestureLabelMarginBottomDpChange(it.coerceIn(0, 24)) }
+                )
+                HorizontalDivider()
+                SliderPreferenceItem(
+                    title = "标签左边距: ${gestureLabelMarginLeftDp} dp",
+                    value = gestureLabelMarginLeftDp,
+                    max = 24,
+                    onValueChange = { onGestureLabelMarginLeftDpChange(it.coerceIn(0, 24)) }
+                )
+                HorizontalDivider()
+                SliderPreferenceItem(
+                    title = "标签右边距: ${gestureLabelMarginRightDp} dp",
+                    value = gestureLabelMarginRightDp,
+                    max = 24,
+                    onValueChange = { onGestureLabelMarginRightDpChange(it.coerceIn(0, 24)) }
+                )
+            }
+        }
+    }
+
+    // 4. 可视化键位动作映射编辑器卡片
+    item {
+        SmallTitle(text = "按键手势映射")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            GestureKeyBindingEditor(
+                bindingsJson = gestureBindingsJson,
+                onBindingsChange = onGestureBindingsJsonChange
+            )
+        }
+    }
 }
 
 @Composable
