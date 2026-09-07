@@ -544,6 +544,7 @@ private fun WeTypeSettingsScreen(
         )
     }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
+    var selectedCategoryTab by rememberSaveable { mutableIntStateOf(0) }
     var colorInput by rememberSaveable {
         mutableStateOf(formatRgb(if (currentModeIsDark) darkColor else lightColor))
     }
@@ -721,16 +722,14 @@ private fun WeTypeSettingsScreen(
                     }
                 },
                 bottomContent = {
-                    PreviewSection(
-                        color = previewColor,
-                        blurRadius = blurRadius,
-                        cornerRadius = cornerRadius,
-                        keyCornerRadius = keyCornerRadius,
-                        edgeHighlightEnabled = edgeHighlightEnabled,
-                        edgeHighlightIntensity = edgeHighlightIntensity,
-                        lightKeyColor = keyColorValue(false),
-                        darkKeyColor = keyColorValue(true),
-                        isDark = currentModeIsDark
+                    val categoryTabs = listOf("界面美化", "按键手势", "功能增强")
+                    TabRowWithContour(
+                        tabs = categoryTabs,
+                        selectedTabIndex = selectedCategoryTab,
+                        onTabSelected = { selectedCategoryTab = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
             )
@@ -747,582 +746,589 @@ private fun WeTypeSettingsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 颜色分组
-            item {
-                SmallTitle(
-                    text = stringResource(R.string.settings_group_color)
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        // 模式切换 - 使用 TabRow
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp)
+            when (selectedCategoryTab) {
+                0 -> {
+                    // 颜色分组
+                    item {
+                        SmallTitle(
+                            text = stringResource(R.string.settings_group_color)
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
                         ) {
-                            Text(
-                                text = stringResource(R.string.settings_section_mode),
-                                style = MiuixTheme.textStyles.main
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            val tabs = listOf(
-                                stringResource(R.string.settings_light_mode),
-                                stringResource(R.string.settings_dark_mode)
-                            )
-                            TabRowWithContour(
-                                tabs = tabs,
-                                selectedTabIndex = if (currentModeIsDark) 1 else 0,
-                                onTabSelected = { index ->
-                                    val newDarkMode = index == 1
-                                    if (newDarkMode != currentModeIsDark) {
-                                        currentModeIsDark = newDarkMode
-                                        syncEditorFromState()
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        // 透明度滑块
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_alpha_title),
-                            value = alphaValue,
-                            max = 255,
-                            onValueChange = {
-                                alphaValue = it
-                                val rgb = currentColor() and 0xFFFFFF
-                                updateColorFromArgb((alphaValue shl 24) or rgb)
-                                colorInput = formatRgb(currentColor())
-                            }
-                        )
-
-                        Column(
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.settings_custom_color),
-                                style = MiuixTheme.textStyles.main
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = stringResource(R.string.settings_color_helper),
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                style = MiuixTheme.textStyles.body2
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            TextField(
-                                value = colorInput,
-                                onValueChange = { input ->
-                                    val trimmed = input.trim()
-                                    val hasPrefix = trimmed.startsWith("#")
-                                    val body = trimmed.removePrefix("#")
-                                    if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
-                                        return@TextField
-                                    }
-
-                                    colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
-
-                                    if (body.length == 6) {
-                                        runCatching {
-                                            val opaque = Color.parseColor("#$body")
-                                            val argb = Color.argb(
-                                                alphaValue.coerceIn(0, 255),
-                                                Color.red(opaque),
-                                                Color.green(opaque),
-                                                Color.blue(opaque)
-                                            )
-                                            updateColorFromArgb(argb)
-                                        }
-                                    }
-                                },
-                                label = stringResource(R.string.settings_color_label),
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        val currentKeyGroup = keyColorGroup(currentModeIsDark)
-                        val currentKeyGroupIndex = groupIndex(currentKeyGroup.id)
-
-                        KeyColorEditor(
-                            title = if (currentModeIsDark) {
-                                stringResource(R.string.settings_dark_key_color_title)
-                            } else {
-                                stringResource(R.string.settings_light_key_color_title)
-                            },
-                            summary = stringResource(
-                                R.string.settings_key_color_group_summary,
-                                Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
-                                currentKeyGroup.entryCount
-                            ),
-                            color = appearanceGroupColors[currentKeyGroupIndex],
-                            onColorChange = { appearanceGroupColors[currentKeyGroupIndex] = it }
-                        )
-                    }
-                }
-            }
-
-            // 外观分组
-            item {
-                SmallTitle(
-                    text = stringResource(R.string.settings_group_appearance)
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        MiuixSwitchWidget(
-                            title = stringResource(R.string.settings_edge_highlight_title),
-                            description = stringResource(R.string.settings_edge_highlight_desc),
-                            checked = edgeHighlightEnabled,
-                            onCheckedChange = { edgeHighlightEnabled = it }
-                        )
-
-                        if (edgeHighlightEnabled) {
-                            SliderPreferenceItem(
-                                title = stringResource(R.string.settings_edge_highlight_intensity_title),
-                                value = edgeHighlightIntensity,
-                                max = 200,
-                                onValueChange = { edgeHighlightIntensity = it }
-                            )
-                        }
-
-                        HorizontalDivider()
-
-                        // 模糊滑块
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_blur_title),
-                            value = blurRadius,
-                            max = 100,
-                            onValueChange = { blurRadius = it }
-                        )
-
-                        // 圆角滑块
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_corner_title),
-                            value = cornerRadius,
-                            max = WeTypeSettings.MAX_CORNER_RADIUS,
-                            onValueChange = { cornerRadius = it }
-                        )
-
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_key_corner_title),
-                            value = keyCornerRadius,
-                            max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
-                            onValueChange = { keyCornerRadius = it }
-                        )
-
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_toolbar_icon_bg_opacity_title),
-                            value = toolbarIconBgOpacity,
-                            max = 255,
-                            onValueChange = { toolbarIconBgOpacity = it }
-                        )
-
-                        appearanceSectionGroups.forEach { group ->
-                            val index = groupIndex(group.id)
-                            AppearanceColorGroupEditor(
-                                title = group.displayName,
-                                summary = stringResource(
-                                    R.string.settings_appearance_color_group_summary,
-                                    group.entryCount,
-                                    formatArgb(group.defaultColor)
-                                ),
-                                color = appearanceGroupColors[index],
-                                onColorChange = { appearanceGroupColors[index] = it }
-                            )
-                        }
-
-                        NumericTextSettingItem(
-                            title = stringResource(R.string.settings_candidate_background_left_margin_title),
-                            summary = stringResource(R.string.settings_candidate_background_left_margin_desc),
-                            value = candidateBackgroundLeftMarginDp,
-                            onValueChange = { input ->
-                                if (sanitizeIntegerInput(input, maxLength = 2) != null) {
-                                    candidateBackgroundLeftMarginDp = input
+                            Column {
+                                // 模式切换 - 使用 TabRow
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.settings_section_mode),
+                                        style = MiuixTheme.textStyles.main
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    val tabs = listOf(
+                                        stringResource(R.string.settings_light_mode),
+                                        stringResource(R.string.settings_dark_mode)
+                                    )
+                                    TabRowWithContour(
+                                        tabs = tabs,
+                                        selectedTabIndex = if (currentModeIsDark) 1 else 0,
+                                        onTabSelected = { index ->
+                                            val newDarkMode = index == 1
+                                            if (newDarkMode != currentModeIsDark) {
+                                                currentModeIsDark = newDarkMode
+                                                syncEditorFromState()
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
-                            }
-                        )
 
-                        NumericTextSettingItem(
-                            title = stringResource(R.string.settings_candidate_pinyin_margin_title),
-                            summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
-                            value = candidatePinyinLeftMarginDp,
-                            onValueChange = { input ->
-                                if (sanitizeIntegerInput(input, maxLength = 2) != null) {
-                                    candidatePinyinLeftMarginDp = input
+                                // 透明度滑块
+                                SliderPreferenceItem(
+                                    title = stringResource(R.string.settings_alpha_title),
+                                    value = alphaValue,
+                                    max = 255,
+                                    onValueChange = {
+                                        alphaValue = it
+                                        val rgb = currentColor() and 0xFFFFFF
+                                        updateColorFromArgb((alphaValue shl 24) or rgb)
+                                        colorInput = formatRgb(currentColor())
+                                    }
+                                )
+
+                                Column(
+                                    modifier = Modifier.padding(16.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.settings_custom_color),
+                                        style = MiuixTheme.textStyles.main
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = stringResource(R.string.settings_color_helper),
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                        style = MiuixTheme.textStyles.body2
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    TextField(
+                                        value = colorInput,
+                                        onValueChange = { input ->
+                                            val trimmed = input.trim()
+                                            val hasPrefix = trimmed.startsWith("#")
+                                            val body = trimmed.removePrefix("#")
+                                            if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                                return@TextField
+                                            }
+
+                                            colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+
+                                            if (body.length == 6) {
+                                                runCatching {
+                                                    val opaque = Color.parseColor("#$body")
+                                                    val argb = Color.argb(
+                                                        alphaValue.coerceIn(0, 255),
+                                                        Color.red(opaque),
+                                                        Color.green(opaque),
+                                                        Color.blue(opaque)
+                                                    )
+                                                    updateColorFromArgb(argb)
+                                                }
+                                            }
+                                        },
+                                        label = stringResource(R.string.settings_color_label),
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
-                            }
-                        )
 
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_key_color_hook_alpha_title),
-                            value = candidateBackgroundAlpha,
-                            max = 255,
-                            onValueChange = { candidateBackgroundAlpha = it }
-                        )
+                                val currentKeyGroup = keyColorGroup(currentModeIsDark)
+                                val currentKeyGroupIndex = groupIndex(currentKeyGroup.id)
 
-                        SliderPreferenceItem(
-                            title = stringResource(R.string.settings_candidate_corner_title),
-                            value = candidateBackgroundCorner,
-                            max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
-                            onValueChange = { candidateBackgroundCorner = it }
-                        )
-                    }
-                }
-            }
-
-            // 剪贴板增强分组
-            item {
-                SmallTitle(
-                    text = "剪贴板增强"
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        MiuixSwitchWidget(
-                            title = "跨设备条目可见化持久保存",
-                            description = "自动将多端同步的剪贴板远程条目转换为本地可见条目保存",
-                            checked = showCrossDeviceClipboard,
-                            onCheckedChange = { showCrossDeviceClipboard = it }
-                        )
-                        HorizontalDivider()
-                        MiuixSwitchWidget(
-                            title = "解除保留上限与时长限制",
-                            description = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
-                            checked = removeClipboardRetentionLimit,
-                            onCheckedChange = { removeClipboardRetentionLimit = it }
-                        )
-                        HorizontalDivider()
-                        MiuixSwitchWidget(
-                            title = "解除单条文本长度限制",
-                            description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
-                            checked = removeClipboardTextLimit,
-                            onCheckedChange = { removeClipboardTextLimit = it }
-                        )
-                    }
-                }
-            }
-
-            // 按键下滑手势分组
-            item {
-                var gestureLabelPositionOptionsExpanded by rememberSaveable { mutableStateOf(false) }
-                SmallTitle(
-                    text = "按键下滑手势"
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        MiuixSwitchWidget(
-                            title = "启用 26 键 QWERTY 下滑手势",
-                            description = "默认 Z=全选 / X=剪切 / C=复制 / V=粘贴",
-                            checked = qwertyGestureEnabled,
-                            onCheckedChange = { qwertyGestureEnabled = it }
-                        )
-                        HorizontalDivider()
-                        MiuixSwitchWidget(
-                            title = "启用九宫格 T9 下滑手势",
-                            description = "支持 1~9 号键位下滑触发绑定动作",
-                            checked = t9GestureEnabled,
-                            onCheckedChange = { t9GestureEnabled = it }
-                        )
-                        HorizontalDivider()
-                        MiuixSwitchWidget(
-                            title = "手势触发触觉反馈",
-                            description = "触发手势动作时调用系统键盘触觉振动",
-                            checked = gestureVibration,
-                            onCheckedChange = { gestureVibration = it }
-                        )
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "QWERTY 触发滑动阈值: ${gestureThreshold} dp",
-                            value = gestureThreshold,
-                            max = 48,
-                            onValueChange = { gestureThreshold = it.coerceIn(10, 48) }
-                        )
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "T9 触发滑动阈值: ${t9GestureThreshold} dp",
-                            value = t9GestureThreshold,
-                            max = 48,
-                            onValueChange = { t9GestureThreshold = it.coerceIn(10, 48) }
-                        )
-                        HorizontalDivider()
-                        MiuixSwitchWidget(
-                            title = "显示按键手势标签",
-                            description = "在已绑定手势的按键上显示动作名",
-                            checked = showGestureKeyLabels,
-                            onCheckedChange = { showGestureKeyLabels = it }
-                        )
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "标签文字大小: ${gestureLabelTextSizeSp} sp",
-                            value = gestureLabelTextSizeSp,
-                            max = 16,
-                            onValueChange = { gestureLabelTextSizeSp = it.coerceIn(6, 16) }
-                        )
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "标签不透明度: ${gestureLabelAlpha}",
-                            value = gestureLabelAlpha,
-                            max = 255,
-                            onValueChange = { gestureLabelAlpha = it.coerceIn(0, 255) }
-                        )
-                        HorizontalDivider()
-                        ArrowPreference(
-                            title = "标签位置",
-                            summary = gestureLabelPositionLabel(gestureLabelPosition),
-                            onClick = { gestureLabelPositionOptionsExpanded = !gestureLabelPositionOptionsExpanded }
-                        )
-                        if (gestureLabelPositionOptionsExpanded) {
-                            HorizontalDivider()
-                            LogoColorModeOption(
-                                label = "底部",
-                                selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM,
-                                onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM }
-                            )
-                            LogoColorModeOption(
-                                label = "顶部",
-                                selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_TOP,
-                                onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_TOP }
-                            )
-                        }
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "标签上边距: ${gestureLabelMarginTopDp} dp",
-                            value = gestureLabelMarginTopDp,
-                            max = 24,
-                            onValueChange = { gestureLabelMarginTopDp = it.coerceIn(0, 24) }
-                        )
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "标签下边距: ${gestureLabelMarginBottomDp} dp",
-                            value = gestureLabelMarginBottomDp,
-                            max = 24,
-                            onValueChange = { gestureLabelMarginBottomDp = it.coerceIn(0, 24) }
-                        )
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "标签左边距: ${gestureLabelMarginLeftDp} dp",
-                            value = gestureLabelMarginLeftDp,
-                            max = 24,
-                            onValueChange = { gestureLabelMarginLeftDp = it.coerceIn(0, 24) }
-                        )
-                        HorizontalDivider()
-                        SliderPreferenceItem(
-                            title = "标签右边距: ${gestureLabelMarginRightDp} dp",
-                            value = gestureLabelMarginRightDp,
-                            max = 24,
-                            onValueChange = { gestureLabelMarginRightDp = it.coerceIn(0, 24) }
-                        )
-                    }
-                }
-            }
-
-            // 按键手势映射自定义分组
-            item {
-                SmallTitle(
-                    text = "按键手势映射自定义"
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    GestureKeyBindingEditor(
-                        bindingsJson = gestureBindingsJson,
-                        onBindingsChange = { gestureBindingsJson = it }
-                    )
-                }
-            }
-
-            // 字体替换分组
-            item {
-                var fontModeOptionsExpanded by rememberSaveable { mutableStateOf(false) }
-                SmallTitle(
-                    text = "字体替换"
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        ArrowPreference(
-                            title = "字体来源",
-                            summary = fontModeLabel(fontMode),
-                            onClick = { fontModeOptionsExpanded = !fontModeOptionsExpanded }
-                        )
-                        if (fontModeOptionsExpanded) {
-                            HorizontalDivider()
-                            LogoColorModeOption(
-                                label = "微信官方",
-                                selected = fontMode == WeTypeSettings.FONT_MODE_OFFICIAL,
-                                onClick = { fontMode = WeTypeSettings.FONT_MODE_OFFICIAL }
-                            )
-                            LogoColorModeOption(
-                                label = "模块内置",
-                                selected = fontMode == WeTypeSettings.FONT_MODE_MODULE,
-                                onClick = { fontMode = WeTypeSettings.FONT_MODE_MODULE }
-                            )
-                            LogoColorModeOption(
-                                label = "跟随系统",
-                                selected = fontMode == WeTypeSettings.FONT_MODE_SYSTEM,
-                                onClick = { fontMode = WeTypeSettings.FONT_MODE_SYSTEM }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 键盘 Logo 分组
-            item {
-                var logoColorOptionsExpanded by rememberSaveable { mutableStateOf(false) }
-                SmallTitle(
-                    text = "键盘 Logo"
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        MiuixSwitchWidget(
-                            title = "启用 Logo 替换",
-                            description = "关闭则显示输入法原生 Logo",
-                            checked = logoEnabled,
-                            onCheckedChange = { logoEnabled = it }
-                        )
-                        HorizontalDivider()
-                        MiuixSwitchWidget(
-                            title = "显示 Logo",
-                            description = "关闭则隐藏键盘上的 Logo",
-                            checked = logoShowEnabled,
-                            onCheckedChange = { logoShowEnabled = it }
-                        )
-                        HorizontalDivider()
-                        ArrowPreference(
-                            title = "Logo 主体颜色",
-                            summary = logoColorModeLabel(logoColorMode),
-                            onClick = { logoColorOptionsExpanded = !logoColorOptionsExpanded }
-                        )
-                        if (logoColorOptionsExpanded) {
-                            HorizontalDivider()
-                            LogoColorModeOption(
-                                label = "跟随品牌色",
-                                selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_BRAND,
-                                onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_BRAND }
-                            )
-                            LogoColorModeOption(
-                                label = "跟随系统",
-                                selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
-                                onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_SYSTEM }
-                            )
-                            LogoColorModeOption(
-                                label = "自定义",
-                                selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM,
-                                onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_CUSTOM }
-                            )
-                        }
-                        if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
-                            HorizontalDivider()
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp)
-                            ) {
-                                Text(
-                                    text = "自定义颜色",
-                                    style = MiuixTheme.textStyles.main
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "输入 #RRGGBB，例如 #23C891",
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                    style = MiuixTheme.textStyles.body2
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                TextField(
-                                    value = logoCustomColorInput,
-                                    onValueChange = { input ->
-                                        val trimmed = input.trim()
-                                        val hasPrefix = trimmed.startsWith("#")
-                                        val body = trimmed.removePrefix("#")
-                                        if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
-                                            return@TextField
-                                        }
-                                        logoCustomColorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+                                KeyColorEditor(
+                                    title = if (currentModeIsDark) {
+                                        stringResource(R.string.settings_dark_key_color_title)
+                                    } else {
+                                        stringResource(R.string.settings_light_key_color_title)
                                     },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = "#RRGGBB"
+                                    summary = stringResource(
+                                        R.string.settings_key_color_group_summary,
+                                        Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
+                                        currentKeyGroup.entryCount
+                                    ),
+                                    color = appearanceGroupColors[currentKeyGroupIndex],
+                                    onColorChange = { appearanceGroupColors[currentKeyGroupIndex] = it }
+                                )
+                            }
+                        }
+                    }
+
+                    // 外观分组
+                    item {
+                        SmallTitle(
+                            text = stringResource(R.string.settings_group_appearance)
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            Column {
+                                MiuixSwitchWidget(
+                                    title = stringResource(R.string.settings_edge_highlight_title),
+                                    description = stringResource(R.string.settings_edge_highlight_desc),
+                                    checked = edgeHighlightEnabled,
+                                    onCheckedChange = { edgeHighlightEnabled = it }
+                                )
+
+                                if (edgeHighlightEnabled) {
+                                    SliderPreferenceItem(
+                                        title = stringResource(R.string.settings_edge_highlight_intensity_title),
+                                        value = edgeHighlightIntensity,
+                                        max = 200,
+                                        onValueChange = { edgeHighlightIntensity = it }
+                                    )
+                                }
+
+                                HorizontalDivider()
+
+                                // 模糊滑块
+                                SliderPreferenceItem(
+                                    title = stringResource(R.string.settings_blur_title),
+                                    value = blurRadius,
+                                    max = 100,
+                                    onValueChange = { blurRadius = it }
+                                )
+
+                                // 圆角滑块
+                                SliderPreferenceItem(
+                                    title = stringResource(R.string.settings_corner_title),
+                                    value = cornerRadius,
+                                    max = WeTypeSettings.MAX_CORNER_RADIUS,
+                                    onValueChange = { cornerRadius = it }
+                                )
+
+                                SliderPreferenceItem(
+                                    title = stringResource(R.string.settings_key_corner_title),
+                                    value = keyCornerRadius,
+                                    max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
+                                    onValueChange = { keyCornerRadius = it }
+                                )
+
+                                SliderPreferenceItem(
+                                    title = stringResource(R.string.settings_toolbar_icon_bg_opacity_title),
+                                    value = toolbarIconBgOpacity,
+                                    max = 255,
+                                    onValueChange = { toolbarIconBgOpacity = it }
+                                )
+
+                                appearanceSectionGroups.forEach { group ->
+                                    val index = groupIndex(group.id)
+                                    AppearanceColorGroupEditor(
+                                        title = group.displayName,
+                                        summary = stringResource(
+                                            R.string.settings_appearance_color_group_summary,
+                                            group.entryCount,
+                                            formatArgb(group.defaultColor)
+                                        ),
+                                        color = appearanceGroupColors[index],
+                                        onColorChange = { appearanceGroupColors[index] = it }
+                                    )
+                                }
+
+                                NumericTextSettingItem(
+                                    title = stringResource(R.string.settings_candidate_background_left_margin_title),
+                                    summary = stringResource(R.string.settings_candidate_background_left_margin_desc),
+                                    value = candidateBackgroundLeftMarginDp,
+                                    onValueChange = { input ->
+                                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                                            candidateBackgroundLeftMarginDp = input
+                                        }
+                                    }
+                                )
+
+                                NumericTextSettingItem(
+                                    title = stringResource(R.string.settings_candidate_pinyin_margin_title),
+                                    summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
+                                    value = candidatePinyinLeftMarginDp,
+                                    onValueChange = { input ->
+                                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                                            candidatePinyinLeftMarginDp = input
+                                        }
+                                    }
+                                )
+
+                                SliderPreferenceItem(
+                                    title = stringResource(R.string.settings_key_color_hook_alpha_title),
+                                    value = candidateBackgroundAlpha,
+                                    max = 255,
+                                    onValueChange = { candidateBackgroundAlpha = it }
+                                )
+
+                                SliderPreferenceItem(
+                                    title = stringResource(R.string.settings_candidate_corner_title),
+                                    value = candidateBackgroundCorner,
+                                    max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
+                                    onValueChange = { candidateBackgroundCorner = it }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                1 -> {
+                    // 按键下滑手势分组
+                    item {
+                        var gestureLabelPositionOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+                        SmallTitle(
+                            text = "按键下滑手势"
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            Column {
+                                MiuixSwitchWidget(
+                                    title = "启用 26 键 QWERTY 下滑手势",
+                                    description = "默认 Z=全选 / X=剪切 / C=复制 / V=粘贴",
+                                    checked = qwertyGestureEnabled,
+                                    onCheckedChange = { qwertyGestureEnabled = it }
+                                )
+                                HorizontalDivider()
+                                MiuixSwitchWidget(
+                                    title = "启用九宫格 T9 下滑手势",
+                                    description = "支持 1~9 号键位下滑触发绑定动作",
+                                    checked = t9GestureEnabled,
+                                    onCheckedChange = { t9GestureEnabled = it }
+                                )
+                                HorizontalDivider()
+                                MiuixSwitchWidget(
+                                    title = "手势触发触觉反馈",
+                                    description = "触发手势动作时调用系统键盘触觉振动",
+                                    checked = gestureVibration,
+                                    onCheckedChange = { gestureVibration = it }
+                                )
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "QWERTY 触发滑动阈值: ${gestureThreshold} dp",
+                                    value = gestureThreshold,
+                                    max = 48,
+                                    onValueChange = { gestureThreshold = it.coerceIn(10, 48) }
+                                )
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "T9 触发滑动阈值: ${t9GestureThreshold} dp",
+                                    value = t9GestureThreshold,
+                                    max = 48,
+                                    onValueChange = { t9GestureThreshold = it.coerceIn(10, 48) }
+                                )
+                                HorizontalDivider()
+                                MiuixSwitchWidget(
+                                    title = "显示按键手势标签",
+                                    description = "在已绑定手势的按键上显示动作名",
+                                    checked = showGestureKeyLabels,
+                                    onCheckedChange = { showGestureKeyLabels = it }
+                                )
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "标签文字大小: ${gestureLabelTextSizeSp} sp",
+                                    value = gestureLabelTextSizeSp,
+                                    max = 16,
+                                    onValueChange = { gestureLabelTextSizeSp = it.coerceIn(6, 16) }
+                                )
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "标签不透明度: ${gestureLabelAlpha}",
+                                    value = gestureLabelAlpha,
+                                    max = 255,
+                                    onValueChange = { gestureLabelAlpha = it.coerceIn(0, 255) }
+                                )
+                                HorizontalDivider()
+                                ArrowPreference(
+                                    title = "标签位置",
+                                    summary = gestureLabelPositionLabel(gestureLabelPosition),
+                                    onClick = { gestureLabelPositionOptionsExpanded = !gestureLabelPositionOptionsExpanded }
+                                )
+                                if (gestureLabelPositionOptionsExpanded) {
+                                    HorizontalDivider()
+                                    LogoColorModeOption(
+                                        label = "底部",
+                                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM,
+                                        onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM }
+                                    )
+                                    LogoColorModeOption(
+                                        label = "顶部",
+                                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_TOP,
+                                        onClick = { gestureLabelPosition = WeTypeSettings.GESTURE_LABEL_POSITION_TOP }
+                                    )
+                                }
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "标签上边距: ${gestureLabelMarginTopDp} dp",
+                                    value = gestureLabelMarginTopDp,
+                                    max = 24,
+                                    onValueChange = { gestureLabelMarginTopDp = it.coerceIn(0, 24) }
+                                )
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "标签下边距: ${gestureLabelMarginBottomDp} dp",
+                                    value = gestureLabelMarginBottomDp,
+                                    max = 24,
+                                    onValueChange = { gestureLabelMarginBottomDp = it.coerceIn(0, 24) }
+                                )
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "标签左边距: ${gestureLabelMarginLeftDp} dp",
+                                    value = gestureLabelMarginLeftDp,
+                                    max = 24,
+                                    onValueChange = { gestureLabelMarginLeftDp = it.coerceIn(0, 24) }
+                                )
+                                HorizontalDivider()
+                                SliderPreferenceItem(
+                                    title = "标签右边距: ${gestureLabelMarginRightDp} dp",
+                                    value = gestureLabelMarginRightDp,
+                                    max = 24,
+                                    onValueChange = { gestureLabelMarginRightDp = it.coerceIn(0, 24) }
+                                )
+                            }
+                        }
+                    }
+
+                    // 按键手势映射自定义分组
+                    item {
+                        SmallTitle(
+                            text = "按键手势映射自定义"
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            GestureKeyBindingEditor(
+                                bindingsJson = gestureBindingsJson,
+                                onBindingsChange = { gestureBindingsJson = it }
+                            )
+                        }
+                    }
+                }
+
+                2 -> {
+                    // 剪贴板增强分组
+                    item {
+                        SmallTitle(
+                            text = "剪贴板增强"
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            Column {
+                                MiuixSwitchWidget(
+                                    title = "跨设备条目可见化持久保存",
+                                    description = "自动将多端同步的剪贴板远程条目转换为本地可见条目保存",
+                                    checked = showCrossDeviceClipboard,
+                                    onCheckedChange = { showCrossDeviceClipboard = it }
+                                )
+                                HorizontalDivider()
+                                MiuixSwitchWidget(
+                                    title = "解除保留上限与时长限制",
+                                    description = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
+                                    checked = removeClipboardRetentionLimit,
+                                    onCheckedChange = { removeClipboardRetentionLimit = it }
+                                )
+                                HorizontalDivider()
+                                MiuixSwitchWidget(
+                                    title = "解除单条文本长度限制",
+                                    description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
+                                    checked = removeClipboardTextLimit,
+                                    onCheckedChange = { removeClipboardTextLimit = it }
+                                )
+                            }
+                        }
+                    }
+
+                    // 键盘 Logo 分组
+                    item {
+                        var logoColorOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+                        SmallTitle(
+                            text = "键盘 Logo"
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            Column {
+                                MiuixSwitchWidget(
+                                    title = "启用 Logo 替换",
+                                    description = "关闭则显示输入法原生 Logo",
+                                    checked = logoEnabled,
+                                    onCheckedChange = { logoEnabled = it }
+                                )
+                                HorizontalDivider()
+                                MiuixSwitchWidget(
+                                    title = "显示 Logo",
+                                    description = "关闭则隐藏键盘上的 Logo",
+                                    checked = logoShowEnabled,
+                                    onCheckedChange = { logoShowEnabled = it }
+                                )
+                                HorizontalDivider()
+                                ArrowPreference(
+                                    title = "Logo 主体颜色",
+                                    summary = logoColorModeLabel(logoColorMode),
+                                    onClick = { logoColorOptionsExpanded = !logoColorOptionsExpanded }
+                                )
+                                if (logoColorOptionsExpanded) {
+                                    HorizontalDivider()
+                                    LogoColorModeOption(
+                                        label = "跟随品牌色",
+                                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_BRAND,
+                                        onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_BRAND }
+                                    )
+                                    LogoColorModeOption(
+                                        label = "跟随系统",
+                                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
+                                        onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_SYSTEM }
+                                    )
+                                    LogoColorModeOption(
+                                        label = "自定义",
+                                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM,
+                                        onClick = { logoColorMode = WeTypeSettings.LOGO_COLOR_MODE_CUSTOM }
+                                    )
+                                }
+                                if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
+                                    HorizontalDivider()
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp)
+                                    ) {
+                                        Text(
+                                            text = "自定义颜色",
+                                            style = MiuixTheme.textStyles.main
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "输入 #RRGGBB，例如 #23C891",
+                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                            style = MiuixTheme.textStyles.body2
+                                        )
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        TextField(
+                                            value = logoCustomColorInput,
+                                            onValueChange = { input ->
+                                                val trimmed = input.trim()
+                                                val hasPrefix = trimmed.startsWith("#")
+                                                val body = trimmed.removePrefix("#")
+                                                if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                                    return@TextField
+                                                }
+                                                logoCustomColorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+                                            },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = "#RRGGBB"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 字体替换分组
+                    item {
+                        var fontModeOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+                        SmallTitle(
+                            text = "字体替换"
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            Column {
+                                ArrowPreference(
+                                    title = "字体来源",
+                                    summary = fontModeLabel(fontMode),
+                                    onClick = { fontModeOptionsExpanded = !fontModeOptionsExpanded }
+                                )
+                                if (fontModeOptionsExpanded) {
+                                    HorizontalDivider()
+                                    LogoColorModeOption(
+                                        label = "微信官方",
+                                        selected = fontMode == WeTypeSettings.FONT_MODE_OFFICIAL,
+                                        onClick = { fontMode = WeTypeSettings.FONT_MODE_OFFICIAL }
+                                    )
+                                    LogoColorModeOption(
+                                        label = "模块内置",
+                                        selected = fontMode == WeTypeSettings.FONT_MODE_MODULE,
+                                        onClick = { fontMode = WeTypeSettings.FONT_MODE_MODULE }
+                                    )
+                                    LogoColorModeOption(
+                                        label = "跟随系统",
+                                        selected = fontMode == WeTypeSettings.FONT_MODE_SYSTEM,
+                                        onClick = { fontMode = WeTypeSettings.FONT_MODE_SYSTEM }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 其他分组
+                    item {
+                        SmallTitle(
+                            text = stringResource(R.string.settings_group_other)
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            Column {
+                                MiuixSwitchWidget(
+                                    title = stringResource(R.string.settings_disable_hot_update_title),
+                                    description = stringResource(R.string.settings_disable_hot_update_desc),
+                                    checked = disableHotUpdate,
+                                    onCheckedChange = { disableHotUpdate = it }
+                                )
+                            }
+                        }
+                    }
+
+                    // 操作分组
+                    item {
+                        SmallTitle(
+                            text = stringResource(R.string.settings_group_actions)
+                        )
+                        Card(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            insideMargin = PaddingValues(0.dp)
+                        ) {
+                            Column {
+                                ArrowPreference(
+                                    title = stringResource(R.string.settings_reset_title),
+                                    summary = stringResource(R.string.settings_reset_desc),
+                                    onClick = ::restoreDefaults
+                                )
+
+                                HorizontalDivider()
+
+                                BasicComponent(
+                                    title = stringResource(R.string.settings_visit_github_title),
+                                    titleColor = BasicComponentDefaults.titleColor(
+                                        color = MiuixTheme.colorScheme.primary
+                                    ),
+                                    onClick = {
+                                        val intent = Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://github.com/NEORUAA/MIUI_IME_Unlock")
+                                        )
+                                        context.startActivity(intent)
+                                    }
                                 )
                             }
                         }
                     }
                 }
             }
-
-            // 其他分组
-            item {
-                SmallTitle(
-                    text = stringResource(R.string.settings_group_other)
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        MiuixSwitchWidget(
-                            title = stringResource(R.string.settings_disable_hot_update_title),
-                            description = stringResource(R.string.settings_disable_hot_update_desc),
-                            checked = disableHotUpdate,
-                            onCheckedChange = { disableHotUpdate = it }
-                        )
-                    }
-                }
-            }
-
-            // 操作分组
-            item {
-                SmallTitle(
-                    text = stringResource(R.string.settings_group_actions)
-                )
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(0.dp)
-                ) {
-                    Column {
-                        ArrowPreference(
-                            title = stringResource(R.string.settings_reset_title),
-                            summary = stringResource(R.string.settings_reset_desc),
-                            onClick = ::restoreDefaults
-                        )
-
-                        HorizontalDivider()
-
-                        BasicComponent(
-                            title = stringResource(R.string.settings_visit_github_title),
-                            titleColor = BasicComponentDefaults.titleColor(
-                                color = MiuixTheme.colorScheme.primary
-                            ),
-                            onClick = {
-                                val intent = Intent(
-                                    Intent.ACTION_VIEW,
-                                    Uri.parse("https://github.com/NEORUAA/MIUI_IME_Unlock")
-                                )
-                                context.startActivity(intent)
-                            }
-                        )
-                    }
-                }
-            }
-
         }
     }
 }
