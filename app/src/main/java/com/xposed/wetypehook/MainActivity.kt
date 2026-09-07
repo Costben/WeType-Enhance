@@ -14,6 +14,11 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,9 +38,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -85,6 +92,7 @@ import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
+import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -748,234 +756,79 @@ private fun WeTypeSettingsScreen(
         ) {
             when (selectedCategoryTab) {
                 0 -> {
-                    // 颜色分组
-                    item {
-                        SmallTitle(
-                            text = stringResource(R.string.settings_group_color)
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                // 模式切换 - 使用 TabRow
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.settings_section_mode),
-                                        style = MiuixTheme.textStyles.main
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    val tabs = listOf(
-                                        stringResource(R.string.settings_light_mode),
-                                        stringResource(R.string.settings_dark_mode)
-                                    )
-                                    TabRowWithContour(
-                                        tabs = tabs,
-                                        selectedTabIndex = if (currentModeIsDark) 1 else 0,
-                                        onTabSelected = { index ->
-                                            val newDarkMode = index == 1
-                                            if (newDarkMode != currentModeIsDark) {
-                                                currentModeIsDark = newDarkMode
-                                                syncEditorFromState()
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                // 透明度滑块
-                                SliderPreferenceItem(
-                                    title = stringResource(R.string.settings_alpha_title),
-                                    value = alphaValue,
-                                    max = 255,
-                                    onValueChange = {
-                                        alphaValue = it
-                                        val rgb = currentColor() and 0xFFFFFF
-                                        updateColorFromArgb((alphaValue shl 24) or rgb)
-                                        colorInput = formatRgb(currentColor())
-                                    }
-                                )
-
-                                Column(
-                                    modifier = Modifier.padding(16.dp)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.settings_custom_color),
-                                        style = MiuixTheme.textStyles.main
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = stringResource(R.string.settings_color_helper),
-                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                        style = MiuixTheme.textStyles.body2
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    TextField(
-                                        value = colorInput,
-                                        onValueChange = { input ->
-                                            val trimmed = input.trim()
-                                            val hasPrefix = trimmed.startsWith("#")
-                                            val body = trimmed.removePrefix("#")
-                                            if (body.length > 6 || !body.matches(Regex("^[0-9a-fA-F]*$"))) {
-                                                return@TextField
-                                            }
-
-                                            colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
-
-                                            if (body.length == 6) {
-                                                runCatching {
-                                                    val opaque = Color.parseColor("#$body")
-                                                    val argb = Color.argb(
-                                                        alphaValue.coerceIn(0, 255),
-                                                        Color.red(opaque),
-                                                        Color.green(opaque),
-                                                        Color.blue(opaque)
-                                                    )
-                                                    updateColorFromArgb(argb)
-                                                }
-                                            }
-                                        },
-                                        label = stringResource(R.string.settings_color_label),
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                val currentKeyGroup = keyColorGroup(currentModeIsDark)
-                                val currentKeyGroupIndex = groupIndex(currentKeyGroup.id)
-
-                                KeyColorEditor(
-                                    title = if (currentModeIsDark) {
-                                        stringResource(R.string.settings_dark_key_color_title)
-                                    } else {
-                                        stringResource(R.string.settings_light_key_color_title)
-                                    },
-                                    summary = stringResource(
-                                        R.string.settings_key_color_group_summary,
-                                        Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
-                                        currentKeyGroup.entryCount
-                                    ),
-                                    color = appearanceGroupColors[currentKeyGroupIndex],
-                                    onColorChange = { appearanceGroupColors[currentKeyGroupIndex] = it }
-                                )
+                    AppearanceTabContent(
+                        currentModeIsDark = currentModeIsDark,
+                        onModeChange = { newDarkMode ->
+                            if (newDarkMode != currentModeIsDark) {
+                                currentModeIsDark = newDarkMode
+                                syncEditorFromState()
                             }
-                        }
-                    }
+                        },
+                        currentColor = currentColor(),
+                        alphaValue = alphaValue,
+                        onAlphaChange = {
+                            alphaValue = it
+                            val rgb = currentColor() and 0xFFFFFF
+                            updateColorFromArgb((alphaValue shl 24) or rgb)
+                            colorInput = formatRgb(currentColor())
+                        },
+                        colorInput = colorInput,
+                        onColorInputChange = { input ->
+                            val trimmed = input.trim()
+                            val hasPrefix = trimmed.startsWith("#")
+                            val body = trimmed.removePrefix("#")
+                            if (body.length <= 6 && body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
 
-                    // 外观分组
-                    item {
-                        SmallTitle(
-                            text = stringResource(R.string.settings_group_appearance)
-                        )
-                        Card(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            insideMargin = PaddingValues(0.dp)
-                        ) {
-                            Column {
-                                MiuixSwitchWidget(
-                                    title = stringResource(R.string.settings_edge_highlight_title),
-                                    description = stringResource(R.string.settings_edge_highlight_desc),
-                                    checked = edgeHighlightEnabled,
-                                    onCheckedChange = { edgeHighlightEnabled = it }
-                                )
-
-                                if (edgeHighlightEnabled) {
-                                    SliderPreferenceItem(
-                                        title = stringResource(R.string.settings_edge_highlight_intensity_title),
-                                        value = edgeHighlightIntensity,
-                                        max = 200,
-                                        onValueChange = { edgeHighlightIntensity = it }
-                                    )
-                                }
-
-                                HorizontalDivider()
-
-                                // 模糊滑块
-                                SliderPreferenceItem(
-                                    title = stringResource(R.string.settings_blur_title),
-                                    value = blurRadius,
-                                    max = 100,
-                                    onValueChange = { blurRadius = it }
-                                )
-
-                                // 圆角滑块
-                                SliderPreferenceItem(
-                                    title = stringResource(R.string.settings_corner_title),
-                                    value = cornerRadius,
-                                    max = WeTypeSettings.MAX_CORNER_RADIUS,
-                                    onValueChange = { cornerRadius = it }
-                                )
-
-                                SliderPreferenceItem(
-                                    title = stringResource(R.string.settings_key_corner_title),
-                                    value = keyCornerRadius,
-                                    max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
-                                    onValueChange = { keyCornerRadius = it }
-                                )
-
-                                SliderPreferenceItem(
-                                    title = stringResource(R.string.settings_toolbar_icon_bg_opacity_title),
-                                    value = toolbarIconBgOpacity,
-                                    max = 255,
-                                    onValueChange = { toolbarIconBgOpacity = it }
-                                )
-
-                                appearanceSectionGroups.forEach { group ->
-                                    val index = groupIndex(group.id)
-                                    AppearanceColorGroupEditor(
-                                        title = group.displayName,
-                                        summary = stringResource(
-                                            R.string.settings_appearance_color_group_summary,
-                                            group.entryCount,
-                                            formatArgb(group.defaultColor)
-                                        ),
-                                        color = appearanceGroupColors[index],
-                                        onColorChange = { appearanceGroupColors[index] = it }
-                                    )
-                                }
-
-                                NumericTextSettingItem(
-                                    title = stringResource(R.string.settings_candidate_background_left_margin_title),
-                                    summary = stringResource(R.string.settings_candidate_background_left_margin_desc),
-                                    value = candidateBackgroundLeftMarginDp,
-                                    onValueChange = { input ->
-                                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
-                                            candidateBackgroundLeftMarginDp = input
-                                        }
+                                if (body.length == 6) {
+                                    runCatching {
+                                        val opaque = Color.parseColor("#$body")
+                                        val argb = Color.argb(
+                                            alphaValue.coerceIn(0, 255),
+                                            Color.red(opaque),
+                                            Color.green(opaque),
+                                            Color.blue(opaque)
+                                        )
+                                        updateColorFromArgb(argb)
                                     }
-                                )
-
-                                NumericTextSettingItem(
-                                    title = stringResource(R.string.settings_candidate_pinyin_margin_title),
-                                    summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
-                                    value = candidatePinyinLeftMarginDp,
-                                    onValueChange = { input ->
-                                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
-                                            candidatePinyinLeftMarginDp = input
-                                        }
-                                    }
-                                )
-
-                                SliderPreferenceItem(
-                                    title = stringResource(R.string.settings_key_color_hook_alpha_title),
-                                    value = candidateBackgroundAlpha,
-                                    max = 255,
-                                    onValueChange = { candidateBackgroundAlpha = it }
-                                )
-
-                                SliderPreferenceItem(
-                                    title = stringResource(R.string.settings_candidate_corner_title),
-                                    value = candidateBackgroundCorner,
-                                    max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
-                                    onValueChange = { candidateBackgroundCorner = it }
-                                )
+                                }
                             }
-                        }
-                    }
+                        },
+                        onColorSelect = { presetRgb ->
+                            val rgb = presetRgb and 0xFFFFFF
+                            val argb = (alphaValue.coerceIn(0, 255) shl 24) or rgb
+                            updateColorFromArgb(argb)
+                            colorInput = formatRgb(rgb)
+                        },
+                        blurRadius = blurRadius,
+                        onBlurRadiusChange = { blurRadius = it },
+                        cornerRadius = cornerRadius,
+                        onCornerRadiusChange = { cornerRadius = it },
+                        keyCornerRadius = keyCornerRadius,
+                        onKeyCornerRadiusChange = { keyCornerRadius = it },
+                        edgeHighlightEnabled = edgeHighlightEnabled,
+                        onEdgeHighlightEnabledChange = { edgeHighlightEnabled = it },
+                        edgeHighlightIntensity = edgeHighlightIntensity,
+                        onEdgeHighlightIntensityChange = { edgeHighlightIntensity = it },
+                        toolbarIconBgOpacity = toolbarIconBgOpacity,
+                        onToolbarIconBgOpacityChange = { toolbarIconBgOpacity = it },
+                        appearanceSectionGroups = appearanceSectionGroups,
+                        appearanceGroupColors = appearanceGroupColors,
+                        groupIndex = ::groupIndex,
+                        currentKeyGroup = keyColorGroup(currentModeIsDark),
+                        currentKeyGroupIndex = groupIndex(keyColorGroup(currentModeIsDark).id),
+                        onKeyColorChange = { appearanceGroupColors[groupIndex(keyColorGroup(currentModeIsDark).id)] = it },
+                        lightKeyColor = keyColorValue(false),
+                        darkKeyColor = keyColorValue(true),
+                        candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
+                        onCandidateBackgroundLeftMarginDpChange = { candidateBackgroundLeftMarginDp = it },
+                        candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
+                        onCandidatePinyinLeftMarginDpChange = { candidatePinyinLeftMarginDp = it },
+                        candidateBackgroundAlpha = candidateBackgroundAlpha,
+                        onCandidateBackgroundAlphaChange = { candidateBackgroundAlpha = it },
+                        candidateBackgroundCorner = candidateBackgroundCorner,
+                        onCandidateBackgroundCornerChange = { candidateBackgroundCorner = it }
+                    )
                 }
 
                 1 -> {
@@ -1363,6 +1216,443 @@ private fun ModuleActivationTag(
     }
 }
 
+private data class PresetColorItem(
+    val name: String,
+    val color: Int
+)
+
+private val lightColorPresets = listOf(
+    PresetColorItem("默认灰", 0xD4D4D4),
+    PresetColorItem("纯白", 0xFFFFFF),
+    PresetColorItem("冰川蓝", 0xD0E4F5),
+    PresetColorItem("薄荷绿", 0xD2EBD9),
+    PresetColorItem("樱花粉", 0xFCE4EC),
+    PresetColorItem("薰衣草", 0xEDE7F6),
+    PresetColorItem("暖阳米", 0xFFF3E0),
+    PresetColorItem("曜石灰", 0x3C3F41)
+)
+
+private val darkColorPresets = listOf(
+    PresetColorItem("默认黑", 0x000000),
+    PresetColorItem("深空灰", 0x1E1E1E),
+    PresetColorItem("极夜黑", 0x121212),
+    PresetColorItem("夜空蓝", 0x1A2238),
+    PresetColorItem("青墨绿", 0x1B262C),
+    PresetColorItem("暗夜紫", 0x261C2C),
+    PresetColorItem("葡萄酒", 0x2D1B22),
+    PresetColorItem("炭石灰", 0x2B2D30)
+)
+
+@Composable
+private fun ColorPresetPalette(
+    isDark: Boolean,
+    currentColorRgb: Int,
+    onSelectColor: (Int) -> Unit
+) {
+    val presets = remember(isDark) {
+        if (isDark) darkColorPresets else lightColorPresets
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = "预设色卡",
+            style = MiuixTheme.textStyles.main
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "点击快速应用推荐底色",
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MiuixTheme.textStyles.body2
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(presets.take(4), presets.drop(4)).forEach { rowPresets ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    rowPresets.forEach { item ->
+                        val isSelected = (currentColorRgb and 0xFFFFFF) == (item.color and 0xFFFFFF)
+                        val itemComposeColor = ComposeColor(item.color or 0xFF000000.toInt())
+                        val isLight = isLightColor(item.color or 0xFF000000.toInt())
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MiuixTheme.colorScheme.surfaceContainerHigh)
+                                .border(
+                                    width = if (isSelected) 2.dp else 1.dp,
+                                    color = if (isSelected) MiuixTheme.colorScheme.primary
+                                    else MiuixTheme.colorScheme.outline.copy(alpha = 0.25f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .clickable { onSelectColor(item.color) }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(ContinuousRoundedRectangle(999.dp))
+                                        .background(itemComposeColor)
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (isLight) ComposeColor.Black.copy(alpha = 0.15f)
+                                            else ComposeColor.White.copy(alpha = 0.2f),
+                                            shape = ContinuousRoundedRectangle(999.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = MiuixIcons.Ok,
+                                            contentDescription = null,
+                                            tint = if (isLight) ComposeColor.Black else ComposeColor.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = item.name,
+                                    style = MiuixTheme.textStyles.body2,
+                                    fontSize = 11.sp,
+                                    color = if (isSelected) MiuixTheme.colorScheme.primary
+                                    else MiuixTheme.colorScheme.onSurface,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun LazyListScope.AppearanceTabContent(
+    currentModeIsDark: Boolean,
+    onModeChange: (Boolean) -> Unit,
+    currentColor: Int,
+    alphaValue: Int,
+    onAlphaChange: (Int) -> Unit,
+    colorInput: String,
+    onColorInputChange: (String) -> Unit,
+    onColorSelect: (Int) -> Unit,
+    blurRadius: Int,
+    onBlurRadiusChange: (Int) -> Unit,
+    cornerRadius: Int,
+    onCornerRadiusChange: (Int) -> Unit,
+    keyCornerRadius: Int,
+    onKeyCornerRadiusChange: (Int) -> Unit,
+    edgeHighlightEnabled: Boolean,
+    onEdgeHighlightEnabledChange: (Boolean) -> Unit,
+    edgeHighlightIntensity: Int,
+    onEdgeHighlightIntensityChange: (Int) -> Unit,
+    toolbarIconBgOpacity: Int,
+    onToolbarIconBgOpacityChange: (Int) -> Unit,
+    appearanceSectionGroups: List<WeTypeAppearanceColorGroup>,
+    appearanceGroupColors: MutableList<Int>,
+    groupIndex: (String) -> Int,
+    currentKeyGroup: WeTypeAppearanceColorGroup,
+    currentKeyGroupIndex: Int,
+    onKeyColorChange: (Int) -> Unit,
+    lightKeyColor: Int,
+    darkKeyColor: Int,
+    candidateBackgroundLeftMarginDp: String,
+    onCandidateBackgroundLeftMarginDpChange: (String) -> Unit,
+    candidatePinyinLeftMarginDp: String,
+    onCandidatePinyinLeftMarginDpChange: (String) -> Unit,
+    candidateBackgroundAlpha: Int,
+    onCandidateBackgroundAlphaChange: (Int) -> Unit,
+    candidateBackgroundCorner: Int,
+    onCandidateBackgroundCornerChange: (Int) -> Unit
+) {
+    // 1. 效果预览折叠卡片（默认收起，平滑展开）
+    item {
+        var isPreviewExpanded by rememberSaveable { mutableStateOf(false) }
+        Column(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Card(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                insideMargin = PaddingValues(0.dp)
+            ) {
+                MiuixSwitchWidget(
+                    title = "实时效果预览",
+                    description = "展开查看键盘背景与毛玻璃渲染效果",
+                    checked = isPreviewExpanded,
+                    onCheckedChange = { isPreviewExpanded = it }
+                )
+            }
+
+            AnimatedVisibility(
+                visible = isPreviewExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                ) {
+                    PreviewSection(
+                        color = currentColor,
+                        blurRadius = blurRadius,
+                        cornerRadius = cornerRadius,
+                        keyCornerRadius = keyCornerRadius,
+                        edgeHighlightEnabled = edgeHighlightEnabled,
+                        edgeHighlightIntensity = edgeHighlightIntensity,
+                        lightKeyColor = lightKeyColor,
+                        darkKeyColor = darkKeyColor,
+                        isDark = currentModeIsDark
+                    )
+                }
+            }
+        }
+    }
+
+    // 2. 颜色与模式
+    item {
+        SmallTitle(
+            text = stringResource(R.string.settings_group_color)
+        )
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                // 模式切换 - 使用 TabRow
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_section_mode),
+                        style = MiuixTheme.textStyles.main
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val tabs = listOf(
+                        stringResource(R.string.settings_light_mode),
+                        stringResource(R.string.settings_dark_mode)
+                    )
+                    TabRowWithContour(
+                        tabs = tabs,
+                        selectedTabIndex = if (currentModeIsDark) 1 else 0,
+                        onTabSelected = { index ->
+                            onModeChange(index == 1)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                HorizontalDivider()
+
+                // 预设色卡快速选择器
+                ColorPresetPalette(
+                    isDark = currentModeIsDark,
+                    currentColorRgb = currentColor and 0xFFFFFF,
+                    onSelectColor = onColorSelect
+                )
+
+                HorizontalDivider()
+
+                // 自定义 HEX 颜色输入与取色器入口
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_custom_color),
+                        style = MiuixTheme.textStyles.main
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = stringResource(R.string.settings_color_helper),
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        style = MiuixTheme.textStyles.body2
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(ContinuousRoundedRectangle(999.dp))
+                                .background(ComposeColor(currentColor))
+                                .border(
+                                    1.dp,
+                                    MiuixTheme.colorScheme.outline,
+                                    ContinuousRoundedRectangle(999.dp)
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        TextField(
+                            value = colorInput,
+                            onValueChange = onColorInputChange,
+                            label = stringResource(R.string.settings_color_label),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                // 透明度滑块
+                SliderPreferenceItem(
+                    title = stringResource(R.string.settings_alpha_title),
+                    value = alphaValue,
+                    max = 255,
+                    onValueChange = onAlphaChange
+                )
+
+                HorizontalDivider()
+
+                KeyColorEditor(
+                    title = if (currentModeIsDark) {
+                        stringResource(R.string.settings_dark_key_color_title)
+                    } else {
+                        stringResource(R.string.settings_light_key_color_title)
+                    },
+                    summary = stringResource(
+                        R.string.settings_key_color_group_summary,
+                        Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
+                        currentKeyGroup.entryCount
+                    ),
+                    color = appearanceGroupColors[currentKeyGroupIndex],
+                    onColorChange = onKeyColorChange
+                )
+            }
+        }
+    }
+
+    // 3. 外观与特效
+    item {
+        SmallTitle(
+            text = stringResource(R.string.settings_group_appearance)
+        )
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                MiuixSwitchWidget(
+                    title = stringResource(R.string.settings_edge_highlight_title),
+                    description = stringResource(R.string.settings_edge_highlight_desc),
+                    checked = edgeHighlightEnabled,
+                    onCheckedChange = onEdgeHighlightEnabledChange
+                )
+
+                if (edgeHighlightEnabled) {
+                    SliderPreferenceItem(
+                        title = stringResource(R.string.settings_edge_highlight_intensity_title),
+                        value = edgeHighlightIntensity,
+                        max = 200,
+                        onValueChange = onEdgeHighlightIntensityChange
+                    )
+                }
+
+                HorizontalDivider()
+
+                // 模糊滑块
+                SliderPreferenceItem(
+                    title = stringResource(R.string.settings_blur_title),
+                    value = blurRadius,
+                    max = 100,
+                    onValueChange = onBlurRadiusChange
+                )
+
+                // 圆角滑块
+                SliderPreferenceItem(
+                    title = stringResource(R.string.settings_corner_title),
+                    value = cornerRadius,
+                    max = WeTypeSettings.MAX_CORNER_RADIUS,
+                    onValueChange = onCornerRadiusChange
+                )
+
+                SliderPreferenceItem(
+                    title = stringResource(R.string.settings_key_corner_title),
+                    value = keyCornerRadius,
+                    max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
+                    onValueChange = onKeyCornerRadiusChange
+                )
+
+                SliderPreferenceItem(
+                    title = stringResource(R.string.settings_toolbar_icon_bg_opacity_title),
+                    value = toolbarIconBgOpacity,
+                    max = 255,
+                    onValueChange = onToolbarIconBgOpacityChange
+                )
+
+                appearanceSectionGroups.forEach { group ->
+                    val index = groupIndex(group.id)
+                    AppearanceColorGroupEditor(
+                        title = group.displayName,
+                        summary = stringResource(
+                            R.string.settings_appearance_color_group_summary,
+                            group.entryCount,
+                            formatArgb(group.defaultColor)
+                        ),
+                        color = appearanceGroupColors[index],
+                        onColorChange = { appearanceGroupColors[index] = it }
+                    )
+                }
+
+                NumericTextSettingItem(
+                    title = stringResource(R.string.settings_candidate_background_left_margin_title),
+                    summary = stringResource(R.string.settings_candidate_background_left_margin_desc),
+                    value = candidateBackgroundLeftMarginDp,
+                    onValueChange = { input ->
+                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                            onCandidateBackgroundLeftMarginDpChange(input)
+                        }
+                    }
+                )
+
+                NumericTextSettingItem(
+                    title = stringResource(R.string.settings_candidate_pinyin_margin_title),
+                    summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
+                    value = candidatePinyinLeftMarginDp,
+                    onValueChange = { input ->
+                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                            onCandidatePinyinLeftMarginDpChange(input)
+                        }
+                    }
+                )
+
+                SliderPreferenceItem(
+                    title = stringResource(R.string.settings_key_color_hook_alpha_title),
+                    value = candidateBackgroundAlpha,
+                    max = 255,
+                    onValueChange = onCandidateBackgroundAlphaChange
+                )
+
+                SliderPreferenceItem(
+                    title = stringResource(R.string.settings_candidate_corner_title),
+                    value = candidateBackgroundCorner,
+                    max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
+                    onValueChange = onCandidateBackgroundCornerChange
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun PreviewSection(
     color: Int,
@@ -1375,41 +1665,34 @@ private fun PreviewSection(
     darkKeyColor: Int,
     isDark: Boolean
 ) {
-    Column(
-        modifier = Modifier.padding(bottom = 16.dp)
-    ) {
-        SmallTitle(
-            text = stringResource(R.string.settings_preview_title)
+    Card(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        insideMargin = PaddingValues(0.dp),
+        colors = CardDefaults.defaultColors(
+            color = ComposeColor.Transparent
         )
-        Card(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(0.dp),
-            colors = CardDefaults.defaultColors(
-                color = ComposeColor.Transparent
-            )
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Box(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.natural_texture_004),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.matchParentSize()
+            Image(
+                painter = painterResource(R.drawable.natural_texture_004),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize()
+            )
+            Column {
+                PreviewCard(
+                    color = color,
+                    blurRadius = blurRadius,
+                    cornerRadius = cornerRadius,
+                    keyCornerRadius = keyCornerRadius,
+                    edgeHighlightEnabled = edgeHighlightEnabled,
+                    edgeHighlightIntensity = edgeHighlightIntensity,
+                    lightKeyColor = lightKeyColor,
+                    darkKeyColor = darkKeyColor,
+                    isDark = isDark
                 )
-                Column {
-                    PreviewCard(
-                        color = color,
-                        blurRadius = blurRadius,
-                        cornerRadius = cornerRadius,
-                        keyCornerRadius = keyCornerRadius,
-                        edgeHighlightEnabled = edgeHighlightEnabled,
-                        edgeHighlightIntensity = edgeHighlightIntensity,
-                        lightKeyColor = lightKeyColor,
-                        darkKeyColor = darkKeyColor,
-                        isDark = isDark
-                    )
-                }
             }
         }
     }
