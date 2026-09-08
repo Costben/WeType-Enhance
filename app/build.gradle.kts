@@ -72,4 +72,7 @@ dependencies {
     }
     implementation("io.github.kyant0:capsule:2.1.3")
     implementation("org.luckypray:dexkit:2.2.0")
+    // S2 剪贴板搜索：TinyPinyin 轻量拼音（不引 jieba；原坐标 com.github.promeg:tinypinyin:2.0.3 已不可用——见信箱说明，改用同源 MavenCentral 坐标）
+    implementation("io.github.biezhi:TinyPinyin:2.0.3.RELEASE")
+    testImplementation("junit:junit:4.13.2")
 }
