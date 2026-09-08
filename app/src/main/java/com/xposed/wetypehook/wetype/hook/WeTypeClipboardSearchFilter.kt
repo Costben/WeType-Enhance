@@ -86,7 +86,9 @@ internal object WeTypeClipboardSearchFilter {
                 snapshot = ArrayList(fullItems)
                 targets = ArrayList(scrollViews)
             }
-            if (targets.isEmpty() || snapshot.isEmpty()) return@Runnable
+            if (targets.isEmpty()) return@Runnable
+            // S6：快照为空时仍走后台/回放，使空态文案能覆盖原生空标题；
+            // 后台对空快照直接产出空列表，开销可忽略。
             executor.submit { runFilterInBackground(v, kw, snapshot, targets) }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "debounce dispatch failed: ${t.message}")
@@ -124,10 +126,17 @@ internal object WeTypeClipboardSearchFilter {
                 return
             }
             if (!WeTypeSettings.isClipboardSearchEnabledXposed()) {
-                // 开关关闭：取消 pending 并抬升版本作废在途后台任务，不碰列表。
+                // 开关关闭：取消 pending 并抬升版本作废在途后台任务，不碰列表；
+                // S6：空态文案一并恢复原生。
                 currentKeyword = ""
                 version.incrementAndGet()
                 mainHandler.removeCallbacks(debounceTask)
+                try {
+                    val targets: List<Any> = synchronized(lock) { ArrayList(scrollViews) }
+                    WeTypeClipboardSearchEmpty.onSwitchOff(targets)
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "empty restore on switch-off failed: ${t.message}")
+                }
                 return
             }
             currentKeyword = raw.orEmpty()
@@ -198,7 +207,7 @@ internal object WeTypeClipboardSearchFilter {
             } else {
                 filterSnapshot(snapshot, keyword)
             }
-            mainHandler.post { applyResultOnMain(v, targets, filtered) }
+            mainHandler.post { applyResultOnMain(v, keyword, targets, filtered) }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "background filter failed: ${t.message}")
         }
@@ -248,7 +257,7 @@ internal object WeTypeClipboardSearchFilter {
 
     // ---- 主线程回放（原生链路刷新） ----
 
-    private fun applyResultOnMain(v: Long, targets: List<Any>, filtered: List<Any>) {
+    private fun applyResultOnMain(v: Long, keyword: String, targets: List<Any>, filtered: List<Any>) {
         try {
             if (v != version.get()) return
             if (!WeTypeSettings.isClipboardSearchEnabledXposed()) return
@@ -263,6 +272,12 @@ internal object WeTypeClipboardSearchFilter {
                 } finally {
                     applyingFilter.set(false)
                 }
+            }
+            // S6：空态（无结果文案/恢复原生）复用原生空视图链路，主线程 UI。
+            try {
+                WeTypeClipboardSearchEmpty.onFilterResult(targets, keyword, filtered.isEmpty())
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "empty state dispatch failed: ${t.message}")
             }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "applyResult failed: ${t.message}")

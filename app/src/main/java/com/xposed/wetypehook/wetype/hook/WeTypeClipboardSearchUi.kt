@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookAfter
 import java.util.Collections
@@ -37,6 +38,8 @@ internal object WeTypeClipboardSearchUi {
 
     private const val TAG_SEARCH_BUTTON = "wetype_clipboard_search_btn_s4"
     private const val TAG_SEARCH_BOX = "wetype_clipboard_search_box_s4"
+    private const val TAG_SEARCH_BOX_CONTAINER = "wetype_clipboard_search_box_container_s6"
+    private const val TAG_SEARCH_CLEAR = "wetype_clipboard_search_clear_s6"
 
     // dp 常量（运行时经 TypedValue 换算为 px，禁写死 px）。
     private const val BTN_BOX_DP = 40f
@@ -44,6 +47,9 @@ internal object WeTypeClipboardSearchUi {
     private const val BTN_MARGIN_DP = 4f
     private const val BOX_MARGIN_H_DP = 12f
     private const val BOX_MARGIN_V_DP = 4f
+    // S6：X 一键清空按钮尺寸（运行时经 TypedValue 换算为 px，禁写死 px）。
+    private const val CLEAR_BOX_DP = 32f
+    private const val CLEAR_ICON_PADDING_DP = 8f
 
     /** S5 消费：关键词变化回调（S4 只透传，不做过滤）。 */
     @Volatile
@@ -133,6 +139,9 @@ internal object WeTypeClipboardSearchUi {
             try {
                 val root = anchor.rootView as? ViewGroup
                 if (root != null) {
+                    root.findViewWithTag<View>(TAG_SEARCH_BOX_CONTAINER)?.let { container ->
+                        (container.parent as? ViewGroup)?.removeView(container)
+                    }
                     root.findViewWithTag<View>(TAG_SEARCH_BOX)?.let { box ->
                         (box.parent as? ViewGroup)?.removeView(box)
                     }
@@ -208,45 +217,59 @@ internal object WeTypeClipboardSearchUi {
             }
 
             // 2. 搜索框：展开时插到标题栏下方/列表上方，不遮挡返回键与标题。
+            // S6：容器（横向 LinearLayout）持搜索框 + 右侧 X 一键清空；
+            // S4 老布局（裸 EditText）迁移进容器，避免双份挂载。
             var box = root.findViewWithTag<View>(TAG_SEARCH_BOX) as? EditText
+            var container = root.findViewWithTag<View>(TAG_SEARCH_BOX_CONTAINER) as? LinearLayout
             if (box == null) {
-                box = EditText(titleContainer.context).apply {
-                    tag = TAG_SEARCH_BOX
-                    hint = "搜索剪贴板"
-                    setSingleLine(true)
-                    maxLines = 1
-                    imeOptions = EditorInfo.IME_ACTION_SEARCH
-                    inputType = InputType.TYPE_CLASS_TEXT
+                val newBox = createSearchBox(titleContainer.context)
+                box = newBox
+                val freshContainer = LinearLayout(titleContainer.context).apply {
+                    tag = TAG_SEARCH_BOX_CONTAINER
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
                     visibility = View.GONE
-                    addTextChangedListener(object : TextWatcher {
-                        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-                        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-                        override fun afterTextChanged(s: Editable?) {
-                            try {
-                                keywordListenerImpl?.invoke(s?.toString().orEmpty())
-                            } catch (t: Throwable) {
-                                AndroidLog.e(TAG, "keyword listener failed: ${t.message}")
-                            }
-                        }
-                    })
                 }
-                val parent = (titleContainer.parent as? ViewGroup) ?: root
-                val titleIndex = parent.indexOfChild(titleContainer)
-                if (titleIndex >= 0) {
-                    parent.addView(box, titleIndex + 1)
-                } else {
-                    parent.addView(box)
-                }
-                val marginH = dpToPx(resources, BOX_MARGIN_H_DP)
-                val marginV = dpToPx(resources, BOX_MARGIN_V_DP)
-                (box.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
-                    lp.width = ViewGroup.LayoutParams.MATCH_PARENT
-                    lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
-                    lp.setMargins(marginH, marginV, marginH, marginV)
-                    box.layoutParams = lp
-                }
-                synchronized(trackedBoxes) { trackedBoxes.add(box) }
+                val boxLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                freshContainer.addView(newBox, boxLp)
+                freshContainer.addView(createClearButton(freshContainer.context, newBox))
+                insertBelowTitle(root, titleContainer, freshContainer)
+                applyBoxContainerMargins(resources, freshContainer)
+                container = freshContainer
+                synchronized(trackedBoxes) { trackedBoxes.add(newBox) }
                 AndroidLog.i(TAG, "search box mounted below title container")
+            } else {
+                if (container == null) {
+                    // S4 迁移：把裸 EditText 搬进新容器。
+                    try {
+                        (box.parent as? ViewGroup)?.removeView(box)
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "detach legacy search box failed: ${t.message}")
+                    }
+                    val migrated = LinearLayout(titleContainer.context).apply {
+                        tag = TAG_SEARCH_BOX_CONTAINER
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        visibility = box.visibility
+                    }
+                    box.layoutParams = LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                    migrated.addView(box)
+                    migrated.addView(createClearButton(migrated.context, box))
+                    insertBelowTitle(root, titleContainer, migrated)
+                    applyBoxContainerMargins(resources, migrated)
+                    container = migrated
+                    AndroidLog.i(TAG, "legacy search box migrated into container")
+                }
+                if (container?.findViewWithTag<View>(TAG_SEARCH_CLEAR) == null) {
+                    try {
+                        container?.addView(createClearButton(container!!.context, box))
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "attach clear button failed: ${t.message}")
+                    }
+                }
+                updateClearVisibility(box)
             }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "mount search UI failed: ${t.message}")
@@ -259,10 +282,14 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "search box missing on toggle")
                 return
             }
-            if (box.visibility == View.VISIBLE) {
+            val container = root.findViewWithTag<View>(TAG_SEARCH_BOX_CONTAINER)
+            val shown = container?.visibility == View.VISIBLE || box.visibility == View.VISIBLE
+            if (shown) {
                 box.setText("")
+                container?.visibility = View.GONE
                 box.visibility = View.GONE
                 box.clearFocus()
+                updateClearVisibility(box)
                 try {
                     keywordListenerImpl?.invoke("")
                 } catch (t: Throwable) {
@@ -270,8 +297,10 @@ internal object WeTypeClipboardSearchUi {
                 }
                 AndroidLog.i(TAG, "search box collapsed")
             } else {
+                container?.visibility = View.VISIBLE
                 box.visibility = View.VISIBLE
                 box.requestFocus()
+                updateClearVisibility(box)
                 AndroidLog.i(TAG, "search box expanded")
             }
         } catch (t: Throwable) {
@@ -291,6 +320,7 @@ internal object WeTypeClipboardSearchUi {
                             continue
                         }
                         if (box.text?.isNotEmpty() == true) box.setText("")
+                        updateClearVisibility(box)
                     } catch (t: Throwable) {
                         AndroidLog.e(TAG, "clear box failed: ${t.message}")
                     }
@@ -298,6 +328,110 @@ internal object WeTypeClipboardSearchUi {
             }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "clearSearch failed: ${t.message}")
+        }
+    }
+
+    /**
+     * S6：X 一键清空按钮显隐（有关键词时可见）。由 TextWatcher /
+     * 展开 / [clearSearch] 统一调用，不自建过滤链路。
+     */
+    private fun updateClearVisibility(box: EditText) {
+        try {
+            val parent = box.parent as? ViewGroup ?: return
+            val clear = parent.findViewWithTag<View>(TAG_SEARCH_CLEAR) ?: return
+            val show = box.visibility == View.VISIBLE && box.text?.isNotEmpty() == true
+            clear.visibility = if (show) View.VISIBLE else View.GONE
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "update clear visibility failed: ${t.message}")
+        }
+    }
+
+    private fun createSearchBox(context: android.content.Context): EditText {
+        val box = EditText(context).apply {
+            tag = TAG_SEARCH_BOX
+            hint = "搜索剪贴板"
+            setSingleLine(true)
+            maxLines = 1
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            inputType = InputType.TYPE_CLASS_TEXT
+            visibility = View.VISIBLE
+        }
+        box.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                try {
+                    keywordListenerImpl?.invoke(s?.toString().orEmpty())
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "keyword listener failed: ${t.message}")
+                }
+                updateClearVisibility(box)
+            }
+        })
+        return box
+    }
+
+    /**
+     * S6：搜索框内右侧 X 清除按钮。点击走既有 [clearSearch] +
+     * 空关键词恢复链路（S5 清空高亮/回放原列表），不折叠搜索框。
+     */
+    private fun createClearButton(context: android.content.Context, box: EditText): ImageView {
+        return ImageView(context).apply {
+            tag = TAG_SEARCH_CLEAR
+            contentDescription = "清除搜索"
+            try {
+                setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "set clear icon failed: ${t.message}")
+            }
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            val res = resources
+            val pad = dpToPx(res, CLEAR_ICON_PADDING_DP)
+            setPadding(pad, pad, pad, pad)
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            setOnClickListener {
+                try {
+                    clearSearch()
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "clear button failed: ${t.message}")
+                }
+            }
+            val size = dpToPx(res, CLEAR_BOX_DP)
+            layoutParams = LinearLayout.LayoutParams(size, size)
+        }
+    }
+
+    private fun insertBelowTitle(root: ViewGroup, titleContainer: ViewGroup, child: View) {
+        try {
+            val parent = (titleContainer.parent as? ViewGroup) ?: root
+            val titleIndex = parent.indexOfChild(titleContainer)
+            if (titleIndex >= 0) {
+                parent.addView(child, titleIndex + 1)
+            } else {
+                parent.addView(child)
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "insert search box failed: ${t.message}")
+        }
+    }
+
+    private fun applyBoxContainerMargins(
+        resources: android.content.res.Resources,
+        container: LinearLayout
+    ) {
+        try {
+            val marginH = dpToPx(resources, BOX_MARGIN_H_DP)
+            val marginV = dpToPx(resources, BOX_MARGIN_V_DP)
+            (container.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                lp.setMargins(marginH, marginV, marginH, marginV)
+                container.layoutParams = lp
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "apply box margins failed: ${t.message}")
         }
     }
 
