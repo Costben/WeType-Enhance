@@ -51,6 +51,13 @@ internal object WeTypeClipboardHooks {
             Log.e("Failed: Installing WeType clipboard hooks: ${it.message}")
             Log.i(it)
         }
+        // Slice 4:剪贴板搜索框 UI 挂载（只挂载不做过滤；独立 try/catch，不影响配额 Hook）。
+        runCatching {
+            WeTypeClipboardSearchUi.install(classLoader)
+        }.onFailure {
+            Log.e("Failed: Installing clipboard search UI: ${it.message}")
+            Log.i(it)
+        }
     }
 
     /**
