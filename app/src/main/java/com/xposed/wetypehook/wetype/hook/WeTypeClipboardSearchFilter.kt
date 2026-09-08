@@ -1,0 +1,522 @@
+package com.xposed.wetypehook.wetype.hook
+
+import android.os.Handler
+import android.os.Looper
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.util.Log as AndroidLog
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import com.xposed.wetypehook.wetype.clipboard.ClipboardSearchEngine
+import com.xposed.wetypehook.wetype.settings.WeTypeSettings
+import com.xposed.wetypehook.xposed.hookAfter
+import java.lang.reflect.Method
+import java.util.Collections
+import java.util.WeakHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * Slice 5：剪贴板搜索过滤渲染（防抖 + 后台搜 + 前50分页 + 高亮）。
+ *
+ * 挂点（S1 证据）：
+ * - 核心过滤点 `ImeClipboardScrollView.setList(List<C>)`（证据 19 行）：只做全量快照，
+ *   实际过滤在后台线程跑完后经原生链路 `setList(过滤后)` + `getListAdapter().y()` 回放
+ *   （`y()` 刷新点见证据 23 行，`S15.a1()` 统一刷新见 13 行）。禁绕过 Adapter 自建列表。
+ * - 高亮次选点 `Adapter v.onBindViewHolder`（证据 22 行）：后处理加 [ForegroundColorSpan]。
+ * - 文本判定 `C.getType()==0` + `getContent()` 为搜索唯一范围（证据 24/25 行）；
+ *   图片/文件/远程条目（type != 0）原样保留不参搜。
+ * - S4 扩展点：只消费 `WeTypeClipboardSearchUi.setKeywordListener`（`clearSearch`
+ *   由 Ui 侧清空搜索框文本并透传空关键词，本片经监听空关键词执行恢复）。
+ * - S2 引擎冻结 API：只引用 `search(contents, keyword, limit=50)`。
+ */
+internal object WeTypeClipboardSearchFilter {
+
+    private const val TAG = "WeTypeClipboardSearch"
+    private const val SCROLLVIEW_CLASS =
+        "com.tencent.wetype.plugin.hld.clipboard.ImeClipboardScrollView"
+    private const val ADAPTER_CLASS = "com.tencent.wetype.plugin.hld.clipboard.v"
+
+    private const val DEBOUNCE_MS = 300L
+    private const val PAGE_LIMIT = 50
+
+    // 高亮色来源：README 主题色 #FB7299（模块品牌强调色）。
+    // 用前景色（文字色）而非底色，避免与深浅主题底色冲突；清空时移除同色 span 恢复原样。
+    private const val HIGHLIGHT_COLOR = 0xFFFB7299.toInt()
+
+    @Volatile
+    private var hooked = false
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val executor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "WeTypeClipboardSearch").apply { isDaemon = true }
+    }
+
+    // 版本号 guards：新关键词/新数据到达即 +1，防后台乱序回写。
+    private val version = AtomicLong(0L)
+
+    // 原生 setList 回放时的重入 guard：我们自己调 setList 时跳过快照与重排，避免循环。
+    private val applyingFilter = AtomicBoolean(false)
+
+    @Volatile
+    private var currentKeyword = ""
+
+    private val lock = Any()
+    private val fullItems: MutableList<Any> = ArrayList()
+    private val scrollViews: MutableSet<Any> =
+        Collections.newSetFromMap(WeakHashMap<Any, Boolean>())
+
+    // C.getType()/getContent() 反射缓存（同类加载器下同类，main/后台线程只读调用）。
+    @Volatile
+    private var getTypeMethod: Method? = null
+    @Volatile
+    private var getContentMethod: Method? = null
+
+    private val debounceTask = Runnable {
+        try {
+            val v = version.get()
+            val kw = currentKeyword
+            val snapshot: List<Any>
+            val targets: List<Any>
+            synchronized(lock) {
+                snapshot = ArrayList(fullItems)
+                targets = ArrayList(scrollViews)
+            }
+            if (targets.isEmpty() || snapshot.isEmpty()) return@Runnable
+            executor.submit { runFilterInBackground(v, kw, snapshot, targets) }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "debounce dispatch failed: ${t.message}")
+        }
+    }
+
+    fun install(classLoader: ClassLoader) {
+        if (hooked) return
+        try {
+            hookSetList(classLoader)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "hook setList failed: ${t.message}")
+        }
+        try {
+            hookBind(classLoader)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "hook onBindViewHolder failed: ${t.message}")
+        }
+        try {
+            // S4 扩展点消费：关键词变化只做防抖调度，实际搜索在后台线程。
+            WeTypeClipboardSearchUi.setKeywordListener { kw -> onKeyword(kw) }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "register keyword listener failed: ${t.message}")
+        }
+        hooked = true
+        AndroidLog.i(TAG, "search filter installed (debounce=${DEBOUNCE_MS}ms, limit=$PAGE_LIMIT)")
+    }
+
+    // ---- 关键词入口（主线程防抖） ----
+
+    private fun onKeyword(raw: String?) {
+        try {
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                mainHandler.post { onKeyword(raw) }
+                return
+            }
+            if (!WeTypeSettings.isClipboardSearchEnabledXposed()) {
+                // 开关关闭：取消 pending 并抬升版本作废在途后台任务，不碰列表。
+                currentKeyword = ""
+                version.incrementAndGet()
+                mainHandler.removeCallbacks(debounceTask)
+                return
+            }
+            currentKeyword = raw.orEmpty()
+            scheduleLocked()
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "onKeyword failed: ${t.message}")
+        }
+    }
+
+    private fun onNativeSetList(scrollView: Any, listArg: Any?) {
+        try {
+            if (applyingFilter.get()) return
+            if (!WeTypeSettings.isClipboardSearchEnabledXposed()) return
+            val list = listArg as? List<*> ?: return
+            val runSchedule: Boolean
+            synchronized(lock) {
+                scrollViews.add(scrollView)
+                // 空关键词时仍刷新全量快照（恢复/首挂载路径），不额外调度。
+                fullItems.clear()
+                for (item in list) {
+                    if (item != null) fullItems.add(item)
+                }
+                runSchedule = currentKeyword.isNotEmpty()
+            }
+            // 主线程调度；hookAfter 大概率已在主线程，非主则抛回主线程。
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                if (runSchedule) scheduleLocked()
+            } else {
+                mainHandler.post {
+                    try {
+                        if (runSchedule &&
+                            WeTypeSettings.isClipboardSearchEnabledXposed() &&
+                            !applyingFilter.get()
+                        ) {
+                            scheduleLocked()
+                        }
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "native setList reschedule failed: ${t.message}")
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "onNativeSetList failed: ${t.message}")
+        }
+    }
+
+    private fun scheduleLocked() {
+        try {
+            version.incrementAndGet()
+            mainHandler.removeCallbacks(debounceTask)
+            mainHandler.postDelayed(debounceTask, DEBOUNCE_MS)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "schedule filter failed: ${t.message}")
+        }
+    }
+
+    // ---- 后台搜索（禁碰 View） ----
+
+    private fun runFilterInBackground(
+        v: Long,
+        keyword: String,
+        snapshot: List<Any>,
+        targets: List<Any>
+    ) {
+        try {
+            val filtered: List<Any> = if (keyword.isEmpty()) {
+                ArrayList(snapshot)
+            } else {
+                filterSnapshot(snapshot, keyword)
+            }
+            mainHandler.post { applyResultOnMain(v, targets, filtered) }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "background filter failed: ${t.message}")
+        }
+    }
+
+    private fun filterSnapshot(snapshot: List<Any>, keyword: String): List<Any> {
+        // 文本条目逐条抽 content 走引擎；非文本原样保留不参搜（S1 证据 B:988 语义）。
+        val textContents = ArrayList<String>()
+        val textToOrig = ArrayList<Int>()
+        for (i in snapshot.indices) {
+            val item = snapshot[i]
+            try {
+                if (getItemType(item) != 0L) continue
+                textContents.add(getItemContent(item))
+                textToOrig.add(i)
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "snapshot item read failed: ${t.message}")
+            }
+        }
+        val matchedOrig = HashSet<Int>()
+        try {
+            val hits = ClipboardSearchEngine.search(textContents, keyword, PAGE_LIMIT)
+            for (hit in hits) {
+                val pos = hit.index
+                if (pos in textToOrig.indices) matchedOrig.add(textToOrig[pos])
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "engine search failed: ${t.message}")
+            return ArrayList(snapshot)
+        }
+        val out = ArrayList<Any>(snapshot.size.coerceAtMost(PAGE_LIMIT + 16))
+        for (i in snapshot.indices) {
+            val item = snapshot[i]
+            try {
+                if (getItemType(item) != 0L) {
+                    out.add(item)
+                } else if (matchedOrig.contains(i)) {
+                    out.add(item)
+                }
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "filter item failed: ${t.message}")
+                out.add(item)
+            }
+        }
+        return out
+    }
+
+    // ---- 主线程回放（原生链路刷新） ----
+
+    private fun applyResultOnMain(v: Long, targets: List<Any>, filtered: List<Any>) {
+        try {
+            if (v != version.get()) return
+            if (!WeTypeSettings.isClipboardSearchEnabledXposed()) return
+            if (targets.isEmpty()) return
+            for (scrollView in targets) {
+                try {
+                    applyingFilter.set(true)
+                    invokeSetList(scrollView, filtered)
+                    invokeAdapterRefresh(scrollView)
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "apply filtered list failed: ${t.message}")
+                } finally {
+                    applyingFilter.set(false)
+                }
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "applyResult failed: ${t.message}")
+        }
+    }
+
+    private fun invokeSetList(scrollView: Any, filtered: List<Any>) {
+        try {
+            val method = scrollView.javaClass.declaredMethods.firstOrNull { m ->
+                m.name == "setList" &&
+                    m.parameterTypes.size == 1 &&
+                    List::class.java.isAssignableFrom(m.parameterTypes[0])
+            } ?: run {
+                AndroidLog.e(TAG, "setList(List) not found on ${scrollView.javaClass.name}")
+                return
+            }
+            method.isAccessible = true
+            // 原生 setList 期望 ArrayList<C>；传 ArrayList 保持与原生一致。
+            method.invoke(scrollView, ArrayList(filtered))
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "invoke setList failed: ${t.message}")
+        }
+    }
+
+    private fun invokeAdapterRefresh(scrollView: Any) {
+        try {
+            val getter = scrollView.javaClass.declaredMethods.firstOrNull { m ->
+                m.name == "getListAdapter" && m.parameterTypes.isEmpty()
+            } ?: run {
+                AndroidLog.e(TAG, "getListAdapter() not found")
+                return
+            }
+            getter.isAccessible = true
+            val adapter = getter.invoke(scrollView) ?: run {
+                AndroidLog.e(TAG, "getListAdapter() returned null")
+                return
+            }
+            val refresh = adapter.javaClass.declaredMethods.firstOrNull { m ->
+                m.name == "y" && m.parameterTypes.isEmpty()
+            } ?: run {
+                AndroidLog.e(TAG, "adapter y() not found on ${adapter.javaClass.name}")
+                return
+            }
+            refresh.isAccessible = true
+            refresh.invoke(adapter)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "adapter refresh y() failed: ${t.message}")
+        }
+    }
+
+    // ---- 高亮（onBindViewHolder 后处理，主线程碰 View） ----
+
+    private fun hookSetList(classLoader: ClassLoader) {
+        val scrollClass = Class.forName(SCROLLVIEW_CLASS, false, classLoader)
+        var count = 0
+        for (method in scrollClass.declaredMethods) {
+            if (method.name != "setList") continue
+            if (method.parameterTypes.size != 1) continue
+            if (!List::class.java.isAssignableFrom(method.parameterTypes[0])) continue
+            try {
+                method.isAccessible = true
+                method.hookAfter { param ->
+                    try {
+                        val arg = param.args.getOrNull(0)
+                        onNativeSetList(param.thisObject, arg)
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "setList hook dispatch failed: ${t.message}")
+                    }
+                }
+                count++
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "hook setList failed: ${t.message}")
+            }
+        }
+        AndroidLog.i(TAG, "hooked setList overloads: $count")
+    }
+
+    private fun hookBind(classLoader: ClassLoader) {
+        val adapterClass = runCatching {
+            Class.forName(ADAPTER_CLASS, false, classLoader)
+        }.getOrNull() ?: run {
+            AndroidLog.e(TAG, "clipboard adapter class not found, skip highlight hook")
+            return
+        }
+        var count = 0
+        for (method in adapterClass.declaredMethods) {
+            if (method.name != "onBindViewHolder") continue
+            if (method.parameterTypes.size != 2) continue
+            try {
+                method.isAccessible = true
+                method.hookAfter { param ->
+                    try {
+                        if (!WeTypeSettings.isClipboardSearchEnabledXposed()) return@hookAfter
+                        val holder = param.args.getOrNull(0) ?: return@hookAfter
+                        applyHighlightToHolder(holder, currentKeyword)
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "bind highlight dispatch failed: ${t.message}")
+                    }
+                }
+                count++
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "hook onBindViewHolder failed: ${t.message}")
+            }
+        }
+        AndroidLog.i(TAG, "hooked onBindViewHolder overloads: $count")
+    }
+
+    private fun applyHighlightToHolder(holder: Any, keyword: String) {
+        try {
+            val itemView = getHolderItemView(holder) ?: return
+            forEachTextView(itemView, keyword)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "applyHighlight failed: ${t.message}")
+        }
+    }
+
+    private fun getHolderItemView(holder: Any): View? {
+        try {
+            var clazz: Class<*>? = holder.javaClass
+            while (clazz != null && clazz != Any::class.java) {
+                for (field in clazz.declaredFields) {
+                    try {
+                        if (!View::class.java.isAssignableFrom(field.type)) continue
+                        field.isAccessible = true
+                        val view = field.get(holder) as? View
+                        if (view != null) return view
+                    } catch (_: Throwable) {
+                        continue
+                    }
+                }
+                clazz = clazz.superclass
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "get holder itemView failed: ${t.message}")
+        }
+        return null
+    }
+
+    private fun forEachTextView(view: View, keyword: String) {
+        try {
+            if (view is TextView) {
+                highlightTextView(view, keyword)
+                return
+            }
+            if (view is ViewGroup) {
+                for (i in 0 until view.childCount) {
+                    try {
+                        forEachTextView(view.getChildAt(i), keyword)
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "traverse child failed: ${t.message}")
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "forEachTextView failed: ${t.message}")
+        }
+    }
+
+    private fun highlightTextView(tv: TextView, keyword: String) {
+        try {
+            // 先清除上一轮同色高亮，恢复原样后再按当前关键词重打。
+            clearOurSpans(tv)
+            if (keyword.isEmpty()) return
+            val text = tv.text?.toString().orEmpty()
+            if (text.isEmpty()) return
+            val ranges = try {
+                val hits = ClipboardSearchEngine.search(listOf(text), keyword, 1)
+                if (hits.isEmpty()) emptyList() else hits[0].ranges
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "highlight search failed: ${t.message}")
+                return
+            }
+            if (ranges.isEmpty()) return
+            val spannable = SpannableString(tv.text)
+            for (range in ranges) {
+                try {
+                    val start = range.first.coerceIn(0, spannable.length)
+                    val endExclusive = (range.last + 1).coerceIn(0, spannable.length)
+                    if (start >= endExclusive) continue
+                    spannable.setSpan(
+                        ForegroundColorSpan(HIGHLIGHT_COLOR),
+                        start,
+                        endExclusive,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "apply span range failed: ${t.message}")
+                }
+            }
+            tv.setText(spannable, TextView.BufferType.SPANNABLE)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "highlightTextView failed: ${t.message}")
+        }
+    }
+
+    private fun clearOurSpans(tv: TextView) {
+        try {
+            val spanned = tv.text as? Spanned ?: return
+            val spans = spanned.getSpans(0, spanned.length, ForegroundColorSpan::class.java)
+            if (spans.isEmpty()) return
+            // tv.text 可能是不可变 Spanned：转可变后再清，避免直接 remove 抛异常。
+            val editable = SpannableString(spanned)
+            var changed = false
+            for (span in spans) {
+                try {
+                    if (span.foregroundColor != HIGHLIGHT_COLOR) continue
+                    editable.removeSpan(span)
+                    changed = true
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "remove span failed: ${t.message}")
+                }
+            }
+            if (changed) tv.setText(editable, TextView.BufferType.SPANNABLE)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "clear spans failed: ${t.message}")
+        }
+    }
+
+    // ---- C 条目反射读写（数据面，后台/主线程均可调，不碰 View） ----
+
+    private fun getItemType(item: Any): Long {
+        try {
+            var m = getTypeMethod
+            if (m == null || m.declaringClass != item.javaClass) {
+                m = item.javaClass.getMethod("getType")
+                m.isAccessible = true
+                getTypeMethod = m
+            }
+            val v = m.invoke(item)
+            return when (v) {
+                is Long -> v
+                is Int -> v.toLong()
+                is Number -> v.toLong()
+                else -> 1L
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "getType failed: ${t.message}")
+            // 读不到类型时按非文本保留，避免误删数据。
+            return 1L
+        }
+    }
+
+    private fun getItemContent(item: Any): String {
+        try {
+            var m = getContentMethod
+            if (m == null || m.declaringClass != item.javaClass) {
+                m = item.javaClass.getMethod("getContent")
+                m.isAccessible = true
+                getContentMethod = m
+            }
+            return m.invoke(item) as? String ?: ""
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "getContent failed: ${t.message}")
+            return ""
+        }
+    }
+}

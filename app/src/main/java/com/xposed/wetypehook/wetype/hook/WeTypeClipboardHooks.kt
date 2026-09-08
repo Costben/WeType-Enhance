@@ -58,6 +58,13 @@ internal object WeTypeClipboardHooks {
             Log.e("Failed: Installing clipboard search UI: ${it.message}")
             Log.i(it)
         }
+        // Slice 5:剪贴板搜索过滤渲染（防抖+后台搜+高亮；独立 try/catch，不影响配额 Hook）。
+        runCatching {
+            WeTypeClipboardSearchFilter.install(classLoader)
+        }.onFailure {
+            Log.e("Failed: Installing clipboard search filter: ${it.message}")
+            Log.i(it)
+        }
     }
 
     /**
