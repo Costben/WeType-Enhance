@@ -215,13 +215,20 @@ internal object WeTypeClipboardSearchFilter {
 
     private fun filterSnapshot(snapshot: List<Any>, keyword: String): List<Any> {
         // 文本条目逐条抽 content 走引擎；非文本原样保留不参搜（S1 证据 B:988 语义）。
+        // content 读不到的条目判不准→保留（宁可多留不断数据）。
         val textContents = ArrayList<String>()
         val textToOrig = ArrayList<Int>()
+        val unknownContent = HashSet<Int>()
         for (i in snapshot.indices) {
             val item = snapshot[i]
             try {
                 if (getItemType(item) != 0L) continue
-                textContents.add(getItemContent(item))
+                val content = getItemContent(item)
+                if (content == null) {
+                    unknownContent.add(i)
+                    continue
+                }
+                textContents.add(content)
                 textToOrig.add(i)
             } catch (t: Throwable) {
                 AndroidLog.e(TAG, "snapshot item read failed: ${t.message}")
@@ -244,13 +251,26 @@ internal object WeTypeClipboardSearchFilter {
             try {
                 if (getItemType(item) != 0L) {
                     out.add(item)
-                } else if (matchedOrig.contains(i)) {
+                } else if (matchedOrig.contains(i) || unknownContent.contains(i)) {
                     out.add(item)
                 }
             } catch (t: Throwable) {
                 AndroidLog.e(TAG, "filter item failed: ${t.message}")
                 out.add(item)
             }
+        }
+        // TEMP-DEBUG：本轮决策面（关键词/快照/命中/未知/产出 + type 直方图），
+        // 定位误留条目（如 packageinstaller），定案后删除。
+        try {
+            val hist = HashMap<Long, Int>()
+            for (item in snapshot) {
+                val tv = try { getItemType(item) } catch (_: Throwable) { -99L }
+                hist[tv] = (hist[tv] ?: 0) + 1
+            }
+            AndroidLog.w(TAG, "filter run: kw=$keyword snap=${snapshot.size} " +
+                "matched=${matchedOrig.size} unknown=${unknownContent.size} " +
+                "out=${out.size} types=$hist")
+        } catch (_: Throwable) {
         }
         return out
     }
@@ -502,9 +522,23 @@ internal object WeTypeClipboardSearchFilter {
         try {
             var m = getTypeMethod
             if (m == null || m.declaringClass != item.javaClass) {
-                m = item.javaClass.getMethod("getType")
+                // S7o：装机版 C.getType 改名（NoSuchMethod 导致全保留、过滤无事
+                // 发生）。jadx 354 批注 `renamed from: q` + 真机普查 q():long=0
+                // 在文本条目上吻合 type==0，三重印证，直接绑 q。
+                m = item.javaClass.declaredMethods.firstOrNull { c ->
+                    c.name == "q" && c.parameterTypes.isEmpty() &&
+                        (c.returnType == Long::class.javaPrimitiveType ||
+                            c.returnType == Long::class.java ||
+                            c.returnType == Int::class.javaPrimitiveType ||
+                            c.returnType == Integer::class.java)
+                }
+                if (m == null) {
+                    AndroidLog.e(TAG, "C.q() not found on ${item.javaClass.name}, keep item")
+                    return 1L
+                }
                 m.isAccessible = true
                 getTypeMethod = m
+                AndroidLog.i(TAG, "C type accessor bound: q() on ${item.javaClass.name}")
             }
             val v = m.invoke(item)
             return when (v) {
@@ -520,18 +554,28 @@ internal object WeTypeClipboardSearchFilter {
         }
     }
 
-    private fun getItemContent(item: Any): String {
+    private fun getItemContent(item: Any): String? {
         try {
             var m = getContentMethod
             if (m == null || m.declaringClass != item.javaClass) {
-                m = item.javaClass.getMethod("getContent")
+                // S7o：同上，content 绑 a()（普查 a() 即条目正文，三重印证）。
+                // 绑不上返回 null，调用方保留条目。
+                m = item.javaClass.declaredMethods.firstOrNull { c ->
+                    c.name == "a" && c.parameterTypes.isEmpty() &&
+                        c.returnType == String::class.java
+                }
+                if (m == null) {
+                    AndroidLog.e(TAG, "C.a() not found on ${item.javaClass.name}, keep item")
+                    return null
+                }
                 m.isAccessible = true
                 getContentMethod = m
+                AndroidLog.i(TAG, "C content accessor bound: a() on ${item.javaClass.name}")
             }
-            return m.invoke(item) as? String ?: ""
+            return m.invoke(item) as? String
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "getContent failed: ${t.message}")
-            return ""
+            return null
         }
     }
 }

@@ -75,7 +75,7 @@ internal object WeTypeClipboardSearchEmpty {
         val view = target as? View ?: return
         val hostLoader = view.javaClass.classLoader ?: return
         val root = view.rootView as? ViewGroup ?: return
-        val ids = resolveIds(hostLoader)
+        val ids = resolveIds(view, hostLoader)
         if (keyword.isEmpty()) {
             // 空关键词恢复链路：文案恢复原生；显隐回到 d1 语义
             //（有数据则藏空视图，无数据则显原生空视图）。
@@ -124,7 +124,7 @@ internal object WeTypeClipboardSearchEmpty {
                 val view = target as? View ?: continue
                 val hostLoader = view.javaClass.classLoader ?: continue
                 val root = view.rootView as? ViewGroup ?: continue
-                restoreTitle(root, resolveIds(hostLoader).titleId)
+                restoreTitle(root, resolveIds(view, hostLoader).titleId)
             } catch (t: Throwable) {
                 AndroidLog.e(TAG, "restoreAll target failed: ${t.message}")
             }
@@ -207,17 +207,28 @@ internal object WeTypeClipboardSearchEmpty {
 
     private data class ResolvedIds(val vsId: Int?, val titleId: Int?, val bgId: Int?)
 
-    private fun resolveIds(hostLoader: ClassLoader): ResolvedIds {
-        return try {
-            val sClass = Class.forName(WETYPE_ID_CLASS, false, hostLoader)
-            ResolvedIds(
-                vsId = runCatching { sClass.getField("empty_clipboard_view_vs").getInt(null) }.getOrNull(),
-                titleId = runCatching { sClass.getField("clipboard_empty_title").getInt(null) }.getOrNull(),
-                bgId = runCatching { sClass.getField("clipboard_empty_bg").getInt(null) }.getOrNull()
-            )
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "resolve empty IDs failed: ${t.message}")
-            ResolvedIds(null, null, null)
+    private fun resolveIds(view: View, hostLoader: ClassLoader): ResolvedIds {
+        // 与 Ui 侧同 ladder：3.5.3 上 hostLoader 可能为 Boot（framework View），
+        // 此时改经 view.context / applicationContext 的 loader 加载 R 类。
+        val ctx = view.context
+        val loaders: List<ClassLoader?> =
+            listOf(hostLoader, ctx?.classLoader, ctx?.applicationContext?.classLoader)
+        var lastErr: String? = WETYPE_ID_CLASS
+        for (cl in loaders) {
+            if (cl == null) continue
+            try {
+                val sClass = Class.forName(WETYPE_ID_CLASS, false, cl)
+                val ids = ResolvedIds(
+                    vsId = runCatching { sClass.getField("empty_clipboard_view_vs").getInt(null) }.getOrNull(),
+                    titleId = runCatching { sClass.getField("clipboard_empty_title").getInt(null) }.getOrNull(),
+                    bgId = runCatching { sClass.getField("clipboard_empty_bg").getInt(null) }.getOrNull()
+                )
+                if (ids.vsId != null || ids.titleId != null || ids.bgId != null) return ids
+            } catch (t: Throwable) {
+                lastErr = t.message
+            }
         }
+        AndroidLog.e(TAG, "resolve empty IDs failed: $lastErr")
+        return ResolvedIds(null, null, null)
     }
 }
