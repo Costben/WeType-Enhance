@@ -479,6 +479,9 @@ private fun WeTypeSettingsScreen(
     var removeClipboardTextLimit by rememberSaveable {
         mutableStateOf(snapshot.removeClipboardTextLimit)
     }
+    var clipboardSearchEnabled by rememberSaveable {
+        mutableStateOf(snapshot.clipboardSearchEnabled)
+    }
     var qwertyGestureEnabled by rememberSaveable {
         mutableStateOf(snapshot.qwertyGestureEnabled)
     }
@@ -613,6 +616,7 @@ private fun WeTypeSettingsScreen(
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
+            clipboardSearchEnabled = clipboardSearchEnabled,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -661,6 +665,7 @@ private fun WeTypeSettingsScreen(
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
         removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT
+        clipboardSearchEnabled = WeTypeSettings.DEFAULT_CLIPBOARD_SEARCH_ENABLED
         qwertyGestureEnabled = WeTypeSettings.DEFAULT_QWERTY_GESTURE_ENABLED
         t9GestureEnabled = WeTypeSettings.DEFAULT_T9_GESTURE_ENABLED
         gestureThreshold = WeTypeSettings.DEFAULT_GESTURE_THRESHOLD
@@ -892,6 +897,8 @@ private fun WeTypeSettingsScreen(
                         onRemoveClipboardRetentionLimitChange = { removeClipboardRetentionLimit = it },
                         removeClipboardTextLimit = removeClipboardTextLimit,
                         onRemoveClipboardTextLimitChange = { removeClipboardTextLimit = it },
+                        clipboardSearchEnabled = clipboardSearchEnabled,
+                        onClipboardSearchEnabledChange = { clipboardSearchEnabled = it },
                         disableHotUpdate = disableHotUpdate,
                         onDisableHotUpdateChange = { disableHotUpdate = it },
                         activationStatus = activationStatus,
@@ -2533,6 +2540,8 @@ private fun LazyListScope.FeatureTabContent(
     onRemoveClipboardRetentionLimitChange: (Boolean) -> Unit,
     removeClipboardTextLimit: Boolean,
     onRemoveClipboardTextLimitChange: (Boolean) -> Unit,
+    clipboardSearchEnabled: Boolean,
+    onClipboardSearchEnabledChange: (Boolean) -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
@@ -2705,6 +2714,13 @@ private fun LazyListScope.FeatureTabContent(
                     description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
                     checked = removeClipboardTextLimit,
                     onCheckedChange = onRemoveClipboardTextLimitChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "剪贴板搜索",
+                    description = "在剪贴板页面显示搜索框，按文本拼音分词过滤",
+                    checked = clipboardSearchEnabled,
+                    onCheckedChange = onClipboardSearchEnabledChange
                 )
             }
         }

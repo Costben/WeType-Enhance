@@ -46,6 +46,7 @@ object WeTypeSettings {
     const val KEY_SHOW_CROSS_DEVICE_CLIPBOARD = "show_cross_device_clipboard"
     const val KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT = "remove_clipboard_retention_limit"
     const val KEY_REMOVE_CLIPBOARD_TEXT_LIMIT = "remove_clipboard_text_limit"
+    const val KEY_CLIPBOARD_SEARCH = "clipboard_search_enabled"
 
     const val KEY_QWERTY_GESTURE_ENABLED = "qwerty_gesture_enabled"
     const val KEY_T9_GESTURE_ENABLED = "t9_gesture_enabled"
@@ -58,6 +59,7 @@ object WeTypeSettings {
     const val DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD = true
     const val DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT = true
     const val DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT = true
+    const val DEFAULT_CLIPBOARD_SEARCH_ENABLED = true
 
     const val DEFAULT_QWERTY_GESTURE_ENABLED = true
     const val DEFAULT_T9_GESTURE_ENABLED = false
@@ -175,6 +177,7 @@ object WeTypeSettings {
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        val clipboardSearchEnabled: Boolean = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
         val qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         val t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         val gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -200,6 +203,7 @@ object WeTypeSettings {
     fun isShowCrossDeviceClipboard(context: Context): Boolean = readSnapshot(context).showCrossDeviceClipboard
     fun isRemoveClipboardRetentionLimit(context: Context): Boolean = readSnapshot(context).removeClipboardRetentionLimit
     fun isRemoveClipboardTextLimit(context: Context): Boolean = readSnapshot(context).removeClipboardTextLimit
+    fun isClipboardSearchEnabled(context: Context): Boolean = readSnapshot(context).clipboardSearchEnabled
 
     fun isQwertyGestureEnabled(context: Context): Boolean = readSnapshot(context).qwertyGestureEnabled
     fun isT9GestureEnabled(context: Context): Boolean = readSnapshot(context).t9GestureEnabled
@@ -220,6 +224,7 @@ object WeTypeSettings {
     fun isShowCrossDeviceClipboardXposed(): Boolean = readSnapshotXposed().showCrossDeviceClipboard
     fun isRemoveClipboardRetentionLimitXposed(): Boolean = readSnapshotXposed().removeClipboardRetentionLimit
     fun isRemoveClipboardTextLimitXposed(): Boolean = readSnapshotXposed().removeClipboardTextLimit
+    fun isClipboardSearchEnabledXposed(): Boolean = readSnapshotXposed().clipboardSearchEnabled
 
     fun isQwertyGestureEnabledXposed(): Boolean = readSnapshotXposed().qwertyGestureEnabled
     fun isT9GestureEnabledXposed(): Boolean = readSnapshotXposed().t9GestureEnabled
@@ -442,6 +447,7 @@ object WeTypeSettings {
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        clipboardSearchEnabled: Boolean = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -486,6 +492,7 @@ object WeTypeSettings {
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
+            clipboardSearchEnabled = clipboardSearchEnabled,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -599,6 +606,7 @@ object WeTypeSettings {
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        clipboardSearchEnabled: Boolean = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -644,6 +652,7 @@ object WeTypeSettings {
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
+            clipboardSearchEnabled = clipboardSearchEnabled,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold.coerceIn(10, 48),
@@ -730,6 +739,7 @@ object WeTypeSettings {
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
             .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
             .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
+            .putBoolean(KEY_CLIPBOARD_SEARCH, snapshot.clipboardSearchEnabled)
             .putBoolean(KEY_QWERTY_GESTURE_ENABLED, snapshot.qwertyGestureEnabled)
             .putBoolean(KEY_T9_GESTURE_ENABLED, snapshot.t9GestureEnabled)
             .putInt(KEY_GESTURE_THRESHOLD, snapshot.gestureThreshold)
@@ -882,6 +892,7 @@ object WeTypeSettings {
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
         putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
+        putBoolean(KEY_CLIPBOARD_SEARCH, clipboardSearchEnabled)
         putBoolean(KEY_QWERTY_GESTURE_ENABLED, qwertyGestureEnabled)
         putBoolean(KEY_T9_GESTURE_ENABLED, t9GestureEnabled)
         putInt(KEY_GESTURE_THRESHOLD, gestureThreshold)
@@ -957,6 +968,7 @@ object WeTypeSettings {
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
+            clipboardSearchEnabled = getBoolean(KEY_CLIPBOARD_SEARCH, defaults.clipboardSearchEnabled),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, defaults.qwertyGestureEnabled),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, defaults.t9GestureEnabled),
             gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, defaults.gestureThreshold).coerceIn(10, 48),
@@ -1043,6 +1055,7 @@ object WeTypeSettings {
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
+            clipboardSearchEnabled = getBoolean(KEY_CLIPBOARD_SEARCH, DEFAULT_CLIPBOARD_SEARCH_ENABLED),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, DEFAULT_QWERTY_GESTURE_ENABLED),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, DEFAULT_T9_GESTURE_ENABLED),
             gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, DEFAULT_GESTURE_THRESHOLD).coerceIn(10, 48),
@@ -1108,6 +1121,7 @@ object WeTypeSettings {
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
+        clipboardSearchEnabled = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
         qwertyGestureEnabled = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold = DEFAULT_GESTURE_THRESHOLD,
@@ -1148,6 +1162,7 @@ object WeTypeSettings {
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
             contains(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT) ||
+            contains(KEY_CLIPBOARD_SEARCH) ||
             contains(KEY_QWERTY_GESTURE_ENABLED) ||
             contains(KEY_T9_GESTURE_ENABLED) ||
             contains(KEY_GESTURE_THRESHOLD) ||
