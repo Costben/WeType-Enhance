@@ -5,10 +5,12 @@ import android.os.Looper
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.util.Log as AndroidLog
 import android.view.View
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.TextView
 import com.xposed.wetypehook.wetype.clipboard.ClipboardSearchEngine
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -472,6 +474,7 @@ internal object WeTypeClipboardSearchFilter {
             }
             if (ranges.isEmpty()) return
             val spannable = SpannableString(tv.text)
+            var firstStart = -1
             for (range in ranges) {
                 try {
                     val start = range.first.coerceIn(0, spannable.length)
@@ -483,13 +486,82 @@ internal object WeTypeClipboardSearchFilter {
                         endExclusive,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
+                    if (firstStart < 0) firstStart = start
                 } catch (t: Throwable) {
                     AndroidLog.e(TAG, "apply span range failed: ${t.message}")
                 }
             }
             tv.setText(spannable, TextView.BufferType.SPANNABLE)
+            if (firstStart >= 0) scrollContentToHighlight(tv, firstStart)
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "highlightTextView failed: ${t.message}")
+        }
+    }
+
+    /**
+     * 命中片段在可视区之外时，把内容行所在的横向滚动容器滚到首个高亮处，
+     * 让长文本的匹配结果直接落在这一行里（原生只会在绑定时复位到 0）。
+     */
+    private fun scrollContentToHighlight(tv: TextView, offset: Int) {
+        try {
+            val scroll = tv.parent as? HorizontalScrollView ?: return
+            // 布局用的是 transformation 后的文本（SingleLineTransformationMethod 会把
+            // \r/\n 换成 \uFEFF，且保持 1:1 长度），必须按变换后的内容与 layout.text 比较。
+            val expectedText = runCatching {
+                tv.transformationMethod?.getTransformation(tv.text, tv)
+            }.getOrNull() ?: tv.text
+            scrollToHighlightAttempt(tv, scroll, offset, expectedText, 0)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "scroll content to highlight failed: ${t.message}")
+        }
+    }
+
+    private fun scrollToHighlightAttempt(
+        tv: TextView,
+        scroll: HorizontalScrollView,
+        offset: Int,
+        expectedText: CharSequence?,
+        attempt: Int
+    ) {
+        if (attempt > 10) return
+        try {
+            tv.postDelayed({
+                try {
+                    val layout = tv.layout
+                    if (layout != null && TextUtils.equals(layout.text, expectedText) &&
+                        tv.width > 0 && scroll.width > 0
+                    ) {
+                        scrollViewToOffset(tv, scroll, layout, offset)
+                    } else {
+                        scrollToHighlightAttempt(tv, scroll, offset, expectedText, attempt + 1)
+                    }
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "scroll content to highlight failed: ${t.message}")
+                }
+            }, 16L)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "schedule scroll to highlight failed: ${t.message}")
+        }
+    }
+
+    private fun scrollViewToOffset(
+        tv: TextView,
+        scroll: HorizontalScrollView,
+        layout: android.text.Layout,
+        offset: Int
+    ) {
+        if (offset < 0 || offset >= layout.text.length) return
+        val viewport = scroll.width - scroll.paddingLeft - scroll.paddingRight
+        if (viewport <= 0) return
+        val maxScroll = (tv.width + scroll.paddingLeft + scroll.paddingRight - scroll.width)
+            .coerceAtLeast(0)
+        if (maxScroll <= 0) return
+        val x = tv.left + tv.compoundPaddingLeft + layout.getPrimaryHorizontal(offset)
+        val lead = (tv.resources.displayMetrics.density * 12f).toInt().coerceAtMost(viewport / 3)
+        val target = (x - lead).toInt().coerceIn(0, maxScroll)
+        if (scroll.scrollX != target) {
+            scroll.scrollTo(target, 0)
+            AndroidLog.i(TAG, "scroll to highlight: offset=$offset x=${x.toInt()} target=$target max=$maxScroll")
         }
     }
 
