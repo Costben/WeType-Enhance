@@ -39,6 +39,307 @@ import kotlin.math.roundToInt
  */
 internal object WeTypeClipboardSearchUi {
 
+    private val submitSession = ClipboardSearchSubmitSession()
+    private var submitDeadline = 0L
+    private var nativeSubmitInstalled = false
+    private var nativeNavigation: java.lang.reflect.Method? = null
+    private var nativeActionDispatcher: java.lang.reflect.Method? = null
+    private var nativeActionListener: Any? = null
+    private var nativeServiceCompanion: Any? = null
+    private var nativeServiceGetter: java.lang.reflect.Method? = null
+    private var nativePanel: Any? = null
+    private var nativeManager: Any? = null
+    private var nativeEngine: Any? = null
+    private var nativePendingInput: java.lang.reflect.Method? = null
+    private var nativeCurrentKeyboard: java.lang.reflect.Method? = null
+    private var nativeCandidateView: java.lang.reflect.Method? = null
+    private var searchManager: Any? = null
+    private var nativeSearchRestore: (() -> Unit)? = null
+    private val searchChipRestore = WeakHashMap<View, Triple<Boolean, Boolean, Float>>()
+    private fun rememberSearchChip(view: View) {
+        if (!searchChipRestore.containsKey(view)) searchChipRestore[view] = Triple(view.isEnabled, view.isClickable, view.alpha)
+    }
+    private var activeImeService: java.lang.ref.WeakReference<Any>? = null
+
+    private fun ownsSearchBox(box: EditText): Boolean = translatorShellByUs &&
+        nativeKEditRefF41?.get() === box && nativeKRefF41?.get()?.parent != null
+
+    private fun readNativeField(target: Any, name: String): Any? {
+        var cls: Class<*>? = target.javaClass
+        while (cls != null) {
+            val field = runCatching { cls.getDeclaredField(name) }.getOrNull()
+            if (field != null) { field.isAccessible = true; return field.get(target) }
+            cls = cls.superclass
+        }
+        throw NoSuchFieldException("${target.javaClass.name}.$name")
+    }
+
+    private fun singleton(cls: Class<*>): Any {
+        val field = cls.declaredFields.single {
+            java.lang.reflect.Modifier.isStatic(it.modifiers) && it.type == cls
+        }
+        field.isAccessible = true
+        return field.get(null) ?: error("Missing native singleton")
+    }
+
+    /** Verified against WeType 3.5.3; unsupported versions do not enter the search shell. */
+    private fun installNativeSubmitBridge(anchor: View): Boolean {
+        if (nativeSubmitInstalled) return true
+        return runCatching {
+            val version = anchor.context.packageManager.getPackageInfo("com.tencent.wetype", 0).versionName
+            check(version == "3.5.3")
+            val cl = hostClassLoader ?: error("Missing host loader")
+            val n = Class.forName("com.tencent.wetype.plugin.hld.model.N", false, cl)
+            val panelClass = Class.forName("com.tencent.wetype.plugin.hld.keyboard.t", false, cl)
+            val navigation = n.getDeclaredMethod("p3", panelClass, android.os.Bundle::class.java)
+            check(navigation.returnType == Void.TYPE && panelClass.isEnum)
+            val panel = panelClass.enumConstants?.single { (it as Enum<*>).name == "CustomPhraseAndClipboard" }
+                ?: error("Missing CustomPhraseAndClipboard panel")
+            val current = n.getDeclaredMethod("o0")
+            check(View::class.java.isAssignableFrom(current.returnType))
+            val candidate = n.getDeclaredMethod("x0")
+            check(View::class.java.isAssignableFrom(candidate.returnType))
+            val engine = Class.forName("com.tencent.wetype.plugin.hld.model.i0", false, cl)
+            val pending = engine.getDeclaredMethod("B2", java.lang.Boolean.TYPE)
+            val emit = engine.getDeclaredMethod("W1", String::class.java, java.lang.Boolean.TYPE, java.lang.Boolean.TYPE)
+            check(emit.returnType == Void.TYPE)
+            check(CharSequence::class.java.isAssignableFrom(pending.returnType))
+            val dispatcher = Class.forName("com.tencent.wetype.plugin.hld.key.d", false, cl)
+                .getDeclaredMethod("O", Integer.TYPE, Any::class.java)
+            val serviceClass = Class.forName("com.tencent.wetype.plugin.hld.WxHldService", false, cl)
+            val service = serviceClass.getDeclaredMethod("c")
+            val companion = serviceClass.getDeclaredField("G").apply { isAccessible = true }.get(null)
+                ?: error("Missing service companion")
+            val serviceGetter = companion.javaClass.getDeclaredMethod("e").apply { isAccessible = true }
+            check(dispatcher.returnType == Void.TYPE && service.returnType == Void.TYPE)
+            val q = Class.forName(NATIVE_HEIGHT_MGR_CLASS, false, cl)
+            check(q.getDeclaredMethod("T0", CharSequence::class.java).returnType == Void.TYPE)
+            check(q.getDeclaredMethod("T", java.lang.Boolean.TYPE).returnType == Void.TYPE)
+            nativeManager = singleton(n)
+            nativeEngine = singleton(engine)
+            nativeNavigation = navigation.apply { isAccessible = true }
+            nativeCurrentKeyboard = current.apply { isAccessible = true }
+            nativeCandidateView = candidate.apply { isAccessible = true }
+            nativePendingInput = pending.apply { isAccessible = true }
+            nativePanel = panel
+            nativeServiceCompanion = companion
+            nativeServiceGetter = serviceGetter
+            nativeActionListener = singleton(dispatcher.declaringClass)
+            nativeActionDispatcher = dispatcher
+            dispatcher.isAccessible = true
+            dispatcher.hookBefore { param ->
+                if (param.args.firstOrNull() != 2) return@hookBefore
+                val box = nativeKEditRefF41?.get() ?: return@hookBefore
+                if (!ownsSearchBox(box) || !box.hasFocus()) return@hookBefore
+                val liveService = nativeServiceGetter?.invoke(nativeServiceCompanion)
+                if (liveService == null) { param.result = null; return@hookBefore }
+                activeImeService = java.lang.ref.WeakReference(liveService)
+                if (submitSession.confirm() == null) { param.result = null; return@hookBefore }
+                submitDeadline = android.os.SystemClock.uptimeMillis() + 1000L
+                // Keep the original w(): it commits the engine's selected text asynchronously.
+            }
+            dispatcher.hookAfter { param ->
+                if (param.args.firstOrNull() == 2 &&
+                    submitSession.phase == ClipboardSearchSubmitSession.Phase.COMMITTING) {
+                    awaitSearchCommit(submitSession.id, "native-action")
+                }
+            }
+            emit.isAccessible = true
+            emit.hookBefore { param ->
+                if (param.thisObject === nativeEngine &&
+                    submitSession.phase == ClipboardSearchSubmitSession.Phase.COMMITTING &&
+                    nativeKEditRefF41?.get()?.let(::ownsSearchBox) == true) {
+                    // forceEmitPendingInput is asynchronous. A preceding finishComposingText is not its result.
+                    submitSession.requireNativeCommit(submitSession.id)
+                }
+            }
+            service.isAccessible = true
+            service.hookBefore { param ->
+                if (param.thisObject === activeImeService?.get() &&
+                    submitSession.phase == ClipboardSearchSubmitSession.Phase.COMMITTING &&
+                    nativeKEditRefF41?.get()?.let(::ownsSearchBox) == true) {
+                    // w() may call c() after commit; c() would translate/send to the host editor.
+                    param.result = null
+                }
+            }
+            nativeSubmitInstalled = true
+            true
+        }.getOrElse {
+            AndroidLog.e(TAG, "native search contract unavailable: ${it.message}")
+            false
+        }
+    }
+
+    /** Observe native commit completion, never turn ordinary text delivery into intention. */
+    private fun awaitSearchCommit(token: Long, source: String) {
+        if (!submitSession.at(token, ClipboardSearchSubmitSession.Phase.COMMITTING)) return
+        val box = nativeKEditRefF41?.get() ?: return
+        if (!ownsSearchBox(box)) { submitSession.fail(token); return }
+        if (android.os.SystemClock.uptimeMillis() >= submitDeadline) {
+            submitSession.fail(token)
+            AndroidLog.e(TAG, "search submit did not finish native commit before deadline")
+            return
+        }
+        box.postOnAnimation {
+            if (!submitSession.at(token, ClipboardSearchSubmitSession.Phase.COMMITTING) || !ownsSearchBox(box)) return@postOnAnimation
+            val noPending = runCatching {
+                (nativePendingInput?.invoke(nativeEngine, true) as? CharSequence)?.isEmpty() == true
+            }.getOrDefault(false)
+            val noComposing = android.view.inputmethod.BaseInputConnection.getComposingSpanStart(box.text) < 0
+            if (!submitSession.readyToSnapshot(token, noPending, noComposing)) {
+                awaitSearchCommit(token, source)
+                return@postOnAnimation
+            }
+            if (!submitSession.committed(token, box.text?.toString().orEmpty())) return@postOnAnimation
+            pendingKeyword = submitSession.keyword
+            overlayPending = false
+            val anchor = overlayParentRef?.get() ?: return@postOnAnimation
+            box.clearFocus()
+            // Q0 merely schedules exit. Keep isolation/restoration state until the card is detached.
+            driveTranslatorShell(anchor, false)
+            awaitSearchShellExit(token)
+        }
+    }
+
+    private fun currentImeRoot(): ViewGroup? = runCatching {
+        val candidate = nativeCandidateView?.invoke(nativeManager) as? View ?: return@runCatching null
+        if (!candidate.isAttachedToWindow) return@runCatching null
+        candidate.rootView as? ViewGroup
+    }.getOrNull()
+
+    private fun awaitSearchShellExit(token: Long) {
+        if (!submitSession.at(token, ClipboardSearchSubmitSession.Phase.EXITING)) return
+        val root = currentImeRoot() ?: run { submitSession.fail(token); return }
+        val mgr = searchManager ?: run { submitSession.fail(token); return }
+        val idle = runCatching { mgr.javaClass.getDeclaredMethod("t0").invoke(mgr) == false }.getOrDefault(false)
+        val detached = nativeKRefF41?.get()?.isAttachedToWindow == false || nativeKRefF41?.get()?.parent == null
+        if (submitSession.shellExited(token, idle, detached)) {
+            translatorShellByUs = false
+            releaseNativeSearchState()
+            pendingKeyword = submitSession.keyword
+            if (!openNativeClipboard()) { submitSession.fail(token); return }
+            observeSearchLanding(token)
+            return
+        }
+        if (android.os.SystemClock.uptimeMillis() >= submitDeadline) {
+            submitSession.fail(token)
+            AndroidLog.e(TAG, "search submit did not finish native shell exit before deadline")
+            return
+        }
+        root.postOnAnimation { awaitSearchShellExit(token) }
+    }
+
+    /** N.p3(enum, Bundle) is WxHldService.U1 switchScene=12's native navigation contract. */
+    private fun openNativeClipboard(): Boolean = runCatching {
+        val method = nativeNavigation ?: return@runCatching false
+        if (currentImeRoot() == null) return@runCatching false
+        method.invoke(nativeManager, nativePanel, android.os.Bundle().apply {
+            putInt("target_tab_index", TAB_CLIPBOARD)
+            putInt("key_from", 1)
+        })
+        true // dispatch only; observeSearchLanding establishes visible completion
+    }.getOrElse {
+        AndroidLog.e(TAG, "native clipboard dispatch failed: ${it.message}")
+        false
+    }
+
+    private fun observeSearchLanding(token: Long) {
+        if (!submitSession.at(token, ClipboardSearchSubmitSession.Phase.OPENING)) return
+        val root = currentImeRoot() ?: run { submitSession.fail(token); return }
+        if (submitSession.observe(token, nativeClipboardPage(root))) {
+            pendingKeyword = ""
+            applyKeywordDirect(submitSession.keyword)
+            overlayParentRef = null
+            return
+        }
+        if (android.os.SystemClock.uptimeMillis() >= submitDeadline) {
+            submitSession.fail(token)
+            AndroidLog.e(TAG, "search submit did not show clipboard results before deadline")
+            return
+        }
+        root.postOnAnimation { observeSearchLanding(token) }
+    }
+
+    private fun nativeClipboardPage(root: ViewGroup): ClipboardSearchSubmitSession.Page {
+        val absent = ClipboardSearchSubmitSession.Page(false, false, false, false, false)
+        return runCatching {
+            val host = nativeCurrentKeyboard?.invoke(nativeManager) as? View ?: return@runCatching absent
+            if (host.javaClass.name != S15_CLASS || host.rootView !== root) return@runCatching absent
+            // 3.5.3 binary fields: K=currentTabIndex, I=mTabIdClipboard, C=emptyClipboardView.
+            val tab = readNativeField(host, "K") as? Int
+            val clipboard = readNativeField(host, "I") as? Int
+            val ids = Class.forName(WETYPE_ID_CLASS, false, host.javaClass.classLoader)
+            val listId = ids.getField("t15_clipboard_list").getInt(null)
+            val list = host.findViewById<View>(listId)
+            val empty = readNativeField(host, "C") as? View
+            ClipboardSearchSubmitSession.Page(true, visiblyInsideWindow(host, root), tab != null && tab == clipboard,
+                list?.let { visiblyInsideWindow(it, root) } == true,
+                empty?.let { visiblyInsideWindow(it, root) } == true)
+        }.getOrDefault(absent)
+    }
+
+    private fun visiblyInsideWindow(view: View, root: ViewGroup): Boolean {
+        if (!view.isAttachedToWindow || !view.isShown || view.alpha <= 0f || view.width <= 0 || view.height <= 0) return false
+        val rect = android.graphics.Rect()
+        val window = android.graphics.Rect()
+        return view.getGlobalVisibleRect(rect) && root.getGlobalVisibleRect(window) && rect.intersect(window) && !rect.isEmpty
+    }
+
+    /** Snapshot before repurposing; restore the same native instance for later real translation. */
+    private fun captureNativeSearchState(parts: NativeKPartsF41): () -> Unit {
+        val box = parts.edit
+        val watchers = (readNativeField(box, "mListeners") as? List<*>)?.filterIsInstance<TextWatcher>().orEmpty()
+        val editor = readNativeField(box, "mEditor")
+        val content = editor?.let { readNativeField(it, "mInputContentType") }
+        val editorAction = content?.let { readNativeField(it, "onEditorActionListener") } as? android.widget.TextView.OnEditorActionListener
+        val listenerGetter = View::class.java.getDeclaredMethod("getListenerInfo").apply { isAccessible = true }
+        val boxListeners = listenerGetter.invoke(box)
+        val key = boxListeners?.let { readNativeField(it, "mOnKeyListener") } as? View.OnKeyListener
+        val exitListenerInfo = parts.exit?.let { listenerGetter.invoke(it) }
+        val exit = exitListenerInfo?.let { readNativeField(it, "mOnClickListener") } as? View.OnClickListener
+        val hint = box.hint
+        val mode = parts.modeTv.text
+        val dropdown = parts.dropdown
+        val getter = dropdown.javaClass.getDeclaredMethod("getOnItemClick").apply { isAccessible = true }
+        val click = getter.invoke(dropdown)
+        val setter = dropdown.javaClass.declaredMethods.single { it.name == "setOnItemClick" && it.parameterTypes.size == 1 }
+            .apply { isAccessible = true }
+        val adapter = resolveDropdownAdapterF41(dropdown) ?: error("Missing native language adapter")
+        val languageList = (readNativeField(adapter, "c") as List<*>).toList()
+        val bind = adapter.javaClass.getDeclaredMethod("k", List::class.java).apply { isAccessible = true }
+        return {
+            nativeKWatchersF41.remove(box)?.let { box.removeTextChangedListener(it) }
+            val current = (readNativeField(box, "mListeners") as? List<*>)?.filterIsInstance<TextWatcher>().orEmpty()
+            for (watcher in watchers) if (current.none { it === watcher }) box.addTextChangedListener(watcher)
+            hintLayoutListenersF41.remove(box)?.let { box.removeOnLayoutChangeListener(it) }
+            box.setOnEditorActionListener(editorAction)
+            box.setOnKeyListener(key)
+            box.hint = hint
+            parts.modeTv.text = mode
+            parts.exit?.setOnClickListener(exit)
+            setter.invoke(dropdown, click)
+            bind.invoke(adapter, languageList)
+            trackedBoxes.remove(box)
+            cachedConnections.remove(box)
+        }
+    }
+
+    private fun releaseNativeSearchState() {
+        val restore = nativeSearchRestore
+        nativeSearchRestore = null
+        nativeKRefF41 = null
+        nativeKEditRefF41 = null
+        nativeKModeTvRefF41 = null
+        searchManager = null
+        for ((view, state) in searchChipRestore) {
+            view.isEnabled = state.first
+            view.isClickable = state.second
+            view.alpha = state.third
+        }
+        searchChipRestore.clear()
+        runCatching { restore?.invoke() }.onFailure { AndroidLog.e(TAG, "native search restoration failed: ${it.message}") }
+    }
+
     private const val TAG = "WeTypeClipboardSearch"
     private const val S15_CLASS = "com.tencent.wetype.plugin.hld.keyboard.S15CustomPhraseAndClipboardKeyboard"
     private const val WETYPE_ID_CLASS = "com.tencent.wetype.plugin.hld.s"
@@ -219,6 +520,13 @@ internal object WeTypeClipboardSearchUi {
         Collections.newSetFromMap(WeakHashMap<View, Boolean>())
     private val hintLayoutListenersF41: MutableMap<EditText, View.OnLayoutChangeListener> =
         Collections.synchronizedMap(WeakHashMap<EditText, View.OnLayoutChangeListener>())
+    // C47隔离+回车直跳（只修用户反馈两项，其余双行卡/下拉/收起/零仿制/圆角B/J3/栏键不动）：
+    // 搜索实例隔离：保存/恢复原生watcher，并拦已验证的q.T0/T签名。
+    // 回车=sourceContentEditView EditorAction(SEARCH/DONE/GO/回车键)+OnKey双路接jumpBackToClipboardF41。
+    @Volatile
+    private var f41WatcherGuardHooked = false
+    @Volatile
+    private var f41TransGuardHooked = false
 
     /**
      * F5图标线（新缝基准）：centerY=图标cluster均值，halfH=簇内图标高均值/2（现算不写死，
@@ -268,15 +576,6 @@ internal object WeTypeClipboardSearchUi {
      */
     private val i0ArgStrongByHost: MutableMap<Any, Any> =
         Collections.synchronizedMap(LinkedHashMap<Any, Any>())
-    /**
-     * S5e-A4：N#k3 方法强引用 + 面板实参强引用（类名 -> 面板对象，上限 8 轮转；
-     * 实证 key 为 keyboard.t@CustomPhraseAndClipboard）。
-     */
-    @Volatile
-    private var k3MethodStrong: java.lang.reflect.Method? = null
-    private val k3PanelStrongRefs: MutableMap<String, Any> =
-        Collections.synchronizedMap(LinkedHashMap<String, Any>())
-
     /** 离页打字流：剪贴板点红钮 → overlayPending → 键盘页顶部长行 → 带词跳回。 */
     @Volatile
     private var overlayPending = false
@@ -338,7 +637,6 @@ internal object WeTypeClipboardSearchUi {
             hookKeyboardTeardown(classLoader)
             hookInsetsForStrip(classLoader)
             // S5e-A4：缓存 k3 剪贴板面板实参（正向导航渲染调用，同形回放用）。
-            hookK3PanelCache(classLoader)
             // F31：J3执行完后钳mCandidateView LP高（条挂载才写，未挂载不动）。
             hookCandidateWindowAfterJ3F31(classLoader)
         } catch (t: Throwable) {
@@ -350,38 +648,7 @@ internal object WeTypeClipboardSearchUi {
      * S5e-A4：hook model.N#k3 只缓存面板实参（强引用，上限 8 轮转）。
      * 实证用户点图标行调 k3(keyboard.t@CustomPhraseAndClipboard, Bundle{target=0})。
      */
-    private fun hookK3PanelCache(classLoader: ClassLoader) {
-        try {
-            val nClass = runCatching {
-                Class.forName("com.tencent.wetype.plugin.hld.model.N", false, classLoader)
-            }.getOrNull() ?: return
-            val k3 = nClass.declaredMethods.firstOrNull {
-                it.name == "k3" && it.parameterTypes.size == 2 &&
-                    it.parameterTypes[1] == android.os.Bundle::class.java
-            } ?: run {
-                AndroidLog.e(TAG, "k3(panel,Bundle) not found, panel replay disabled")
-                return
-            }
-            k3MethodStrong = k3
-            runCatching { k3.isAccessible = true }
-            k3.hookAfter { param ->
-                try {
-                    val panel = param.args.firstOrNull() ?: return@hookAfter
-                    synchronized(k3PanelStrongRefs) {
-                        if (k3PanelStrongRefs.size >= 8) {
-                            val oldest = k3PanelStrongRefs.keys.firstOrNull()
-                            if (oldest != null) k3PanelStrongRefs.remove(oldest)
-                        }
-                        k3PanelStrongRefs[panel.javaClass.name] = panel
-                    }
-                } catch (_: Throwable) {
-                }
-            }
-            AndroidLog.i(TAG, "hooked N#k3 for panel arg cache")
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "hook k3 panel cache failed: ${t.message}")
-        }
-    }
+
 
     /**
      * F31（接F30快照已合入未提交，在此基础上改，不reset）：Worker-R反编译定案（3.5.3设备版）
@@ -1674,13 +1941,14 @@ internal object WeTypeClipboardSearchUi {
                     method.isAccessible = true
                     method.hookReplace { param ->
                         try {
+                            activeImeService = java.lang.ref.WeakReference(param.thisObject)
                             val forceReal = param.args.firstOrNull() as? Boolean ?: false
                             // S5b-A5：路由保留供吃字（commitText 透传不动）；删由
                             // StripInputConnection wrapper 直删条框并消费（不依赖路由旁路）。
                             // 候选可见可点：forceReal=true 是宿主取真 IC 弹候选/选词通道，
                             // 条禁抢占（此前含 forceReal 一律回条 IC 会致候选不弹），
                             // 此路直接放行原生；仅 forceReal=false 且条聚焦可见才回条 IC。
-                            if (forceReal) {
+                            if (forceReal && submitSession.phase != ClipboardSearchSubmitSession.Phase.COMMITTING) {
                                 return@hookReplace ProceedWithOriginal
                             }
                             searchInputConnection()?.let {
@@ -1832,9 +2100,13 @@ internal object WeTypeClipboardSearchUi {
                                     box.post {
                                         try {
                                             // F41：原生k框（trackedBoxes含原生edit）走原生跳回；自绘框走旧容器路。
+                                            // C48：IC三路（performEditorAction/sendKeyEvent/finishComposing）经此必达editor链，
+                                            // jump链带editor记账（source透传，见jumpBackToClipboardF41）。
                                             if (nativeKEditRefF41?.get() === box) {
+                                                AndroidLog.i(TAG, "strip F41 editor action: jumping back " +
+                                                    "action=ic-route-native-k (IC双路必达)")
                                                 AndroidLog.i(TAG, "strip F41 enter route: jumping back (native k)")
-                                                jumpBackToClipboardF41()
+                                                jumpBackToClipboardF41("ic-route-native-k")
                                                 return@post
                                             }
                                             var node: View? = box
@@ -1847,8 +2119,10 @@ internal object WeTypeClipboardSearchUi {
                                             } else {
                                                 // F41兜底：容器失联但原生k在，仍走原生跳回（fail-closed不丢词）。
                                                 if (nativeKRefF41?.get()?.parent != null) {
+                                                    AndroidLog.i(TAG, "strip F41 editor action: jumping back " +
+                                                        "action=ic-route-fallback (IC兜底必达)")
                                                     AndroidLog.i(TAG, "strip F41 enter route fallback: native k jump")
-                                                    jumpBackToClipboardF41()
+                                                    jumpBackToClipboardF41("ic-route-fallback")
                                                 } else {
                                                     AndroidLog.e(TAG, "strip enter route: container not found")
                                                 }
@@ -1942,6 +2216,8 @@ internal object WeTypeClipboardSearchUi {
                     val box = boxRef.get()
                     if (box != null && isActive(box)) {
                         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                            AndroidLog.i(TAG, "strip F41 editor action: jumping back action=ic-enter-key " +
+                                "key=${event.keyCode} (sendKeyEvent双路必达editor链)")
                             AndroidLog.i(TAG, "strip enter key: jumping back via sendKeyEvent")
                             runCatching { onEnter?.invoke() }
                                 .onFailure { AndroidLog.e(TAG, "strip enter route failed: $it") }
@@ -1970,22 +2246,28 @@ internal object WeTypeClipboardSearchUi {
             return super.sendKeyEvent(event)
         }
 
-        /**
-         * FAIL③：编辑器动作（SEARCH/DONE/GO/回车）聚焦+可见下放行jump。
-         * 非激活态走 super（fail-closed）。
-         */
+        /** Only editor submission actions carry intention; text commits inherit pass-through. */
         override fun performEditorAction(actionCode: Int): Boolean {
-            try {
-                val box = boxRef.get()
-                if (box != null && isActive(box)) {
-                    AndroidLog.i(TAG, "strip editor action: jumping back via IC action=$actionCode")
-                    runCatching { onEnter?.invoke() }
-                    return true
-                }
-            } catch (t: Throwable) {
-                AndroidLog.e(TAG, "strip editor action IC failed: ${t.message}")
+            val box = boxRef.get()
+            val submit = actionCode in setOf(EditorInfo.IME_ACTION_SEARCH, EditorInfo.IME_ACTION_DONE,
+                EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEND)
+            if (submit && box != null && isActive(box)) {
+                onEnter?.invoke()
+                return true
             }
             return super.performEditorAction(actionCode)
+        }
+
+        // Delivery may finish an existing native confirmation, but never creates its intention.
+        override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+            val token = submitSession.id
+            val result = super.commitText(text, newCursorPosition)
+            val box = boxRef.get()
+            if (result && box != null && ownsSearchBox(box) &&
+                submitSession.at(token, ClipboardSearchSubmitSession.Phase.COMMITTING)) {
+                submitSession.nativeTextDelivered(token, box.text?.toString().orEmpty())
+            }
+            return result
         }
 
         /** 自包含激活态判定（与外层 searchInputConnection 同判据，不依赖外层接收者）。 */
@@ -2253,6 +2535,42 @@ internal object WeTypeClipboardSearchUi {
         if (Looper.myLooper() == Looper.getMainLooper()) action() else anchor.post { action() }
     }
 
+    private fun applyCircularShape(btn: View, size: Int = minOf(btn.width, btn.height)) {
+        try {
+            fun makeOval(d: android.graphics.drawable.Drawable?) {
+                if (d is android.graphics.drawable.GradientDrawable) {
+                    d.shape = android.graphics.drawable.GradientDrawable.OVAL
+                    d.cornerRadii = null
+                    if (size > 0) d.cornerRadius = size / 2f
+                } else if (d is android.graphics.drawable.LayerDrawable) {
+                    for (i in 0 until d.numberOfLayers) {
+                        makeOval(d.getDrawable(i))
+                    }
+                } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP &&
+                    d is android.graphics.drawable.RippleDrawable) {
+                    for (i in 0 until d.numberOfLayers) {
+                        makeOval(d.getDrawable(i))
+                    }
+                }
+            }
+            makeOval(btn.background)
+            btn.outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: android.graphics.Outline) {
+                    val s = minOf(v.width, v.height).takeIf { it > 0 } ?: size
+                    if (s > 0) {
+                        val l = (v.width - s).coerceAtLeast(0) / 2
+                        val t = (v.height - s).coerceAtLeast(0) / 2
+                        outline.setOval(l, t, l + s, t + s)
+                    } else {
+                        outline.setOval(0, 0, v.width, v.height)
+                    }
+                }
+            }
+            btn.clipToOutline = true
+        } catch (_: Throwable) {
+        }
+    }
+
     /**
      * 剪贴板页：只挂红钮，不挂任何行（不挤列表）。跳回带词则直达 S5 过滤。
      */
@@ -2313,14 +2631,17 @@ internal object WeTypeClipboardSearchUi {
                     } catch (t: Throwable) {
                         AndroidLog.e(TAG, "clone back button background failed: ${t.message}")
                     }
-                    val padSrc = ids.backBtnIvId?.let { page.findViewById<View>(it) } ?: backBtn
-                    setPadding(
-                        padSrc.paddingLeft, padSrc.paddingTop,
-                        padSrc.paddingRight, padSrc.paddingBottom
-                    )
+                    applyCircularShape(this)
+                    val initPad = (dpToPx(resources, 32f) * 0.15f).roundToInt()
+                    setPadding(initPad, initPad, initPad, initPad)
                     isClickable = true
                     isFocusable = true
                     setOnClickListener { onSearchButtonClick(root) }
+                }
+                ids.backBtnIvId?.let { ivId ->
+                    (page.findViewById<View>(ivId) as? ImageView)?.let { iv ->
+                        (iv.layoutParams as? android.widget.FrameLayout.LayoutParams)?.gravity = android.view.Gravity.CENTER
+                    }
                 }
                 val backIndex = bar.indexOfChild(backBtn)
                 bar.addView(button, if (backIndex >= 0) backIndex + 1 else 0)
@@ -2328,6 +2649,7 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.i(TAG, "search button mounted next to back_btn")
             }
             bar.findViewWithTag<View>(TAG_SEARCH_BUTTON)?.let { existing ->
+                applyCircularShape(existing)
                 alignSearchButton(existing, bar, backBtn, backBtnId)
             }
             root.findViewWithTag<View>(TAG_SEARCH_BUTTON)?.let { btn ->
@@ -2531,7 +2853,9 @@ internal object WeTypeClipboardSearchUi {
      *   下拉容器k内languageOptionsContainer（translatingwhilewriting.d extends RecyclerView）
      *   经b#k(List<m>)喂搜索项 + d#setOnItemClick覆盖为搜索切换（OCR无效果）。
      * - 下行：k内sourceContentEditView（ImeEditText，hint“输入要翻译的内容”）改hint“搜索剪贴板”，
-     *   加TextWatcher复用keywordListener过滤链（原生翻译watcher保留，翻译副作用随壳退账）。
+     *   加TextWatcher复用keywordListener过滤链（C47隔离：原生翻译watcher摘除+q/k翻译链守卫，
+     *   只走过滤不调翻译请求，fail-closed）。
+     * - 回车：EditorAction(SEARCH/DONE/GO/回车键)+OnKey双路接jumpBackToClipboardF41一点即跳（消费不留翻译页）。
      * - 右收起：k内exitButton（TextView“收起”）原生点击即p→I.n+r0+Q0(false)，
      *   我方不覆盖点击，仅经Q0(false)走原生S()/J0/V0/U0/C0/s()+N三连全还账。
      * - 卡高：k#getCurrentHeight()（q1.e0(d0+156)，k.java 1440-1442），窗高N#J3原生写，
@@ -2714,6 +3038,15 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "strip F41 reuse dropped: parts missing")
                 return false
             }
+            if (nativeSearchRestore == null) {
+                nativeSearchRestore = captureNativeSearchState(parts)
+                submitSession.open()
+            }
+            nativeKRefF41 = java.lang.ref.WeakReference(k)
+            nativeKEditRefF41 = java.lang.ref.WeakReference(parts.edit)
+            nativeKModeTvRefF41 = java.lang.ref.WeakReference(parts.modeTv)
+            overlayParentRef = java.lang.ref.WeakReference(decor)
+            searchManager = translatingMgr(k)
             // 圆角B：条圆角跟输入法背景走（WeTypeSettings.getCornerRadiusXposed，与WindowHooks同源）；
             // k内rootContainer（ImeRadiusConstraintLayout）setRadius(B)+setBorderWidth(1f)已在X()为f0(32)，
             // 此处仅当B可取才覆盖为B，不可取则保留原生（fail-closed不自绘，禁f0(32)/GradientDrawable/硬编码色）。
@@ -2776,7 +3109,7 @@ internal object WeTypeClipboardSearchUi {
             // 焦点：原生q0()已请求，仍显式补一次（只requestFocus，不碰布局/高度/栏/键）。
             runCatching {
                 parts.edit.post {
-                    runCatching { parts.edit.requestFocus() }
+                    runCatching { if (ownsSearchBox(parts.edit)) parts.edit.requestFocus() }
                     AndroidLog.i(TAG, "strip F41 focus: requested hasFocus=${parts.edit.hasFocus()} class=${parts.edit.javaClass.name}")
                 }
             }
@@ -2914,6 +3247,7 @@ internal object WeTypeClipboardSearchUi {
 
     /** C46：覆盖d#setOnItemClick为搜索切换（OCR守卫：id==1003即无效果；其余切模式+收下拉经k#s0反射）。 */
     private fun applyDropdownClickHandlerF41(parts: NativeKPartsF41, cl: ClassLoader): Boolean {
+        if (!ownsSearchBox(parts.edit)) return false
         return try {
             val dropdown = parts.dropdown
             val setCb = dropdown.javaClass.declaredMethods.firstOrNull {
@@ -2970,6 +3304,8 @@ internal object WeTypeClipboardSearchUi {
         try {
             kMethod.hookBefore { param ->
                 try {
+                    val active = nativeKRefF41?.get()?.let(::findNativeKPartsF41) ?: return@hookBefore
+                    if (param.thisObject !== resolveDropdownAdapterF41(active.dropdown)) return@hookBefore
                     if (feedingDropdownF41) return@hookBefore
                     if (!translatorShellByUs) return@hookBefore
                     if (nativeKRefF41?.get()?.parent == null) return@hookBefore
@@ -2990,8 +3326,10 @@ internal object WeTypeClipboardSearchUi {
                     AndroidLog.e(TAG, "strip F41 rebind intercept failed: $t")
                 }
             }
-            kMethod.hookAfter {
+            kMethod.hookAfter { param ->
                 try {
+                    val active = nativeKRefF41?.get()?.let(::findNativeKPartsF41) ?: return@hookAfter
+                    if (param.thisObject !== resolveDropdownAdapterF41(active.dropdown)) return@hookAfter
                     if (feedingDropdownF41) return@hookAfter
                     if (!translatorShellByUs) return@hookAfter
                     val cur = nativeKRefF41?.get() ?: return@hookAfter
@@ -3038,13 +3376,15 @@ internal object WeTypeClipboardSearchUi {
                 return
             }
             s0.isAccessible = true
-            s0.hookAfter {
+            s0.hookAfter { param ->
                 try {
                     if (!translatorShellByUs) return@hookAfter
                     val cur = nativeKRefF41?.get() ?: return@hookAfter
-                    if (cur.parent == null) return@hookAfter
+                    if (param.thisObject !== cur || cur.parent == null) return@hookAfter
+                    val token = submitSession.id
                     cur.postDelayed({
                         try {
+                            if (token != submitSession.id || nativeKRefF41?.get() !== cur || !translatorShellByUs) return@postDelayed
                             val fresh = runCatching { findNativeKPartsF41(cur) }.getOrNull() ?: return@postDelayed
                             val ad = runCatching { resolveDropdownAdapterF41(fresh.dropdown) }.getOrNull() ?: return@postDelayed
                             val km = ad.javaClass.declaredMethods.firstOrNull {
@@ -3101,6 +3441,7 @@ internal object WeTypeClipboardSearchUi {
 
     /** F41：OCR位灰色disabled（只碰OCR位视图：enabled=false+alpha0.4；找不到只diag不炸）。 */
     private fun grayOutOcrItemF41(parts: NativeKPartsF41) {
+        if (!ownsSearchBox(parts.edit)) return
         try {
             // 不直引RecyclerView类（模块无依赖，按ViewGroup子遍历，fail-closed）。
             val rv = parts.dropdown as? ViewGroup ?: return
@@ -3125,6 +3466,8 @@ internal object WeTypeClipboardSearchUi {
                 }.getOrNull() ?: continue
                 val t = runCatching { tv.text?.toString() }.getOrNull().orEmpty()
                 if (t == "OCR识别") {
+                    rememberSearchChip(child)
+                    rememberSearchChip(tv)
                     runCatching { child.isEnabled = false }
                     runCatching { tv.isEnabled = false }
                     runCatching { child.alpha = 0.4f }
@@ -3141,6 +3484,7 @@ internal object WeTypeClipboardSearchUi {
     }
 
     private fun grayOutOcrByTextF41(root: ViewGroup) {
+        if (nativeKEditRefF41?.get()?.let(::ownsSearchBox) != true) return
         try {
             val q: ArrayDeque<View> = ArrayDeque()
             q.add(root)
@@ -3149,9 +3493,11 @@ internal object WeTypeClipboardSearchUi {
                 val v = q.removeFirst()
                 hops++
                 if (v is android.widget.TextView && runCatching { v.text?.toString() }.getOrNull() == "OCR识别") {
+                    rememberSearchChip(v)
                     runCatching { v.isEnabled = false }
                     runCatching { v.alpha = 0.4f }
                     (v.parent as? View)?.let {
+                        rememberSearchChip(it)
                         runCatching { it.isEnabled = false }
                         runCatching { it.alpha = 0.4f }
                     }
@@ -3169,10 +3515,11 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** F41：输入行接线（只改hint+加watcher复用过滤链；字号/肤色/padding/光标/行高一律原生不动）。 */
+    /** Reuse native input styling; text changes update filtering but never create submission intent. */
     private fun wireNativeInputF41(parts: NativeKPartsF41): Boolean {
         return try {
             val box = parts.edit
+            val token = submitSession.id
             // C46：hint稳定搜索剪贴板（只改文案）：直设+布局监听重申+延时重申+setHint拦，原生蓝占位竞态即压回。
             runCatching { applySearchHintF41(box) }
             runCatching { ensureHintStableF41(box) }
@@ -3185,24 +3532,10 @@ internal object WeTypeClipboardSearchUi {
                         override fun afterTextChanged(s: Editable?) {
                             try {
                                 val raw = s?.toString().orEmpty()
-                                // 换行键兜底：回车即跳回剪贴板（与自绘条同语义）。
-                                if (raw.contains('\n') || raw.contains('\r')) {
-                                    val clean = raw.replace("\n", "").replace("\r", "")
-                                    box.post {
-                                        try {
-                                            box.setText(clean)
-                                            box.setSelection(clean.length.coerceAtMost(box.text?.length ?: 0))
-                                            AndroidLog.i(TAG, "strip F41 newline-as-enter: jumping back")
-                                            jumpBackToClipboardF41()
-                                        } catch (t: Throwable) {
-                                            AndroidLog.e(TAG, "strip F41 newline jump failed: ${t.message}")
-                                        }
-                                    }
-                                    pendingKeyword = clean
-                                    keywordListenerImpl?.invoke(clean)
-                                    updateClearVisibility(box)
-                                    return
-                                }
+                                if (!ownsSearchBox(box)) return
+                                submitSession.edit(raw)
+                                if (submitSession.phase != ClipboardSearchSubmitSession.Phase.EDITING &&
+                                    submitSession.phase != ClipboardSearchSubmitSession.Phase.COMMITTING) return
                                 pendingKeyword = raw
                                 keywordListenerImpl?.invoke(pendingKeyword)
                             } catch (t: Throwable) {
@@ -3213,47 +3546,32 @@ internal object WeTypeClipboardSearchUi {
                     }
                     box.addTextChangedListener(w)
                     nativeKWatchersF41[box] = w
+                    // C47隔离：摘原生翻译watcher只留我方（只走keywordListener过滤，不调翻译请求）。
+                    runCatching { detachNativeTranslationWatchersF41(box, w) }
                 }
             }
-            // 回车/✓跳回：EditorAction+OnKey双路（聚焦+可见双门卫，与自绘条同判据）。
-            runCatching {
-                box.setOnEditorActionListener { _, _, _ ->
-                    try {
-                        AndroidLog.i(TAG, "strip F41 editor action: jumping back")
-                        jumpBackToClipboardF41()
-                    } catch (t: Throwable) {
-                        AndroidLog.e(TAG, "strip F41 search action failed: ${t.message}")
+            // C47隔离守卫（全局一次，fail-closed）：后加原生watcher拦+q/k翻译链守卫。
+            runCatching { ensureWatcherGuardF41() }
+            ensureTranslationNetGuardF41(box)
+            // C47回车直跳：EditorAction(SEARCH/DONE/GO/回车键)+OnKey双路接jumpBackToClipboardF41，
+            // 消费返回true不停留翻译页；300/800ms重申防原生后设覆盖（只改监听，不碰hint/布局）。
+            runCatching { applyJumpHandlersF41(box, "wire") }
+            box.postDelayed({
+                try {
+                    if (submitSession.id == token && translatorShellByUs && nativeKEditRefF41?.get() === box && box.parent != null) {
+                        applyJumpHandlersF41(box, "reassert300")
                     }
-                    true
+                } catch (_: Throwable) {
                 }
-            }
-            runCatching {
-                box.setOnKeyListener { _, keyCode, event ->
-                    try {
-                        if ((keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
-                                keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) &&
-                            event.action == android.view.KeyEvent.ACTION_DOWN
-                        ) {
-                            if (box.visibility == View.VISIBLE && box.hasFocus() && box.parent != null) {
-                                var chainOk = true
-                                var p = box.parent
-                                while (p is View) {
-                                    if ((p as View).visibility != View.VISIBLE) { chainOk = false; break }
-                                    p = (p as View).parent
-                                }
-                                if (chainOk) {
-                                    AndroidLog.i(TAG, "strip F41 enter key: jumping back via onKey")
-                                    jumpBackToClipboardF41()
-                                    true
-                                } else false
-                            } else false
-                        } else false
-                    } catch (t: Throwable) {
-                        AndroidLog.e(TAG, "strip F41 onKey enter failed: ${t.message}")
-                        false
+            }, 300)
+            box.postDelayed({
+                try {
+                    if (submitSession.id == token && translatorShellByUs && nativeKEditRefF41?.get() === box && box.parent != null) {
+                        applyJumpHandlersF41(box, "reassert800")
                     }
+                } catch (_: Throwable) {
                 }
-            }
+            }, 800)
             // 清除按钮：原生翻译条无X，不自建X（禁系统图标兜底）；清空走框内删字+clearSearch语义由过滤链空词恢复。
             AndroidLog.i(TAG, "strip F41 input: wired hint=搜索剪贴板 (原生ImeEditText+skin.w保留，输入即过滤复用链)")
             true
@@ -3263,12 +3581,125 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
+    /** Editor/hardware enter paths share the native action session and are idempotent. */
+    private fun applyJumpHandlersF41(box: EditText, reason: String) {
+        if (!ownsSearchBox(box)) return
+        box.setOnEditorActionListener { _, action, event ->
+            val enter = event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                event?.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+            val submit = action in setOf(EditorInfo.IME_ACTION_SEARCH, EditorInfo.IME_ACTION_DONE,
+                EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEND) || enter
+            if (!submit || !ownsSearchBox(box)) false else {
+                if (event == null || event.action == android.view.KeyEvent.ACTION_DOWN)
+                    jumpBackToClipboardF41("editor-$action")
+                true
+            }
+        }
+        box.setOnKeyListener { _, key, event ->
+            if ((key == android.view.KeyEvent.KEYCODE_ENTER || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) && ownsSearchBox(box)) {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN) jumpBackToClipboardF41("enter-key")
+                true
+            } else false
+        }
+    }
+
+    /** C47隔离：摘原生翻译watcher（只读快照+官方remove，禁动我方watcher；失败fail-closed只记日志）。 */
+    private fun detachNativeTranslationWatchersF41(box: EditText, keep: TextWatcher): Int {
+        return try {
+            var c: Class<*>? = box.javaClass
+            var f: java.lang.reflect.Field? = null
+            while (c != null && c != Any::class.java) {
+                f = runCatching { c.getDeclaredField("mListeners") }.getOrNull()
+                if (f != null) break
+                c = c.superclass
+            }
+            if (f == null) {
+                AndroidLog.e(TAG, "strip F41 isolate: SKIP mListeners missing (fail-closed)")
+                return 0
+            }
+            f.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val list = f.get(box) as? ArrayList<TextWatcher>
+            if (list == null) {
+                AndroidLog.e(TAG, "strip F41 isolate: SKIP mListeners null (fail-closed)")
+                return 0
+            }
+            val snapshot = ArrayList(list)
+            var removed = 0
+            for (w in snapshot) {
+                if (w === keep || !w.javaClass.name.startsWith("$NATIVE_TOPVIEW_CLASS$")) continue
+                box.removeTextChangedListener(w)
+                removed++
+            }
+            AndroidLog.i(TAG, "strip F41 isolate: detached $removed native watcher(s), " +
+                "kept search watcher (只走keywordListener过滤，不调翻译请求)")
+            removed
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 isolate detach failed: $t")
+            0
+        }
+    }
+
+    /** C47隔离：拦后加原生watcher（全局一次；仅我方框+搜索态，非我方一律放行；fail-closed）。 */
+    private fun ensureWatcherGuardF41() {
+        if (f41WatcherGuardHooked) return
+        f41WatcherGuardHooked = true
+        try {
+            val add = android.widget.TextView::class.java.declaredMethods.firstOrNull {
+                it.name == "addTextChangedListener" && it.parameterTypes.size == 1 &&
+                    TextWatcher::class.java.isAssignableFrom(it.parameterTypes[0])
+            } ?: run {
+                f41WatcherGuardHooked = false
+                return
+            }
+            add.isAccessible = true
+            add.hookBefore { param ->
+                try {
+                    val tv = param.thisObject as? EditText ?: return@hookBefore
+                    if (nativeKEditRefF41?.get() !== tv) return@hookBefore
+                    if (!translatorShellByUs) return@hookBefore
+                    val incoming = param.args.firstOrNull() as? TextWatcher ?: return@hookBefore
+                    val ours = synchronized(nativeKWatchersF41) { nativeKWatchersF41[tv] }
+                    if (incoming === ours || !incoming.javaClass.name.startsWith("$NATIVE_TOPVIEW_CLASS$")) return@hookBefore
+                    param.result = null
+                    AndroidLog.i(TAG, "strip F41 isolate: suppressed native watcher add in searchMode " +
+                        "(fail-closed，只留搜索watcher)")
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 watcher guard failed: $t")
+                }
+            }
+            AndroidLog.i(TAG, "strip F41 isolate: watcher guard armed (addTextChangedListener拦)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 watcher guard arm failed: $t")
+            f41WatcherGuardHooked = false
+        }
+    }
+
+    /** 3.5.3 T0 schedules translation; T commits translation. Layout and ordinary translation stay native. */
+    private fun ensureTranslationNetGuardF41(anchor: View) {
+        if (f41TransGuardHooked) return
+        val mgr = translatingMgr(anchor) ?: return
+        val source = mgr.javaClass.getDeclaredMethod("T0", CharSequence::class.java)
+        val commit = mgr.javaClass.getDeclaredMethod("T", java.lang.Boolean.TYPE)
+        for (method in listOf(source, commit)) {
+            check(method.returnType == Void.TYPE)
+            method.isAccessible = true
+            method.hookBefore { param ->
+                if (param.thisObject === searchManager && nativeKEditRefF41?.get()?.let(::ownsSearchBox) == true) {
+                    param.result = null
+                }
+            }
+        }
+        f41TransGuardHooked = true
+    }
+
     /** C46：直设hint搜索剪贴板（只改文案，不碰字号/肤色/padding/光标/行高）。 */
     private fun applySearchHintF41(box: EditText) {
+        if (!ownsSearchBox(box)) return
         try {
             if (box.hint?.toString() == SEARCH_HINT_F41) return
             if (Looper.myLooper() == Looper.getMainLooper()) box.hint = SEARCH_HINT_F41
-            else box.post { runCatching { if (box.hint?.toString() != SEARCH_HINT_F41) box.hint = SEARCH_HINT_F41 } }
+            else box.post { runCatching { if (ownsSearchBox(box) && box.hint?.toString() != SEARCH_HINT_F41) box.hint = SEARCH_HINT_F41 } }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F41 hint apply failed: $t")
         }
@@ -3294,8 +3725,9 @@ internal object WeTypeClipboardSearchUi {
                 }
             }
             // 延时双补（原生setHint后到时序）：300/800ms各一次，只改文案。
-            box.postDelayed({ runCatching { applySearchHintF41(box) } }, 300)
-            box.postDelayed({ runCatching { applySearchHintF41(box) } }, 800)
+            val token = submitSession.id
+            box.postDelayed({ if (submitSession.id == token) applySearchHintF41(box) }, 300)
+            box.postDelayed({ if (submitSession.id == token) applySearchHintF41(box) }, 800)
             ensureHintHookF41()
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F41 hint stable failed: $t")
@@ -3355,175 +3787,53 @@ internal object WeTypeClipboardSearchUi {
 
     /** C46：直点收起可观测（exit包装：原生点击保留+finally补collapse记账；取不到listener只diag）。 */
     private fun wireNativeExitF41(parts: NativeKPartsF41): Boolean {
-        return try {
-            val exit = parts.exit ?: run {
-                AndroidLog.i(TAG, "strip F41 exit: native exit missing, collapse via Q0 hook only (diag)")
-                return true
-            }
-            if (!wrappedExitViewsF41.add(exit)) return true
-            val orig = runCatching {
-                val m = View::class.java.getDeclaredMethod("getListenerInfo")
-                m.isAccessible = true
-                val info = m.invoke(exit) ?: return@runCatching null
-                val f = info.javaClass.getDeclaredField("mOnClickListener")
-                f.isAccessible = true
-                f.get(info) as? View.OnClickListener
-            }.getOrNull()
-            exit.setOnClickListener { v ->
-                try {
-                    runCatching { orig?.onClick(v) }
-                    // 原生listener为空（挂载时序早）则原生通路未走，补一次原生收起语义由collapse承接。
-                } finally {
-                    runCatching { collapseStripF41() }
-                }
-            }
-            // 原生后设监听会覆盖我方包装，300ms后若被覆盖则重包一次（只包一次，不抢时序）。
-            exit.postDelayed({
-                try {
-                    val cur = runCatching {
-                        val m = View::class.java.getDeclaredMethod("getListenerInfo")
-                        m.isAccessible = true
-                        val info = m.invoke(exit) ?: return@postDelayed
-                        val f = info.javaClass.getDeclaredField("mOnClickListener")
-                        f.isAccessible = true
-                        f.get(info) as? View.OnClickListener
-                    }.getOrNull()
-                    // 若当前监听已不是我方包装（被原生后设覆盖），则再包一层。
-                    if (cur != null && nativeKRefF41?.get()?.parent != null) {
-                        val tag = runCatching { exit.getTag("f41_exit_wrapped".hashCode()) }.getOrNull()
-                        if (tag == null) {
-                            val inner = cur
-                            exit.setOnClickListener { v ->
-                                try {
-                                    runCatching { inner.onClick(v) }
-                                } finally {
-                                    runCatching { collapseStripF41() }
-                                }
-                            }
-                            runCatching { exit.setTag("f41_exit_wrapped".hashCode(), true) }
-                            AndroidLog.i(TAG, "strip F41 exit: rewrapped after native override")
-                        }
-                    }
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "strip F41 exit rewrap failed: $t")
-                }
-            }, 300)
-            AndroidLog.i(TAG, "strip F41 exit: wrapped (直点收起接collapse记账，原生点击保留)")
-            true
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "strip F41 exit wire failed: $t")
-            true
-        }
+        val exit = parts.exit ?: return false
+        exit.setOnClickListener { if (ownsSearchBox(parts.edit)) collapseStripF41() }
+        return true
     }
 
     /** C46：Q0(false)直收补记（全局一次）：直点原生收起走原生通路时补F41 collapsed记账，不重复Q0。 */
     private fun ensureCollapseHookF41(anchor: View) {
         if (f41CollapseHooked) return
-        f41CollapseHooked = true
-        try {
-            val mgr = runCatching { translatingMgr(anchor) }.getOrNull() ?: run {
-                f41CollapseHooked = false
-                return
-            }
-            val q0 = mgr.javaClass.declaredMethods.firstOrNull {
-                it.name == "Q0" && it.parameterTypes.size == 6 && java.lang.reflect.Modifier.isStatic(it.modifiers)
-            } ?: run {
-                f41CollapseHooked = false
-                return
-            }
-            q0.isAccessible = true
-            q0.hookAfter { param ->
-                try {
-                    val enter = param.args.getOrNull(1) as? Boolean ?: return@hookAfter
-                    if (enter) return@hookAfter
-                    if (inCollapseF41) return@hookAfter
-                    if (!translatorShellByUs) return@hookAfter
-                    // 我方壳被原生直收（收起键/系统收起）：k已摘或将摘，补记账不清Q0（原生已收）。
-                    mainHandler.post {
-                        try {
-                            if (!translatorShellByUs) return@post
-                            if (inCollapseF41) return@post
-                            pendingKeyword = ""
-                            overlayPending = false
-                            overlayParentRef = null
-                            nativeKRefF41 = null
-                            nativeKEditRefF41 = null
-                            nativeKModeTvRefF41 = null
-                            runCatching { clearSearch() }
-                            AndroidLog.i(TAG, "strip F41 collapsed (原生直收Q0补记 S/J0/V0/U0/C0/s 全还账)")
-                        } catch (t: Throwable) {
-                            AndroidLog.e(TAG, "strip F41 direct collapse note failed: $t")
-                        }
-                    }
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "strip F41 collapse hook failed: $t")
-                }
-            }
-            AndroidLog.i(TAG, "strip F41 collapse: hook armed (Q0直收补记)")
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "strip F41 collapse hook arm failed: $t")
-            f41CollapseHooked = false
+        val mgr = translatingMgr(anchor) ?: return
+        val q0 = mgr.javaClass.declaredMethods.single {
+            it.name == "Q0" && it.parameterTypes.size == 6 && java.lang.reflect.Modifier.isStatic(it.modifiers)
         }
+        q0.isAccessible = true
+        q0.hookAfter { param ->
+            if (param.args.getOrNull(0) !== searchManager || param.args.getOrNull(1) != false) return@hookAfter
+            if (submitSession.phase != ClipboardSearchSubmitSession.Phase.EDITING) return@hookAfter
+            val token = submitSession.id
+            mainHandler.post {
+                if (submitSession.at(token, ClipboardSearchSubmitSession.Phase.EDITING)) collapseStripF41()
+            }
+        }
+        f41CollapseHooked = true
     }
 
-    /** F41：跳回剪贴板（原生k版）：存词→Q0(false)原生收起全还账→复用现有编程式+图标行跳回链。 */
-    private fun jumpBackToClipboardF41() {
-        try {
-            val edit = nativeKEditRefF41?.get()
-            pendingKeyword = runCatching { edit?.text?.toString().orEmpty() }.getOrNull().orEmpty()
-            overlayPending = false
-            val decor = overlayParentRef?.get()
-            // 原生收起：Q0(false)走S()/J0/V0/U0/C0/s()+N三连全还账（collapseStripF41同出口）。
-            if (decor != null) {
-                runCatching { exitTranslatorShell(decor) }
-                mainHandler.postDelayed({ runCatching { restoreToolbarState(decor, "jumpF41", 0) } }, 120)
-                AndroidLog.i(TAG, "strip F41 removed for jump, keyword len=${pendingKeyword.length}")
-                decor.post {
-                    try {
-                        var ok = jumpBackProgrammatically(decor)
-                        if (!ok) ok = jumpBackViaToolbarIcon(decor)
-                        AndroidLog.i(TAG, "strip F41 jumping back to clipboard ok=$ok keyword len=${pendingKeyword.length}")
-                    } catch (t: Throwable) {
-                        AndroidLog.e(TAG, "strip F41 jump dispatch failed: ${t.message}")
-                    }
-                }
-            } else {
-                // decor失联仍尝试编程式跳回（fail-closed不炸）。
-                AndroidLog.e(TAG, "strip F41 jump: decor missing, keyword kept len=${pendingKeyword.length}")
-            }
-            nativeKRefF41 = null
-            nativeKEditRefF41 = null
-            nativeKModeTvRefF41 = null
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "strip F41 jump failed: ${t.message}")
-        }
+    /** Explicit editor/key action only. Native composing confirmation starts at key.d.O(code=2). */
+    private fun jumpBackToClipboardF41(source: String = "editor") {
+        val box = nativeKEditRefF41?.get() ?: return
+        if (!ownsSearchBox(box) || submitSession.phase != ClipboardSearchSubmitSession.Phase.EDITING) return
+        // All explicit submit paths use the same native action handler, including native composing commit.
+        runCatching { nativeActionDispatcher?.invoke(nativeActionListener, 2, null) }
+            .onFailure { AndroidLog.e(TAG, "search action dispatch failed ($source): ${it.message}") }
     }
 
     /** F41：收起（复用原生收起）：Q0(false)走原生S()/J0/V0/U0/C0/s()还账，不自拆k。 */
     private fun collapseStripF41() {
-        // C46：直点收起与Q0补记同口径，inCollapse防Q0 hook二次记账；只改记账不碰布局。
         if (inCollapseF41) return
+        inCollapseF41 = true
         try {
-            inCollapseF41 = true
-            pendingKeyword = ""
+            val decor = overlayParentRef?.get()
+            submitSession.cancel()
             overlayPending = false
-            val parent = overlayParentRef?.get()
+            pendingKeyword = ""
+            releaseNativeSearchState()
+            if (decor != null) exitTranslatorShell(decor)
             overlayParentRef = null
-            nativeKRefF41 = null
-            nativeKEditRefF41 = null
-            nativeKModeTvRefF41 = null
-            if (parent != null) {
-                // 原生k由S()摘除，我方不手动removeView（禁抢原生拆壳时序）；仅Q0(false)+统一还账出口。
-                exitTranslatorShell(parent)
-                mainHandler.postDelayed({ runCatching { restoreToolbarState(parent, "collapseF41", 0) } }, 120)
-            }
-            clearSearch()
-            AndroidLog.i(TAG, "strip F41 collapsed (原生收起 S/J0/V0/U0/C0/s 全还账)")
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "strip F41 collapse failed: ${t.message}")
-        } finally {
-            inCollapseF41 = false
-        }
+            keywordListenerImpl?.invoke("")
+        } finally { inCollapseF41 = false }
     }
 
     /**
@@ -3534,6 +3844,10 @@ internal object WeTypeClipboardSearchUi {
      */
     private fun onSearchButtonClick(root: ViewGroup) {
         try {
+            if (!installNativeSubmitBridge(root)) {
+                AndroidLog.e(TAG, "search unavailable: native submit contract not verified for this version")
+                return
+            }
             AndroidLog.i(TAG, "search button CLICKED")
             val decor = (root.rootView as? ViewGroup) ?: root
             val cl = hostClassLoader
@@ -3590,6 +3904,8 @@ internal object WeTypeClipboardSearchUi {
                     if (!repurposeNativeKForSearchF41(decor, k)) {
                         AndroidLog.e(TAG, "strip F41 reuse failed, strip dropped (fail-closed)")
                         overlayPending = false
+                        releaseNativeSearchState()
+                        submitSession.cancel()
                         exitTranslatorShell(decor)
                         return
                     }
@@ -3622,20 +3938,11 @@ internal object WeTypeClipboardSearchUi {
     /**
      * S7：剪贴板列表仍可见 = 切页未完成（或 N.O2 没切过去），此时不挂条。
      * id 走宿主 s 类现取，判据只读可见性，不碰任何视图。
+     * G6落点（只修落点判据，其余隔离/双行卡/收起/零仿制/圆角B/J3/栏键不动）：
+     * 真落点须VISIBLE/isShown+宽高屏位有效（宽高>0+屏位y>0），键盘页（工具栏+QWERTY但列表隐/零尺寸）
+     * 不再报可见；fail-closed，禁仿制兜底（禁GradientDrawable/硬编码色/系统图标/f0(32)）。
      */
-    private fun isClipboardPageShowing(decor: ViewGroup): Boolean {
-        return try {
-            val cl = hostClassLoader ?: return false
-            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull()
-                ?: return false
-            val id = runCatching { sCls.getField("t15_clipboard_list").getInt(null) }.getOrNull()
-                ?: return false
-            val list = decor.findViewById<View>(id) ?: return false
-            list.visibility == View.VISIBLE && list.isShown
-        } catch (_: Throwable) {
-            false
-        }
-    }
+    private fun isClipboardPageShowing(decor: ViewGroup): Boolean = nativeClipboardPage(decor).visibleResult
 
     /** 退翻译壳（仅我方进入时）：exit(false) + k记账清账 + 工具栏旧负位移全还 + 条位移全还 + F17夹层全还 + F18 LCA全还 + F19相交全还 + F20垫全还 + F21稳态全还 + F23定高全还 + F24 kids/N对照全还 + F25过期块全还 + F26残留[4]全还 + F27缝试探全还 + F28跳过对照全还 + F32栏位键盘位全还，还账恢复普通布局。 */
     private fun exitTranslatorShell(anchor: View) {
@@ -12101,8 +12408,20 @@ internal object WeTypeClipboardSearchUi {
                 fCls = runCatching { Class.forName(NATIVE_FLOAT_CLASS, false, cl) }.getOrNull()
                 if (fCls != null) break
             }
-            val fClass = fCls ?: run {
-                AndroidLog.e(TAG, "float refresh: float f missing")
+            // C50根因③（只补float缺分支诊断+直达fallback，其余N/高度/栏不动，fail-closed）：
+            // C50同期float f missing(E)伴随k3 ok但恒落键盘页；补reason+loader数+anchor类，
+            // 并经loadHostClass再试一次直达（多dex loader链），仍缺则fail-closed，N+requestLayout照走不拦面板切换。
+            var fClassTmp: Class<*>? = fCls
+            if (fClassTmp == null) {
+                fClassTmp = runCatching { loadHostClass(anchor, NATIVE_FLOAT_CLASS) }.getOrNull()
+                if (fClassTmp != null) {
+                    AndroidLog.i(TAG, "float refresh: f via loadHostClass fallback reason=$reason")
+                }
+            }
+            val fClass = fClassTmp ?: run {
+                AndroidLog.e(TAG, "float refresh: float f missing reason=$reason " +
+                    "loaders=${loaders.size} anchor=${anchor.javaClass.name} " +
+                    "(fail-closed, N+requestLayout照走不拦面板切换)")
                 return
             }
             val inst = fClass.declaredFields
@@ -12538,12 +12857,107 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
+     * C48工具栏恢复（本单三点之三）：jump/收起后工具栏在位。
+     * custom/logo/logoC VISIBLE+dy0+isShown双真+requestLayout/N重刷（只改显隐/位移/重刷，
+     * 不碰肤色/字号/图标/圆角B/J3/布局边距；取不到fail-closed不动；禁仿制禁GradientDrawable/硬编码色/系统图标/f0(32)）。
+     * 搜索态（translatorShellByUs=true，翻译藏栏为原生行为）不强制显栏，由调用方经translatorShellByUs门控；
+     * 本函数仅在还账态（!translatorShellByUs）执行，搜索态调用即SKIP diag。
+     * 只撤销藏栏（VISIBLE/dy0/祖先显），不新施位移；N重刷由调用方统一出口执行。
+     */
+    private fun restoreToolbarVisibleForJumpF48(decor: ViewGroup, reason: String): Boolean {
+        return try {
+            if (translatorShellByUs) {
+                AndroidLog.i(TAG, "strip F48 toolbar restore [$reason]: SKIP searchMode (translation native wins, diag only)")
+                return false
+            }
+            val custom = runCatching { resolveCustomToolbarViewF39(decor) }.getOrNull()
+            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
+            val logoC = runCatching { resolveLogoContainerViewF39(decor) }.getOrNull()
+            val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
+            if (custom == null && logo == null && logoC == null && bar == null) {
+                AndroidLog.e(TAG, "strip F48 toolbar restore [$reason]: SKIP all-missing (fail-closed)")
+                return false
+            }
+            var changed = false
+            val parts = ArrayList<String>()
+            fun one(nm: String, v: View?) {
+                if (v == null) {
+                    parts.add("$nm:null")
+                    return
+                }
+                if (v.parent == null) {
+                    parts.add("$nm:detached")
+                    return
+                }
+                val vis = v.visibility
+                val visStr = when (vis) { View.VISIBLE -> "V"; View.GONE -> "G"; View.INVISIBLE -> "I"; else -> "$vis" }
+                val dy = runCatching { v.translationY }.getOrDefault(0f)
+                if (vis != View.VISIBLE) {
+                    runCatching { v.visibility = View.VISIBLE }
+                    runCatching { v.requestLayout() }
+                    (v.parent as? ViewGroup)?.let { runCatching { it.requestLayout() } }
+                    changed = true
+                }
+                if (kotlin.math.abs(runCatching { v.translationY }.getOrDefault(dy)) > 1f) {
+                    runCatching { v.translationY = 0f }
+                    runCatching { v.requestLayout() }
+                    (v.parent as? ViewGroup)?.let { runCatching { it.requestLayout() } }
+                    changed = true
+                }
+                if (v.visibility == View.VISIBLE && !v.isShown) {
+                    val ancN = runCatching { ensureAncestorsVisibleF40(v, decor) }.getOrDefault(0)
+                    if (ancN > 0) {
+                        runCatching { v.requestLayout() }
+                        changed = true
+                    }
+                    parts.add("$nm:ancestors+$ancN")
+                }
+                val loc = IntArray(2)
+                runCatching { v.getLocationOnScreen(loc) }
+                val afterVis = v.visibility
+                val afterStr = when (afterVis) { View.VISIBLE -> "V"; View.GONE -> "G"; View.INVISIBLE -> "I"; else -> "$afterVis" }
+                parts.add("$nm:$visStr->$afterStr(isShown=${v.isShown} dy=${dy.toInt()}->${v.translationY.toInt()} y=${loc[1]} h=${v.height})")
+            }
+            one("customToolbarRv", custom)
+            one("logo_iv", logo)
+            one("logoContainerRl", logoC)
+            if (bar != null && bar !== custom && bar !== logo && bar !== logoC) one("bar", bar)
+            val viewLine = runCatching { scanSquareIconLine(decor, logo) }.getOrNull()
+            val iconN = viewLine?.n ?: -1
+            val iconTop = viewLine?.top?.toInt() ?: -1
+            val allVis = listOf(custom, logo, logoC).filterNotNull().all { it.visibility == View.VISIBLE && it.isShown } &&
+                (bar == null || (bar.visibility == View.VISIBLE && bar.isShown))
+            val allDy0 = listOf(custom, logo, logoC, bar).filterNotNull().all {
+                kotlin.math.abs(runCatching { it.translationY }.getOrDefault(0f)) <= 1f
+            }
+            val pass = allVis && allDy0 && iconN >= 5
+            if (pass) {
+                AndroidLog.i(TAG, "strip F48 toolbar restore [$reason]: PASS visOk=true(VISIBLE+isShown双真) dy0=true " +
+                    "icon n=$iconN(>=5) top=$iconTop changed=$changed " + parts.joinToString(" | ") +
+                    " (jump后工具栏在位+N重刷)")
+            } else {
+                AndroidLog.e(TAG, "strip F48 toolbar restore [$reason]: FAIL visOk=$allVis(VISIBLE+isShown双真) " +
+                    "dy0=$allDy0 icon n=$iconN(需>=5) top=$iconTop changed=$changed " + parts.joinToString(" | ") +
+                    " (fail-closed，不仿制)")
+            }
+            pass
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F48 toolbar restore failed [$reason]: $t")
+            false
+        }
+    }
+
+    /**
      * FAIL②：工具栏还账统一出口（collapse/jumpBack/拆键盘三路必调）。
      * restoreLogoTranslation+restoreClippedChain+publish0+refresh四连，
      * 补一次post对线；AI条态等工具栏回归再还账（120/500/1200ms三档重试，
      * 只读几何不碰宿主态，fail-closed）。
+     * C48：还账态（!translatorShellByUs）加custom/logo/logoC VISIBLE+dy0+isShown双真+requestLayout/N重刷
+     * （restoreToolbarVisibleForJumpF48），jump后工具栏在位；搜索态不强制（翻译藏栏原生）。
+     * 只改还账，不碰双行卡/下拉/hint/隔离/圆角B/J3。
      */
     private fun restoreToolbarState(decor: View, reason: String, attempt: Int = 0) {
+        if (submitSession.id != 0L) return // Native Q0 owns restoration; no late layout/navigation replay.
         try {
             if (Looper.myLooper() != Looper.getMainLooper()) {
                 mainHandler.post { restoreToolbarState(decor, reason, attempt) }
@@ -12555,7 +12969,14 @@ internal object WeTypeClipboardSearchUi {
             restoreLogoTranslation(decor)
             restoreClippedChain()
             runCatching { restoreToolbarShift() }
+            // C48：还账态工具栏在位（custom/logo/logoC VISIBLE+dy0+isShown双真+requestLayout，
+            // 搜索态SKIP；成功后N重刷一次，jump后工具栏在位）。
             val dg = decor as? ViewGroup
+            if (dg != null && !translatorShellByUs) {
+                runCatching { restoreToolbarVisibleForJumpF48(dg, "$reason-attempt$attempt") }
+                runCatching { refreshCandidateLayout(decor, "$reason-toolbarVis") }
+                runCatching { refreshFloatWindow(decor, "$reason-toolbarVis") }
+            }
             if (dg != null) {
                 if (isAiBarShowing(dg)) {
                     AndroidLog.i(TAG, "toolbar restore deferred (AI bar) reason=$reason attempt=$attempt")
@@ -12568,12 +12989,26 @@ internal object WeTypeClipboardSearchUi {
                     mainHandler.postDelayed({
                         try {
                             // 重试前重判AI条：回归即还账+对线，未归仅记日志。
+                            // C48：重试亦含VISIBLE+dy0+isShown双真+requestLayout/N重刷（还账态才做，搜索态SKIP）。
                             if (!isAiBarShowing(dg)) {
                                 restoreLogoTranslation(dg)
                                 restoreClippedChain()
                                 runCatching { restoreToolbarShift() }
+                                var visPassRetry: Boolean? = null
+                                if (!translatorShellByUs) {
+                                    visPassRetry = runCatching {
+                                        restoreToolbarVisibleForJumpF48(dg, "$reason-retry${attempt + 1}")
+                                    }.getOrNull()
+                                    runCatching { refreshCandidateLayout(dg, "$reason-retry-toolbarVis") }
+                                    runCatching { refreshFloatWindow(dg, "$reason-retry-toolbarVis") }
+                                }
                                 runCatching { alignToolbarRowWithLogo(dg) }
-                                AndroidLog.i(TAG, "toolbar restore retry reason=$reason attempt=${attempt + 1}")
+                                val iconNRetry = runCatching {
+                                    scanSquareIconLine(dg, runCatching { resolveLogoView(dg) }.getOrNull())?.n
+                                }.getOrNull() ?: -1
+                                AndroidLog.i(TAG, "toolbar restore retry reason=$reason attempt=${attempt + 1} " +
+                                    "icon n=$iconNRetry visPass=${visPassRetry ?: "skip-searchMode"} " +
+                                    "(VISIBLE+dy0+isShown双真+N重刷，jump后工具栏在位)")
                             } else {
                                 AndroidLog.i(TAG, "toolbar restore retry deferred (AI bar) " +
                                     "reason=$reason attempt=${attempt + 1}")
@@ -13988,396 +14423,10 @@ internal object WeTypeClipboardSearchUi {
      * pendingKeyword 点前已存框词，剪贴板页经 applyKeywordDirect 走 S5 过滤。
      * FAIL②：经restoreToolbarState统一出口（四连+post对线+AI条重试）。
      */
-    private fun jumpBackToClipboard(card: View) {
-        // F41：原生k卡即走原生跳回（存词→Q0(false)全还账→编程式+图标行跳回）；自绘卡走旧路。
-        if (card.javaClass.name == NATIVE_TOPVIEW_CLASS || nativeKRefF41?.get() === card ||
-            nativeKEditRefF41?.get()?.let { card === it || (card is ViewGroup && containsView(card, it)) } == true
-        ) {
-            jumpBackToClipboardF41()
-            return
-        }
-        try {
-            val box = card.findViewWithTag<View>(TAG_SEARCH_BOX) as? EditText
-            pendingKeyword = box?.text?.toString().orEmpty()
-            overlayPending = false
-            val parent = card.parent as? ViewGroup
-            // S4：decor 必须在拆条前捕获。removeStripCard 后 card 已 detached，
-            // card.rootView 会退化成 card 自身，后捕获就找不到图标。
-            val decor = (parent?.rootView ?: overlayParentRef?.get() ?: card.rootView) as? View
-                ?: return
-            removeStripCard(card)
-            overlayParentRef = null
-            exitTranslatorShell(decor)
-            mainHandler.postDelayed({
-                restoreToolbarState(decor, "jump", 0)
-            }, 120)
-            AndroidLog.i(TAG, "strip removed for jump, keyword len=${pendingKeyword.length}")
-            // 等一帧（工具栏复归后再找图标；条盖住时工具栏暂隐是 S5 已知局限）。
-            decor.post {
-                try {
-                    var ok = jumpBackProgrammatically(decor)
-                    if (!ok) {
-                        ok = jumpBackViaToolbarIcon(decor)
-                    }
-                    AndroidLog.i(TAG, "jumping back to clipboard ok=$ok " +
-                        "keyword len=${pendingKeyword.length}")
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "jump via icon dispatch failed: ${t.message}")
-                }
-            }
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "jump back to clipboard failed: ${t.message}")
-        }
+    private fun jumpBackToClipboard(container: View) {
+        jumpBackToClipboardF41("enter")
     }
 
-    private fun jumpBackProgrammatically(decor: View): Boolean {
-        try {
-            val hosts = synchronized(tabIndexByHost) { tabIndexByHost.keys.toList() }
-            // S5e-A4：空分支禁静默（WeakHashMap GC 失联即 error，S5c fallback 照走）。
-            if (hosts.isEmpty()) {
-                val strong = synchronized(tabHostStrongRefs) { tabHostStrongRefs.size }
-                AndroidLog.e(TAG, "programmatic jump: no hosts recorded " +
-                    "(weakMap=0 strongRefs=$strong)")
-                return false
-            }
-            AndroidLog.i(TAG, "programmatic jump: hosts=${hosts.size}")
-            for (host in hosts) {
-                if (host == null) continue
-                // S5e-A4：同形回放用户点图标行的触发序列
-                // f1(0,false,false)→Y0(实包clone)→a1()→i0(缓存key)→d1(false)
-                //（实证用户点图标行的 S15 触发序列）。Y0 调用成功
-                // 即返 true（与旧语义一致），渲染由截图+落页日志双验。
-                var y0ok = false
-                try {
-                    val f1t = findF1Triple(host)
-                    if (f1t != null) {
-                        f1t.isAccessible = true
-                        f1t.invoke(host, TAB_CLIPBOARD, false, false)
-                        AndroidLog.i(TAG, "jump replay f1(0,false,false) on " +
-                            host.javaClass.simpleName)
-                    } else {
-                        AndroidLog.w(TAG, "jump replay: f1(int,bool,bool) not found on " +
-                            host.javaClass.name)
-                    }
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "jump replay f1 failed: $t")
-                }
-                val y0 = synchronized(y0MethodStrongByHost) { y0MethodStrongByHost[host] }
-                    ?: findY0Bundle(host)
-                if (y0 != null) {
-                    try {
-                        y0.isAccessible = true
-                        val cachedBundle = synchronized(y0BundleStrongByHost) {
-                            y0BundleStrongByHost[host]
-                        }
-                        val bundle = if (cachedBundle != null) {
-                            android.os.Bundle(cachedBundle).apply {
-                                putInt("target_tab_index", TAB_CLIPBOARD)
-                            }
-                        } else {
-                            android.os.Bundle().apply {
-                                putInt("target_tab_index", TAB_CLIPBOARD)
-                            }
-                        }
-                        y0.invoke(host, bundle)
-                        AndroidLog.i(TAG, "jump via programmatic Y0 on " +
-                            "${host.javaClass.simpleName} ok=true " +
-                            "replayed=${cachedBundle != null}")
-                        y0ok = true
-                    } catch (t: Throwable) {
-                        AndroidLog.e(TAG, "programmatic jump Y0 invoke failed on " +
-                            "${host.javaClass.simpleName}: $t, try next channel")
-                    }
-                }
-                try {
-                    val a1 = host.javaClass.declaredMethods.firstOrNull {
-                        it.name == "a1" && it.parameterTypes.isEmpty()
-                    }
-                    if (a1 != null) {
-                        a1.isAccessible = true
-                        a1.invoke(host)
-                        AndroidLog.i(TAG, "jump replay a1() on ${host.javaClass.simpleName}")
-                    }
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "jump replay a1 failed: $t")
-                }
-                // S5e-A4：i0(key,bundle) 疑为渲染调用（4 调回放不渲染）。
-                // key 取最近用户导航实参同形回放；无缓存则跳过（禁合成）。
-                // 顺序按实证 f1→Y0→a1→i0→d1。
-                try {
-                    val i0m = host.javaClass.declaredMethods.firstOrNull {
-                        it.name == "i0" && it.parameterTypes.size == 2 &&
-                            it.parameterTypes[1] == android.os.Bundle::class.java
-                    }
-                    val keyArg = synchronized(i0ArgStrongByHost) { i0ArgStrongByHost[host] }
-                    if (i0m != null && keyArg != null) {
-                        if (i0m.parameterTypes[0].isInstance(keyArg)) {
-                            i0m.isAccessible = true
-                            val bundle = android.os.Bundle().apply {
-                                putInt("target_tab_index", TAB_CLIPBOARD)
-                            }
-                            i0m.invoke(host, keyArg, bundle)
-                            AndroidLog.i(TAG, "jump replay i0(key,bundle) on " +
-                                host.javaClass.simpleName)
-                        } else {
-                            AndroidLog.w(TAG, "jump replay i0 skipped: cached key type " +
-                                "${keyArg.javaClass.name} mismatches " +
-                                i0m.parameterTypes[0].name)
-                        }
-                    } else {
-                        AndroidLog.w(TAG, "jump replay i0 skipped: " +
-                            "method=${i0m != null} cachedKey=${keyArg != null}")
-                    }
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "jump replay i0 failed: $t")
-                }
-                try {
-                    val d1 = host.javaClass.declaredMethods.firstOrNull {
-                        it.name == "d1" && it.parameterTypes.size == 1 &&
-                            it.parameterTypes[0] == java.lang.Boolean.TYPE
-                    }
-                    if (d1 != null) {
-                        d1.isAccessible = true
-                        d1.invoke(host, false)
-                        AndroidLog.i(TAG, "jump replay d1(false) on " +
-                            host.javaClass.simpleName)
-                    }
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "jump replay d1 failed: $t")
-                }
-                if (y0ok) {
-                    // S5e-A4：N#k3 面板渲染回放（S15 序列只改态不渲染，实证）。
-                    replayK3Panel()
-                    scheduleJumpLandedCheck(decor)
-                    return true
-                }
-                // S5e-A4：旧版 f1 单参通道保留（有则调，无则记 warn 走 S5c fallback）。
-                val cached = synchronized(f1MethodStrongByHost) { f1MethodStrongByHost[host] }
-                val m = cached ?: findF1SingleInt(host)
-                if (m == null) {
-                    AndroidLog.w(TAG, "programmatic jump: f1(int) not found on " +
-                        "${host.javaClass.name}, try next host")
-                    continue
-                }
-                if (cached == null) {
-                    AndroidLog.i(TAG, "programmatic jump: using dynamic f1 on " +
-                        host.javaClass.simpleName)
-                }
-                try {
-                    m.isAccessible = true
-                    m.invoke(host, TAB_CLIPBOARD)
-                    AndroidLog.i(TAG, "jump via programmatic f1 on ${host.javaClass.simpleName} ok=true")
-                    scheduleJumpLandedCheck(decor)
-                    return true
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "programmatic jump invoke failed on " +
-                        "${host.javaClass.simpleName}: $t, try next host")
-                    continue
-                }
-            }
-            AndroidLog.e(TAG, "programmatic jump: f1 not invoked on any host " +
-                "(hosts=${hosts.size})")
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "programmatic jump failed: $t")
-        }
-        return false
-    }
-
-    /**
-     * S5e-A4：N#k3 面板渲染回放。实证用户点图标行级联调
-     * k3(keyboard.t@CustomPhraseAndClipboard, Bundle{target=0})；S15 序列只改
-     * 内部态不渲染。面板实参取用户导航缓存，无缓存则试 keyboard.t 枚举同名
-     * 常量（toString 一致），都无则跳过。异常只记日志，不影响 ok 语义。
-     */
-    private fun replayK3Panel() {
-        try {
-            val k3 = k3MethodStrong ?: return
-            val target = hostClassLoader?.let { resolveNTarget(it) } ?: run {
-                AndroidLog.e(TAG, "k3 replay: N singleton missing, skipped")
-                return
-            }
-            val panel = resolveClipboardPanel() ?: run {
-                AndroidLog.w(TAG, "k3 replay: no panel arg (no cache, no enum), skipped")
-                return
-            }
-            if (!k3.parameterTypes[0].isInstance(panel)) {
-                AndroidLog.w(TAG, "k3 replay: panel type mismatch " +
-                    "${panel.javaClass.name} vs ${k3.parameterTypes[0].name}, skipped")
-                return
-            }
-            k3.isAccessible = true
-            val bundle = android.os.Bundle().apply {
-                putInt("target_tab_index", TAB_CLIPBOARD)
-            }
-            k3.invoke(target, panel, bundle)
-            AndroidLog.i(TAG, "jump replay k3(panel,bundle) ok=true panel=${panel}")
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "jump replay k3 failed: $t")
-        }
-    }
-
-    /** N 单例（与 navigateBackToKeyboard 同找法：静态 N 类型字段首个非空值）。 */
-    private fun resolveNTarget(classLoader: ClassLoader): Any? {
-        return try {
-            val nClass = Class.forName("com.tencent.wetype.plugin.hld.model.N", false, classLoader)
-            for (f in nClass.declaredFields) {
-                try {
-                    if (!java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-                    if (f.type != nClass) continue
-                    f.isAccessible = true
-                    val v = f.get(null)
-                    if (v != null) return v
-                } catch (_: Throwable) {
-                    continue
-                }
-            }
-            null
-        } catch (_: Throwable) {
-            null
-        }
-    }
-
-    /** 剪贴板面板实参：用户导航缓存优先；否则 keyboard.t 枚举同名常量兜底。 */
-    private fun resolveClipboardPanel(): Any? {
-        try {
-            synchronized(k3PanelStrongRefs) {
-                for ((_, panel) in k3PanelStrongRefs) {
-                    if (panel.toString() == "CustomPhraseAndClipboard") return panel
-                }
-                if (k3PanelStrongRefs.isNotEmpty()) return k3PanelStrongRefs.values.firstOrNull()
-            }
-        } catch (_: Throwable) {
-        }
-        try {
-            val cl = hostClassLoader ?: return null
-            val tClass = Class.forName(
-                "com.tencent.wetype.plugin.hld.keyboard.t", false, cl
-            )
-            if (tClass.isEnum) {
-                val constants = tClass.enumConstants ?: return null
-                for (c in constants) {
-                    if (c.toString() == "CustomPhraseAndClipboard") return c
-                }
-            }
-        } catch (_: Throwable) {
-        }
-        return null
-    }
-
-    /** 跳页落页异步校验（Y0/f1 双通道共用；只记日志，不改 ok 语义）。 */
-    private fun scheduleJumpLandedCheck(decor: View) {
-        runCatching {
-            if (decor is ViewGroup) {
-                decor.postDelayed({
-                    try {
-                        val landed = checkJumpLanded(decor)
-                        AndroidLog.i(TAG, "jump landed $landed")
-                    } catch (t: Throwable) {
-                        AndroidLog.e(TAG, "jump landed check failed: ${t.message}")
-                    }
-                }, 500)
-            }
-        }
-    }
-
-    /**
-     * S5c-A4：容器序数直点（终修首轮）。decor 树 BFS 找工具栏行容器
-     * （横向 LinearLayout/Row，直接图标槽位5~9，y 在键盘窗上半区带内、
-     * 宽≈屏宽，间距首缝放宽），取其第 3 个孩子（index 2）；孩子若是容器
-     * 则深入取其内可点 Image 叶子点之。禁 contentDescription 加分依赖，
-     * 禁点非第 3 位，找不到行/不足 3 孩/无目标一律返 false（禁假 ok=true）。
-     * 自家搜索条 tag 排除，第 3 位是运行时序数非像素写死（bounds 现算）。
-     * FAIL①：槽位≥6改5~9兼容（logo+5=6圆），间距同步open-strip.sh。
-     */
-    private fun jumpBackViaToolbarIcon(decorRoot: View): Boolean {
-        try {
-            val decor = (decorRoot.rootView ?: decorRoot) as? ViewGroup
-                ?: return false.also {
-                    AndroidLog.e(TAG, "jump icon not found (no decor)")
-                }
-            val wPx = runCatching { decor.resources.displayMetrics.widthPixels }.getOrDefault(0)
-            var maxKids = 0
-            var row: ViewGroup? = null
-            var rowBounds = ""
-            var hops = 0
-            val q: ArrayDeque<View> = ArrayDeque()
-            q.add(decor)
-            while (q.isNotEmpty() && hops < 400) {
-                val v = q.removeFirst()
-                hops++
-                // 行候选：横向 LinearLayout/Row 形 + 图标槽位计数（禁 desc 依赖）。
-                val slots = runCatching {
-                    if (v is ViewGroup && v.getTag() != TAG_SEARCH_BUTTON &&
-                        v.getTag() != TAG_SEARCH_BOX_CONTAINER &&
-                        v.visibility == View.VISIBLE && isToolbarRowShape(v)
-                    ) {
-                        rowIconSlotViews(v)
-                    } else null
-                }.getOrNull()
-                val kids = slots?.size ?: -1
-                if (kids > maxKids) maxKids = kids
-                if (row == null && v is ViewGroup && kids in 5..9 &&
-                    isToolbarRowGeometry(v, decor) &&
-                    (wPx <= 0 || isToolbarRowSpacingOk(slots!!, wPx))
-                ) {
-                    row = v
-                    rowBounds = viewBoundsOf(v)
-                }
-                runCatching {
-                    if (v is ViewGroup) {
-                        for (i in 0 until minOf(v.childCount, 25)) {
-                            v.getChildAt(i)?.let { q.add(it) }
-                        }
-                    }
-                }
-            }
-            val bar = row ?: run {
-                AndroidLog.e(TAG, "jump toolbar row not found kids=$maxKids hops=$hops " +
-                    "need=5~9 spacing=[0.07W,0.18W]/firstMax=0.45W")
-                return false
-            }
-            val slotCount = runCatching { bar.childCount }.getOrDefault(0)
-            if (slotCount < 3) {
-                AndroidLog.e(TAG, "jump toolbar row kids<3 count=$slotCount " +
-                    "row=$rowBounds hops=$hops")
-                return false
-            }
-            val slot = runCatching { bar.getChildAt(2) }.getOrNull() ?: run {
-                AndroidLog.e(TAG, "jump toolbar idx2 target missing slot=null row=$rowBounds")
-                return false
-            }
-            val target = resolveIdx2Target(slot) ?: run {
-                val slotInfo = runCatching { slot.javaClass.simpleName }.getOrDefault("?")
-                AndroidLog.e(TAG, "jump toolbar idx2 target missing slot=$slotInfo " +
-                    "bounds=${viewBoundsOf(slot)} row=$rowBounds")
-                return false
-            }
-            val targetBounds = viewBoundsOf(target)
-            val clicked = runCatching { target.performClick() }.getOrElse { t ->
-                AndroidLog.e(TAG, "jump icon performClick threw: ${t.message}")
-                return false
-            }
-            AndroidLog.i(TAG, "jump via toolbar idx2 click ok=$clicked bounds=$targetBounds " +
-                "row=$rowBounds")
-            if (!clicked) return false
-            // click 后落页校验（异步）：剪贴板/常用语 tabs+列表才算到页，
-            // 手写页（字迹/手写）算失败。禁假 ok=true 掩盖。
-            runCatching {
-                decor.postDelayed({
-                    try {
-                        val landed = checkJumpLanded(decor)
-                        AndroidLog.i(TAG, "jump landed $landed")
-                    } catch (t: Throwable) {
-                        AndroidLog.e(TAG, "jump landed check failed: ${t.message}")
-                    }
-                }, 500)
-            }
-            return true
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "jump via toolbar icon failed: ${t.message}")
-            return false
-        }
-    }
 
     /**
      * S5c 行形：横向 LinearLayout，或类名含 Row 的横向行容器。
@@ -14608,55 +14657,29 @@ internal object WeTypeClipboardSearchUi {
 
     /**
      * 落页校验：decor 树找剪贴板/常用语 tabs+列表 vs 手写页（字迹/手写）。
-     * 返回 `clipboard ok=true` / `handwriting FAIL` / `unknown`。
+     * C48三缺口②③（本单）：只查文本不查可见致键盘页亦报clipboard ok=true（5s窗视觉与日志背离）。
+     * 修为加VISIBLE/isShown/位置判定（宽高>0+屏位y>0+isShown双真），键盘页不再报ok（返keyboard FAIL，
+     * fail-closed补图标行）；灰空页unknown留C49可辨识行（禁改sh，只留日志，C49加灰页CLIPBOARD兜底）。
+     * G6落点（只修causas分清，其余隔离/双行卡/下拉/hint/栏/J3/圆角B/零仿制不动）：
+     * 真落点须clipboard ok=true且VISIBLE/isShown+宽高屏位有效（isClipboardPageShowing已含）；
+     * keyboard FAIL causa=tabs可见但列表隐/零尺寸/屏位无效（键盘页工具栏+QWERTY，非落点，须补图标行）；
+     * unknown causa=tabs缺失（灰空页/翻译壳未退/键盘页无tabs三者，sh灰页兜底另判，此处fail-closed）。
+     * 返回 `clipboard ok=true` / `keyboard FAIL` / `handwriting FAIL` / `unknown`。
+     * 只改落点判定，不碰隔离/双行卡/下拉/hint/栏/J3/圆角B/零仿制。
      */
-    private fun checkJumpLanded(decor: ViewGroup): String {
-        return try {
-            var hasClipTab = false
-            var hasCommonTab = false
-            var hasHandwrite = false
-            var hops = 0
-            val q: ArrayDeque<View> = ArrayDeque()
-            q.add(decor)
-            while (q.isNotEmpty() && hops < 400) {
-                val v = q.removeFirst()
-                hops++
-                try {
-                    val text = runCatching {
-                        (v as? android.widget.TextView)?.text?.toString() ?: ""
-                    }.getOrDefault("")
-                    if (text.contains("剪贴板")) hasClipTab = true
-                    if (text.contains("常用语")) hasCommonTab = true
-                    if (text.contains("手写") || text.contains("字迹")) hasHandwrite = true
-                    val desc = runCatching {
-                        v.contentDescription?.toString() ?: ""
-                    }.getOrDefault("")
-                    if (desc.contains("手写") || desc.contains("字迹")) hasHandwrite = true
-                } catch (_: Throwable) {
-                }
-                try {
-                    if (v is ViewGroup) {
-                        for (i in 0 until minOf(v.childCount, 25)) {
-                            v.getChildAt(i)?.let { q.add(it) }
-                        }
-                    }
-                } catch (_: Throwable) {
-                }
-                if (hasClipTab && hasCommonTab) break
-            }
-            if (hasHandwrite && !(hasClipTab && hasCommonTab)) return "handwriting FAIL"
-            if (hasClipTab && hasCommonTab) return "clipboard ok=true"
-            "unknown"
-        } catch (_: Throwable) {
-            "unknown"
-        }
-    }
+
 
     /**
      * 拆键盘还账（Finish/切页防泄漏）。
      * FAIL②：经restoreToolbarState统一出口（四连+post对线+AI条重试）。
      */
     private fun teardownStrip() {
+        if (nativeSearchRestore != null || submitSession.phase == ClipboardSearchSubmitSession.Phase.COMMITTING ||
+            submitSession.phase == ClipboardSearchSubmitSession.Phase.EXITING ||
+            submitSession.phase == ClipboardSearchSubmitSession.Phase.OPENING) {
+            collapseStripF41()
+            return
+        }
         // F41：原生k在即走原生收起全还账；否则走旧路（自绘条已丢弃）。
         val nk = nativeKRefF41?.get()
         if (nk != null && nk.parent != null) {
@@ -14682,6 +14705,9 @@ internal object WeTypeClipboardSearchUi {
     }
 
     private fun clearSearchOnMain() {
+        if (submitSession.phase == ClipboardSearchSubmitSession.Phase.COMMITTING ||
+            submitSession.phase == ClipboardSearchSubmitSession.Phase.EXITING ||
+            submitSession.phase == ClipboardSearchSubmitSession.Phase.OPENING) return
         try {
             synchronized(trackedBoxes) {
                 val it = trackedBoxes.iterator()
@@ -14947,14 +14973,25 @@ internal object WeTypeClipboardSearchUi {
                     }
                     lp.width = bw
                     lp.height = bh
+                    applyCircularShape(btn, minOf(bw, bh))
+                    (btn as? ImageView)?.let { iv ->
+                        val pad = (minOf(bw, bh) * 0.15f).roundToInt()
+                        iv.setPadding(pad, pad, pad, pad)
+                    }
                     val gap = dpToPx(bar.resources, BTN_GAP_DP)
+                    var isConstraint = false
                     runCatching {
                         val lpClass = lp.javaClass
                         lpClass.getField("startToEnd").setInt(lp, backBtnId)
                         lpClass.getField("topToTop").setInt(lp, backBtnId)
                         lpClass.getField("bottomToBottom").setInt(lp, backBtnId)
+                        isConstraint = true
                     }
-                    lp.setMargins(backBtn.left + bw + gap, backBtn.top, 0, 0)
+                    if (isConstraint) {
+                        lp.setMargins(gap, 0, 0, 0)
+                    } else {
+                        lp.setMargins(backBtn.left + bw + gap, backBtn.top, 0, 0)
+                    }
                     btn.layoutParams = lp
                     btn.post {
                         try {
