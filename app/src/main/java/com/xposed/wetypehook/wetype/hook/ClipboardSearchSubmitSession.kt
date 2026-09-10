@@ -81,3 +81,9 @@ internal class ClipboardSearchSubmitSession {
             (listVisible || emptyVisible)
     }
 }
+
+/** 搜索框卡片圆角偏移量（dp）：卡片半径比输入法圆角少 8dp（下限 0dp） */
+internal const val CARD_CORNER_RADIUS_OFFSET_DP = 8f
+
+internal fun resolveCardCornerRadiusDp(baseRadiusDp: Float): Float =
+    maxOf(0f, baseRadiusDp - CARD_CORNER_RADIUS_OFFSET_DP)

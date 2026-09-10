@@ -377,6 +377,7 @@ internal object WeTypeClipboardSearchUi {
     private const val NATIVE_EXIT_PAD_START_G0 = 20
     private const val NATIVE_EXIT_PAD_END_G0 = 40
     private const val NATIVE_RADIUS_F0 = 32
+
     // 原生输入框几何（设备 3.5.3 k.java 实测）：A3(45,true) + padding g0(40)/e0(40)
     // + 高 e0(80+63·行数) + 行高 e0(63) + gravity 8388627 + 绿光标。
     private const val NATIVE_INPUT_FONT = 45
@@ -639,6 +640,7 @@ internal object WeTypeClipboardSearchUi {
             // S5e-A4：缓存 k3 剪贴板面板实参（正向导航渲染调用，同形回放用）。
             // F31：J3执行完后钳mCandidateView LP高（条挂载才写，未挂载不动）。
             hookCandidateWindowAfterJ3F31(classLoader)
+            hookClipboardPanelToggle(classLoader)
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "install search UI failed: ${t.message}")
         }
@@ -698,6 +700,83 @@ internal object WeTypeClipboardSearchUi {
             AndroidLog.i(TAG, "strip F31 window clamp installed: $count overload(s)")
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F31 window clamp install failed: ${t.message}")
+        }
+    }
+
+    internal fun isSearchStripExpanded(): Boolean {
+        if (inCollapseF41) return false
+        if (!translatorShellByUs) return false
+        if (submitSession.phase in setOf(
+                ClipboardSearchSubmitSession.Phase.COMMITTING,
+                ClipboardSearchSubmitSession.Phase.EXITING,
+                ClipboardSearchSubmitSession.Phase.OPENING
+            )) {
+            return false
+        }
+        val card = nativeKRefF41?.get()
+        if (card != null) {
+            return card.isAttachedToWindow && card.parent != null
+        }
+        return true
+    }
+
+    private fun isClipboardPanel(target: Any?): Boolean {
+        val enumObj = target as? Enum<*> ?: return false
+        return enumObj.name == "CustomPhraseAndClipboard"
+    }
+
+    /**
+     * 搜索面板展开态下点击剪贴板按钮：直接收起搜索面板，拦截原切页逻辑，
+     * 防止残留挂起与重复切页导致的二次拉起灰色残留条。
+     */
+    private fun hookClipboardPanelToggle(classLoader: ClassLoader) {
+        try {
+            val nClass = runCatching {
+                Class.forName(NATIVE_CAND_CTL_CLASS, false, classLoader)
+            }.getOrNull() ?: run {
+                AndroidLog.e(TAG, "strip clipboard toggle hook: N missing, disabled")
+                return
+            }
+            val panelClass = runCatching {
+                Class.forName("com.tencent.wetype.plugin.hld.keyboard.t", false, classLoader)
+            }.getOrNull() ?: run {
+                AndroidLog.e(TAG, "strip clipboard toggle hook: panel class missing, disabled")
+                return
+            }
+            val switchMethods = nClass.declaredMethods.filter {
+                it.name in setOf("k3", "p3", "l3") &&
+                    it.parameterTypes.isNotEmpty() &&
+                    it.parameterTypes[0] == panelClass
+            }
+            if (switchMethods.isEmpty()) {
+                AndroidLog.e(TAG, "strip clipboard toggle hook: switch methods not found, disabled")
+                return
+            }
+            var count = 0
+            for (m in switchMethods) {
+                try {
+                    m.isAccessible = true
+                    m.hookBefore { param ->
+                        val targetPanel = param.args.firstOrNull()
+                        if (isClipboardPanel(targetPanel) && isSearchStripExpanded()) {
+                            AndroidLog.i(TAG, "clipboard requested via N#${m.name} while search strip expanded -> collapse search strip")
+                            param.result = null
+                            if (Looper.myLooper() == Looper.getMainLooper()) {
+                                collapseStripF41()
+                            } else {
+                                mainHandler.post { collapseStripF41() }
+                            }
+                        }
+                    }
+                    count++
+                    AndroidLog.i(TAG, "strip clipboard toggle: hooked N#${m.name}")
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip clipboard toggle: hook N#${m.name} failed: ${t.message}")
+                }
+            }
+            AndroidLog.i(TAG, "strip clipboard toggle hook installed: $count method(s)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip clipboard toggle hook failed: ${t.message}")
         }
     }
 
@@ -3048,15 +3127,18 @@ internal object WeTypeClipboardSearchUi {
             overlayParentRef = java.lang.ref.WeakReference(decor)
             searchManager = translatingMgr(k)
             // 圆角B：条圆角跟输入法背景走（WeTypeSettings.getCornerRadiusXposed，与WindowHooks同源）；
+            // 搜索框组件卡片圆角比输入法圆角少 8dp（不小于 0dp）。
             // k内rootContainer（ImeRadiusConstraintLayout）setRadius(B)+setBorderWidth(1f)已在X()为f0(32)，
             // 此处仅当B可取才覆盖为B，不可取则保留原生（fail-closed不自绘，禁f0(32)/GradientDrawable/硬编码色）。
             runCatching {
                 val root = findNativeKRootContainerF41(k)
                 if (root != null) {
                     val radius = try {
+                        val baseRadiusDp = WeTypeSettings.getCornerRadiusXposed(root.context).toFloat()
+                        val cardRadiusDp = resolveCardCornerRadiusDp(baseRadiusDp)
                         TypedValue.applyDimension(
                             TypedValue.COMPLEX_UNIT_DIP,
-                            WeTypeSettings.getCornerRadiusXposed(root.context).toFloat(),
+                            cardRadiusDp,
                             root.resources.displayMetrics
                         ).roundToInt()
                     } catch (t: Throwable) {
@@ -3075,7 +3157,7 @@ internal object WeTypeClipboardSearchUi {
                                 Float::class.javaPrimitiveType, java.lang.Float::class.java ->
                                     setRadius.invoke(root, radius.toFloat())
                             }
-                            AndroidLog.i(TAG, "strip F41 radius: B=$radius applied on ${root.javaClass.simpleName} (原生复用，仅圆角B)")
+                            AndroidLog.i(TAG, "strip F41 radius: B=$radius (base-8dp) applied on ${root.javaClass.simpleName} (原生复用，仅圆角B-8dp)")
                         }
                     }
                 }
@@ -3826,6 +3908,7 @@ internal object WeTypeClipboardSearchUi {
         inCollapseF41 = true
         try {
             val decor = overlayParentRef?.get()
+                ?: (currentImeRoot() ?: (nativeKRefF41?.get()?.rootView as? ViewGroup))
             submitSession.cancel()
             overlayPending = false
             pendingKeyword = ""
@@ -14147,12 +14230,14 @@ internal object WeTypeClipboardSearchUi {
                 return null
             }
             setRadius.isAccessible = true
-            // 方案B：条圆角 = 输入法背景圆角（用户设置 dp→px，与
-            // WeTypeWindowHooks.resolveCornerRadii 同源），保证白卡与背景一致。
+            // 方案B：条圆角 = 输入法背景圆角减 8dp（用户设置 dp→px，与
+            // WeTypeWindowHooks.resolveCornerRadii 同源，半径少 8dp），保证卡片适度圆润。
             val radius = try {
+                val baseRadiusDp = WeTypeSettings.getCornerRadiusXposed(context).toFloat()
+                val cardRadiusDp = resolveCardCornerRadiusDp(baseRadiusDp)
                 TypedValue.applyDimension(
                     TypedValue.COMPLEX_UNIT_DIP,
-                    WeTypeSettings.getCornerRadiusXposed(context).toFloat(),
+                    cardRadiusDp,
                     context.resources.displayMetrics
                 ).roundToInt()
             } catch (t: Throwable) {

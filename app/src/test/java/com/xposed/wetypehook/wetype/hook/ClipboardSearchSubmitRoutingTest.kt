@@ -21,4 +21,10 @@ class ClipboardSearchSubmitRoutingTest {
     @Test fun translationIsolationDoesNotGuessEveryStringMethod() {
         assertFalse("translation isolation must use verified signatures", source.contains("val hasStr = m.parameterTypes.any"))
     }
+    @Test fun clipboardPanelToggleHooksNavigationAndCollapsesExpandedSearchStrip() {
+        assertTrue("hookClipboardPanelToggle must be installed", source.contains("hookClipboardPanelToggle(classLoader)"))
+        assertTrue("toggle must check CustomPhraseAndClipboard", source.contains("enumObj.name == \"CustomPhraseAndClipboard\""))
+        assertTrue("toggle must check isSearchStripExpanded", source.contains("isSearchStripExpanded()"))
+        assertTrue("toggle must cancel switch and collapse strip", source.contains("param.result = null") && source.contains("collapseStripF41()"))
+    }
 }

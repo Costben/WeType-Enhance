@@ -75,4 +75,12 @@ class ClipboardSearchSubmitSessionTest {
         assertFalse(s.readyToSnapshot(id,true,true))
         assertEquals(ClipboardSearchSubmitSession.Phase.EDITING,s.phase)
     }
+    @Test fun cardCornerRadiusIs8dpLessThanKeyboardCornerRadiusWithZeroFloor() {
+        assertEquals(8f, CARD_CORNER_RADIUS_OFFSET_DP, 0.001f)
+        assertEquals(16f, resolveCardCornerRadiusDp(24f), 0.001f)
+        assertEquals(2f, resolveCardCornerRadiusDp(10f), 0.001f)
+        assertEquals(0f, resolveCardCornerRadiusDp(8f), 0.001f)
+        assertEquals(0f, resolveCardCornerRadiusDp(5f), 0.001f)
+        assertEquals(0f, resolveCardCornerRadiusDp(0f), 0.001f)
+    }
 }
