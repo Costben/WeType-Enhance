@@ -19,4 +19,4 @@ output/
 work/
 .paseo/
 artifacts/
-tools/frida/
+tools/
