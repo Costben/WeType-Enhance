@@ -1,5 +1,4 @@
 <div align="center">
-<img src="./assets/icon.png" width="120px"/>
 
 # WeType Enhance
 
@@ -17,7 +16,6 @@
 
 <p align="center">
   <a href="#功能特性">功能特性</a> ·
-  <a href="#效果预览">效果预览</a> ·
   <a href="#安装与使用">安装与使用</a> ·
   <a href="#兼容性">兼容性</a> ·
   <a href="#常见问题">常见问题</a> ·
@@ -92,22 +90,6 @@ WeType Enhance 覆盖微信输入法从外观到能力的完整增强链路，�
 - 修复三方输入法无法获取系统剪贴板列表的问题
 
 该部分在非小米系统上不会启用，也不影响微信输入法相关增强功能。
-
-## 效果预览
-
-默认效果参考 iOS 27 Apple 官方设计稿内的配色与圆角数值。
-
-<details open>
-<summary>#FB7299 主题色截图</summary>
-<table>
-  <tr>
-    <td align="center"><img src="./assets/prew/dark_1.jpg" width="200" alt="深色模式"><br>深色模式</td>
-    <td align="center"><img src="./assets/prew/dark_2.jpg" width="200" alt="深色模式"><br>深色模式</td>
-    <td align="center"><img src="./assets/prew/light_1.jpg" width="200" alt="浅色模式"><br>浅色模式</td>
-    <td align="center"><img src="./assets/prew/light_2.jpg" width="200" alt="浅色模式"><br>浅色模式</td>
-  </tr>
-</table>
-</details>
 
 ## 安装与使用
 
