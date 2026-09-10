@@ -2686,12 +2686,7 @@ internal object WeTypeClipboardSearchUi {
                         AndroidLog.e(TAG, "set search icon failed: ${t.message}")
                     }
                     scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    try {
-                        val bg = backBtn.background
-                        background = bg?.constantState?.newDrawable(resources)?.mutate() ?: bg
-                    } catch (t: Throwable) {
-                        AndroidLog.e(TAG, "clone back button background failed: ${t.message}")
-                    }
+                    background = resolveNativeRoundBackground(backBtn, resources)
                     applyCircularShape(this)
                     val initPad = (dpToPx(resources, 32f) * 0.15f).roundToInt()
                     setPadding(initPad, initPad, initPad, initPad)
@@ -2705,6 +2700,9 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.i(TAG, "search button mounted next to back_btn")
             }
             bar.findViewWithTag<View>(TAG_SEARCH_BUTTON)?.let { existing ->
+                if (existing.background == null) {
+                    existing.background = resolveNativeRoundBackground(backBtn, resources)
+                }
                 applyCircularShape(existing)
                 alignSearchButton(existing, bar, backBtn, backBtnId)
             }
@@ -15056,6 +15054,13 @@ internal object WeTypeClipboardSearchUi {
                     val loc = IntArray(2)
                     runCatching { btn.getLocationOnScreen(loc) }
                     AndroidLog.i(TAG, "search button placed screen=${loc[0]},${loc[1]} tx=${btn.translationX} ty=${btn.translationY}")
+                    if (btn.background == null) {
+                        resolveNativeRoundBackground(backBtn, btn.resources)?.let { adopted ->
+                            btn.background = adopted
+                            AndroidLog.i(TAG, "search button background adopted (aligned)")
+                        }
+                    }
+                    adoptNativeRoundBackground(btn, backBtn)
                 } catch (t: Throwable) {
                     AndroidLog.e(TAG, "align search button failed: ${t.message}")
                 }
@@ -15063,6 +15068,34 @@ internal object WeTypeClipboardSearchUi {
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "align search button failed: ${t.message}")
         }
+    }
+
+    /**
+     * 原生圆钮背景：复用宿主 back_btn 的皮肤圆钮背景（S15 V0 皮肤期下发）。
+     * 只认 back_btn 一个来源，取不到返回 null（禁自绘/系统兜底）。
+     */
+    private fun resolveNativeRoundBackground(
+        backBtn: View,
+        resources: android.content.res.Resources
+    ): android.graphics.drawable.Drawable? {
+        val bg = backBtn.background ?: return null
+        return runCatching { bg.constantState?.newDrawable(resources)?.mutate() }.getOrNull()
+    }
+
+    /** 宿主皮肤在挂载后才给 back_btn 下发圆钮背景：短时重试补齐，拿到即停。 */
+    private fun adoptNativeRoundBackground(btn: View, backBtn: View, attempt: Int = 0) {
+        if (btn.background != null || attempt >= 12 || btn.parent == null) return
+        val target = btn
+        val source = backBtn
+        btn.postDelayed({
+            if (target.background == null && target.parent != null) {
+                resolveNativeRoundBackground(source, target.resources)?.let { adopted ->
+                    target.background = adopted
+                    AndroidLog.i(TAG, "search button background adopted (attempt=$attempt)")
+                }
+            }
+            adoptNativeRoundBackground(target, source, attempt + 1)
+        }, 120L)
     }
 
     private fun findHostView(keyboardObj: Any): View? {
