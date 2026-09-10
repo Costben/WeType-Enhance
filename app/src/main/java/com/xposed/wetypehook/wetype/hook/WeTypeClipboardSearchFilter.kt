@@ -67,6 +67,12 @@ internal object WeTypeClipboardSearchFilter {
     @Volatile
     private var currentKeyword = ""
 
+    /** 供图片注入器判断是否正在回放过滤结果（避免把图片塞回搜索结果）。 */
+    internal fun isReplaying(): Boolean = applyingFilter.get()
+
+    /** 供图片注入器判断当前搜索态。 */
+    internal fun currentKeywordValue(): String = currentKeyword
+
     private val lock = Any()
     private val fullItems: MutableList<Any> = ArrayList()
     private val scrollViews: MutableSet<Any> =
@@ -161,8 +167,11 @@ internal object WeTypeClipboardSearchFilter {
                 for (item in list) {
                     if (item != null) fullItems.add(item)
                 }
+                // 宿主列表默认排除 type==1 图片；合入模块注入缓存，保证搜索恢复时可见。
+                WeTypeClipboardImageList.appendCachedUnique(fullItems)
                 runSchedule = currentKeyword.isNotEmpty()
             }
+            WeTypeClipboardImageList.onNativeSetList(scrollView, list.filterNotNull())
             // 主线程调度；hookAfter 大概率已在主线程，非主则抛回主线程。
             if (Looper.myLooper() == Looper.getMainLooper()) {
                 if (runSchedule) scheduleLocked()
@@ -251,8 +260,10 @@ internal object WeTypeClipboardSearchFilter {
         for (i in snapshot.indices) {
             val item = snapshot[i]
             try {
-                if (getItemType(item) != 0L) {
-                    out.add(item)
+                val type = getItemType(item)
+                if (type != 0L) {
+                    // ADR-0002：搜索关键词非空时图片条目全部隐藏；其余非文本保持原样。
+                    if (type != 1L) out.add(item)
                 } else if (matchedOrig.contains(i) || unknownContent.contains(i)) {
                     out.add(item)
                 }
@@ -260,19 +271,6 @@ internal object WeTypeClipboardSearchFilter {
                 AndroidLog.e(TAG, "filter item failed: ${t.message}")
                 out.add(item)
             }
-        }
-        // TEMP-DEBUG：本轮决策面（关键词/快照/命中/未知/产出 + type 直方图），
-        // 定位误留条目（如 packageinstaller），定案后删除。
-        try {
-            val hist = HashMap<Long, Int>()
-            for (item in snapshot) {
-                val tv = try { getItemType(item) } catch (_: Throwable) { -99L }
-                hist[tv] = (hist[tv] ?: 0) + 1
-            }
-            AndroidLog.w(TAG, "filter run: kw=$keyword snap=${snapshot.size} " +
-                "matched=${matchedOrig.size} unknown=${unknownContent.size} " +
-                "out=${out.size} types=$hist")
-        } catch (_: Throwable) {
         }
         return out
     }
@@ -392,9 +390,12 @@ internal object WeTypeClipboardSearchFilter {
                 method.isAccessible = true
                 method.hookAfter { param ->
                     try {
-                        if (!WeTypeSettings.isClipboardSearchEnabledXposed()) return@hookAfter
                         val holder = param.args.getOrNull(0) ?: return@hookAfter
-                        applyHighlightToHolder(holder, currentKeyword)
+                        // 图片条目渲染与搜索开关无关；搜索高亮仍受开关控制。
+                        WeTypeClipboardImageEntries.onBind(holder)
+                        if (WeTypeSettings.isClipboardSearchEnabledXposed()) {
+                            applyHighlightToHolder(holder, currentKeyword)
+                        }
                     } catch (t: Throwable) {
                         AndroidLog.e(TAG, "bind highlight dispatch failed: ${t.message}")
                     }

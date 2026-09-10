@@ -51,6 +51,17 @@ internal object WeTypeClipboardHooks {
             Log.e("Failed: Installing WeType clipboard hooks: ${it.message}")
             Log.i(it)
         }
+        // ADR-0002：剪贴板图片条目注入 + 缩略图 + 大图预览链路（独立 try/catch，不影响配额 Hook）。
+        runCatching {
+            if (WeTypeClipboardImageHost.install(classLoader)) {
+                WeTypeClipboardImageLoader.install(classLoader)
+                WeTypeClipboardImageEntries.install(classLoader)
+                WeTypeClipboardImageList.install(classLoader)
+            }
+        }.onFailure {
+            Log.e("Failed: Installing clipboard image entries: ${it.message}")
+            Log.i(it)
+        }
         // Slice 4:剪贴板搜索框 UI 挂载（只挂载不做过滤；独立 try/catch，不影响配额 Hook）。
         runCatching {
             WeTypeClipboardSearchUi.install(classLoader)
