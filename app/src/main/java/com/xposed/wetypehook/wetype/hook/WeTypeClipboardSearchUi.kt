@@ -759,8 +759,7 @@ internal object WeTypeClipboardSearchUi {
                     m.hookBefore { param ->
                         val targetPanel = param.args.firstOrNull()
                         if (isClipboardPanel(targetPanel) && isSearchStripExpanded()) {
-                            AndroidLog.i(TAG, "clipboard requested via N#${m.name} while search strip expanded -> collapse search strip")
-                            param.result = null
+                            AndroidLog.i(TAG, "clipboard requested via N#${m.name} while search strip expanded -> collapse search strip and navigate to clipboard")
                             if (Looper.myLooper() == Looper.getMainLooper()) {
                                 collapseStripF41()
                             } else {
@@ -2616,23 +2615,6 @@ internal object WeTypeClipboardSearchUi {
 
     private fun applyCircularShape(btn: View, size: Int = minOf(btn.width, btn.height)) {
         try {
-            fun makeOval(d: android.graphics.drawable.Drawable?) {
-                if (d is android.graphics.drawable.GradientDrawable) {
-                    d.shape = android.graphics.drawable.GradientDrawable.OVAL
-                    d.cornerRadii = null
-                    if (size > 0) d.cornerRadius = size / 2f
-                } else if (d is android.graphics.drawable.LayerDrawable) {
-                    for (i in 0 until d.numberOfLayers) {
-                        makeOval(d.getDrawable(i))
-                    }
-                } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP &&
-                    d is android.graphics.drawable.RippleDrawable) {
-                    for (i in 0 until d.numberOfLayers) {
-                        makeOval(d.getDrawable(i))
-                    }
-                }
-            }
-            makeOval(btn.background)
             btn.outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(v: View, outline: android.graphics.Outline) {
                     val s = minOf(v.width, v.height).takeIf { it > 0 } ?: size
@@ -2716,11 +2698,6 @@ internal object WeTypeClipboardSearchUi {
                     isClickable = true
                     isFocusable = true
                     setOnClickListener { onSearchButtonClick(root) }
-                }
-                ids.backBtnIvId?.let { ivId ->
-                    (page.findViewById<View>(ivId) as? ImageView)?.let { iv ->
-                        (iv.layoutParams as? android.widget.FrameLayout.LayoutParams)?.gravity = android.view.Gravity.CENTER
-                    }
                 }
                 val backIndex = bar.indexOfChild(backBtn)
                 bar.addView(button, if (backIndex >= 0) backIndex + 1 else 0)
@@ -13589,7 +13566,7 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** F22 ImageView位图（BitmapDrawable直取，否则渲染到cap128画布；只读）。 */
+    /** F22 ImageView位图（BitmapDrawable直取，否则渲染到cap128画布；只读，保护宿主原Drawable bounds不被污染篡改）。 */
     private fun bitmapFromImageViewF22(img: ImageView): Bitmap? {
         return try {
             val d = img.drawable ?: return null
@@ -13605,9 +13582,19 @@ internal object WeTypeClipboardSearchUi {
             if (bw <= 0 || bh <= 0) return null
             val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bmp)
-            runCatching {
-                d.setBounds(0, 0, bw, bh)
-                d.draw(canvas)
+            val savedBounds = android.graphics.Rect(d.bounds)
+            try {
+                if (savedBounds.width() > 0 && savedBounds.height() > 0) {
+                    canvas.save()
+                    canvas.scale(bw.toFloat() / savedBounds.width(), bh.toFloat() / savedBounds.height())
+                    d.draw(canvas)
+                    canvas.restore()
+                } else {
+                    d.setBounds(0, 0, bw, bh)
+                    d.draw(canvas)
+                }
+            } finally {
+                runCatching { d.bounds = savedBounds }
             }
             bmp
         } catch (_: Throwable) {
@@ -15052,46 +15039,23 @@ internal object WeTypeClipboardSearchUi {
                         AndroidLog.e(TAG, "back button not laid out ($bw x $bh), align deferred")
                         return@post
                     }
-                    val lp = btn.layoutParams as? ViewGroup.MarginLayoutParams ?: run {
-                        AndroidLog.e(TAG, "button LP not MarginLP, cannot size")
-                        return@post
-                    }
+                    val lp = btn.layoutParams ?: ViewGroup.MarginLayoutParams(bw, bh)
                     lp.width = bw
                     lp.height = bh
+                    btn.layoutParams = lp
                     applyCircularShape(btn, minOf(bw, bh))
                     (btn as? ImageView)?.let { iv ->
                         val pad = (minOf(bw, bh) * 0.15f).roundToInt()
                         iv.setPadding(pad, pad, pad, pad)
                     }
                     val gap = dpToPx(bar.resources, BTN_GAP_DP)
-                    var isConstraint = false
-                    runCatching {
-                        val lpClass = lp.javaClass
-                        lpClass.getField("startToEnd").setInt(lp, backBtnId)
-                        lpClass.getField("topToTop").setInt(lp, backBtnId)
-                        lpClass.getField("bottomToBottom").setInt(lp, backBtnId)
-                        isConstraint = true
-                    }
-                    if (isConstraint) {
-                        lp.setMargins(gap, 0, 0, 0)
-                    } else {
-                        lp.setMargins(backBtn.left + bw + gap, backBtn.top, 0, 0)
-                    }
-                    btn.layoutParams = lp
-                    btn.post {
-                        try {
-                            val targetLeft = backBtn.left + bw + gap
-                            val targetTop = backBtn.top
-                            btn.translationX = (targetLeft - btn.left).toFloat()
-                            btn.translationY = (targetTop - btn.top).toFloat()
-                            val loc = IntArray(2)
-                            runCatching { btn.getLocationOnScreen(loc) }
-                            AndroidLog.i(TAG, "search button placed screen=${loc[0]},${loc[1]} " +
-                                "tx=${btn.translationX} ty=${btn.translationY}")
-                        } catch (t: Throwable) {
-                            AndroidLog.e(TAG, "translate button failed: ${t.message}")
-                        }
-                    }
+                    val targetLeft = backBtn.left + bw + gap
+                    val targetTop = backBtn.top
+                    btn.translationX = (targetLeft - btn.left).toFloat()
+                    btn.translationY = (targetTop - btn.top).toFloat()
+                    val loc = IntArray(2)
+                    runCatching { btn.getLocationOnScreen(loc) }
+                    AndroidLog.i(TAG, "search button placed screen=${loc[0]},${loc[1]} tx=${btn.translationX} ty=${btn.translationY}")
                 } catch (t: Throwable) {
                     AndroidLog.e(TAG, "align search button failed: ${t.message}")
                 }
@@ -15137,7 +15101,8 @@ internal object WeTypeClipboardSearchUi {
     private data class ResolvedIds(
         val backBtnId: Int?,
         val backBtnIvId: Int?,
-        val clipListId: Int?
+        val clipListId: Int?,
+        val moreBtnId: Int? = null
     )
 
     private fun findClipboardListView(root: ViewGroup, clipListId: Int?): View? {
@@ -15199,7 +15164,8 @@ internal object WeTypeClipboardSearchUi {
         return ResolvedIds(
             backBtnId = runCatching { sClass.getField("back_btn").getInt(null) }.getOrNull(),
             backBtnIvId = runCatching { sClass.getField("back_btn_iv").getInt(null) }.getOrNull(),
-            clipListId = runCatching { sClass.getField("t15_clipboard_list").getInt(null) }.getOrNull()
+            clipListId = runCatching { sClass.getField("t15_clipboard_list").getInt(null) }.getOrNull(),
+            moreBtnId = runCatching { sClass.getField("clipboard_more_btn").getInt(null) }.getOrNull()
         ).also {
             if (it.backBtnId == null && it.clipListId == null) {
                 AndroidLog.e(TAG, "resolve clipboard page IDs failed: fields missing in $WETYPE_ID_CLASS")

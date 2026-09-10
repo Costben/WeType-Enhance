@@ -23,8 +23,23 @@ class ClipboardSearchSubmitRoutingTest {
     }
     @Test fun clipboardPanelToggleHooksNavigationAndCollapsesExpandedSearchStrip() {
         assertTrue("hookClipboardPanelToggle must be installed", source.contains("hookClipboardPanelToggle(classLoader)"))
-        assertTrue("toggle must check CustomPhraseAndClipboard", source.contains("enumObj.name == \"CustomPhraseAndClipboard\""))
-        assertTrue("toggle must check isSearchStripExpanded", source.contains("isSearchStripExpanded()"))
-        assertTrue("toggle must cancel switch and collapse strip", source.contains("param.result = null") && source.contains("collapseStripF41()"))
+        assertTrue("isClipboardPanel must check CustomPhraseAndClipboard", source.contains("enumObj.name == \"CustomPhraseAndClipboard\""))
+        val hookIdx = source.indexOf("fun hookClipboardPanelToggle")
+        val nextIdx = source.indexOf("fun clampCandidateWindowAfterJ3F31", hookIdx)
+        assertTrue("hookClipboardPanelToggle must be present", hookIdx >= 0 && nextIdx > hookIdx)
+        val hookBody = source.substring(hookIdx, nextIdx)
+        assertTrue("toggle must check isClipboardPanel", hookBody.contains("isClipboardPanel(targetPanel)"))
+        assertTrue("toggle must check isSearchStripExpanded", hookBody.contains("isSearchStripExpanded()"))
+        assertTrue("toggle must collapse strip", hookBody.contains("collapseStripF41()"))
+        assertFalse("toggle must not cancel navigation to clipboard", hookBody.contains("param.result = null"))
+    }
+    @Test fun bitmapFromImageViewF22PreservesDrawableBounds() {
+        val methodIdx = source.indexOf("fun bitmapFromImageViewF22")
+        assertTrue("bitmapFromImageViewF22 must exist", methodIdx >= 0)
+        val endIdx = source.indexOf("fun bitmapFromViewDrawF22", methodIdx)
+        assertTrue("bitmapFromViewDrawF22 must follow", endIdx > methodIdx)
+        val body = source.substring(methodIdx, endIdx)
+        assertTrue("must save original drawable bounds", body.contains("val savedBounds = android.graphics.Rect(d.bounds)"))
+        assertTrue("must restore original drawable bounds", body.contains("d.bounds = savedBounds"))
     }
 }
