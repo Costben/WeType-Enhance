@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">WeType UI Enhanced</string>
-    <string name="xposeddescription">WeType UI enhancements and MIUI full-screen optimization unlocking for scoped input methods</string>
+    <string name="app_name">WeType Enhance</string>
+    <string name="xposeddescription">WeType enhancement module: appearance, key gestures, clipboard, system protections, and MIUI full-screen optimization unlocking for scoped input methods</string>
 
-    <string name="settings_title">WeType UI Enhanced</string>
+    <string name="settings_title">WeType Enhance</string>
     <string name="settings_summary">Input window</string>
     <string name="settings_corner_label">Corner radius</string>
     <string name="settings_light_mode">Light</string>

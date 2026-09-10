@@ -1,16 +1,16 @@
 <div align="center">
 <img src="./assets/icon.png" width="120px"/>
 
-# WeType UI Enhanced
+# WeType Enhance
 
-一个以 **微信输入法（WeType）界面美化与个性化** 为主要功能的 Xposed 模块，同时为作用域其它输入法解锁 MIUI 全面屏优化限制。
+一个面向 **微信输入法（WeType）** 的 Xposed 增强模块：在保留原生输入体验的前提下，提供界面美化、按键手势、剪贴板增强与系统防护，并为作用域其它输入法解锁 MIUI 全面屏优化限制。
 
 
 <p align="center">
 
 ![Android 12 or later](https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&amp;logoColor=white)
 ![LSPosed 102](https://img.shields.io/badge/LSPosed-Modern_API_102-5C6BC0)
-![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose-blue)
+![Jetpack Compose](https://img.shields.io/badge/Jetpack-Compose-blue)
 ![License](https://img.shields.io/badge/License-AGPLv3-orange)
 
 </p>
@@ -20,7 +20,7 @@
 
 ## 功能
 
-### 微信输入法美化
+### 界面美化
 
 - 自定义浅色 / 深色模式下的窗口背景颜色与透明度
 - 自定义浅色 / 深色按键颜色、透明度与圆角
@@ -29,13 +29,31 @@
 - 调节工具栏图标背景透明度
 - 调节候选词背景透明度与圆角
 - 调节首个候选词及候选栏拼音边距
-- 支持阻止微信输入法热更新
+
+### 按键手势
+
+- 支持 26 键 QWERTY 与九宫格 T9 按键下滑手势
+- 24 种可绑定动作：全选 / 剪切 / 复制 / 粘贴 / 全复制 / 全剪切、撤销 / 重做、段首段尾与文首文尾跳转及选至、剪切板 / 常用语面板拉起、手写找字、滑移 / 滑选光标等
+- 默认预置经典 Ctrl+Z / X / C / V 键位
+- 支持触觉反馈与触发阈值调节
+- 可在按键上显示动作角标，自定义字号、透明度、位置与边距
+
+### 功能增强
+
+- 键盘 Logo 替换：支持显示 / 隐藏与主体颜色自定义
+- 字体替换：支持微信官方、模块内置（WE-Regular）、跟随系统三种来源
+- 剪贴板增强：
+  - 跨设备同步条目可见化持久保存
+  - 解除条数保留上限与时长限制（上限提升至 100,000 条，留存时长永久）
+  - 解除单条文本长度限制
+  - 剪贴板原生搜索，支持中文分词与拼音 / 首字母匹配
+- 阻止微信输入法热更新
 
 ### MIUI / HyperOS 附加功能
 
 在支持小米全面屏键盘优化的 MIUI / HyperOS 系统上，提供三方输入法解锁全面屏键盘优化限制，解锁小米短语的包名校验，修复三方输入法无法获取系统剪贴板列表的问题。
 
-该部分并非模块主要功能，在非小米系统上不会启用，也不影响 WeType 美化功能。
+该部分在非小米系统上不会启用，也不影响 WeType 相关增强功能。
 
 ## 效果预览
 
@@ -81,15 +99,20 @@ LSPosed v2.1.1-it (7846)
 
 模块主要针对微信输入法进行适配。微信输入法内部实现、资源名称或云端热修复发生变化时，部分功能可能暂时失效。
 
+本仓库为基于上游的增强分支，会持续合入上游改动并叠加独立增强功能，两者版本号与更新节奏可能不同。
+
 MIUI / HyperOS 相关附加功能仅针对小米系统，不适用于其他厂商的系统级输入法优化实现。
 
 ## 下载
 
 请前往本仓库或下方模块仓库的 Releases 下载最新版本。
 
-Xposed 模块仓库：https://github.com/Xposed-Modules-Repo/com.xposed.wetypehook
+- 本仓库：https://github.com/Costben/WeType-Enhance
+- Xposed 模块仓库：https://github.com/Xposed-Modules-Repo/com.xposed.wetypehook
 
-## 开源致谢
+## 上游与开源致谢
+
+本项目 Fork 自 [NEORUAA/WeType_UI_Enhanced](https://github.com/NEORUAA/WeType_UI_Enhanced)。上游提供了界面美化与 MIUI 全面屏优化解锁的基础实现，本仓库在此基础上扩展为完整的微信输入法增强模块，新增按键手势、剪贴板增强、Logo / 字体替换等能力。
 
 感谢项目 [MIUI_IME_Unlock(MIT)](https://github.com/RC1844/MIUI_IME_Unlock) 提供的解锁 MIUI 全面屏优化限制功能
 

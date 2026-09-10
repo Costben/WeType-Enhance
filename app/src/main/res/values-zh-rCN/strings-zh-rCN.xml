@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">WeType 美化</string>
-    <string name="xposeddescription">为微信输入法提供界面美化优化，同时为作用域输入法解锁 MIUI 全面屏优化限制</string>
+    <string name="app_name">WeType 增强</string>
+    <string name="xposeddescription">微信输入法增强模块：界面美化、按键手势、剪贴板增强与系统防护，同时为作用域输入法解锁 MIUI 全面屏优化限制</string>
 
-    <string name="settings_title">WeType 美化</string>
+    <string name="settings_title">WeType 增强</string>
     <string name="settings_summary">输入法窗口</string>
     <string name="settings_corner_label">圆角</string>
     <string name="settings_light_mode">浅色</string>

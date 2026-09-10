@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MIUI IME"
+rootProject.name = "WeType Enhance"
 include(":app")

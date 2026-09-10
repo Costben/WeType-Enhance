@@ -38,7 +38,7 @@ android {
         }
     }
     applicationVariants.all {
-        val outputFileName = "WeType_UI_Enhanced-${versionName}_${buildType.name}.apk"
+        val outputFileName = "WeType_Enhance-${versionName}_${buildType.name}.apk"
         outputs.all {
             val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
             output?.outputFileName = outputFileName
