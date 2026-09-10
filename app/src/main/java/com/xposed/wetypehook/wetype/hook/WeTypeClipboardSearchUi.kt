@@ -21,6 +21,7 @@ import android.widget.LinearLayout
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.ProceedWithOriginal
 import com.xposed.wetypehook.xposed.hookAfter
+import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.hookReplace
 import java.util.Collections
 import java.util.WeakHashMap
@@ -160,6 +161,64 @@ internal object WeTypeClipboardSearchUi {
     private const val CLEAR_ICON_PADDING_DP = 8f
     private const val ROW_ICON_DP = 20f
     private const val BTN_GAP_DP = 4f
+
+    // F41翻译卡原生复用（用户否决藏栏/少抬升路线，在此基础上改，不reset）：
+    // 完全复用中英互译翻译样式（圆角矩形白卡上下两行），充分利用扩充高度，不再纠结只抬高一点。
+    // 上行左下拉文本改搜索类型（全量匹配/模糊匹配/OCR识别灰色disabled），下拉切换搜索模式
+    // （切模式即换过滤，不过滤逻辑可先stub但UI切换生效）；OCR项enabled=false+灰色，点击无效果；
+    // 右收起复用原生收起（走原生S()/J0/V0/U0/C0/s()还账，经Q0(false)即P0(false)→J0+V0+U0+C0+S+s+N三连）。
+    // 下行输入行复用原生输入框（hint改搜索剪贴板，输入即过滤剪贴板列表，复用现有过滤链keywordListener）。
+    // 卡高用原生k.getCurrentHeight（q1.e0(d0+156)，k.java 1440-1442），不再钳小窗；
+    // J3 clamp 439→192若与翻译卡原生高冲突则以翻译卡原生高为准（仅防爆钳，禁为少抬升而压高）。
+    // 工具栏/键盘 following 翻译态原生（不为留缝20去动bar/keyboard，F32下移补偿与翻译卡冲突则删）。
+    // 验证门回到翻译态原生可见性判定（q.t0/innerState+toolbar.x.A+k挂载），像素只diag。
+    // 任一步原生取不到即整条fail-closed，禁仿制兜底（禁GradientDrawable/硬编码色/系统图标/f0(32)）。
+    // 反编译基线：ImeCandidateView candidate_top_view插槽+s0/r0挂载+翻译壳Q0
+    // （q.java $t 1429-1544：1482 g3 fast-path，1485-1495 innerState+toolbar.x.A，
+    // 1499-1516 r0，1528-1530 A2/e0/N2）→N#J3写mCandidateView LP
+    // （窗高=S_cache≈140+k.getCurrentHeight()，k.getCurrentHeight=q1.e0(d0+156)，
+    // k.java 1440-1442，X() margins top e0(36)/bottom e0(20)/side g0(20)+lineHeight e0(63)）；
+    // 皮肤单例k$t二进制名取；圆角B方案WeTypeSettings.getCornerRadiusXposed。
+    private const val SEARCH_MODE_FULL = 0
+    private const val SEARCH_MODE_FUZZY = 1
+    private const val SEARCH_MODE_OCR = 2
+    private const val SEARCH_MODE_OCR_ID = 1003
+    private const val SEARCH_MODE_FULL_ID = 1001
+    private const val SEARCH_MODE_FUZZY_ID = 1002
+    @Volatile
+    private var searchModeF41: Int = SEARCH_MODE_FULL
+    @Volatile
+    private var nativeKRefF41: java.lang.ref.WeakReference<View>? = null
+    @Volatile
+    private var nativeKEditRefF41: java.lang.ref.WeakReference<EditText>? = null
+    @Volatile
+    private var nativeKModeTvRefF41: java.lang.ref.WeakReference<android.widget.TextView>? = null
+    private val nativeKWatchersF41: MutableMap<EditText, TextWatcher> =
+        Collections.synchronizedMap(WeakHashMap<EditText, TextWatcher>())
+    private fun searchModeNameF41(mode: Int): String = when (mode) {
+        SEARCH_MODE_FUZZY -> "模糊匹配"
+        SEARCH_MODE_OCR -> "OCR识别"
+        else -> "全量匹配"
+    }
+    // C46小缺口补记（只修C45 FAIL三项，其余双行卡/过滤/收起/零仿制/二次一致不动）：
+    // 下拉展开重绑覆盖→拦b#k数据源+展开重喂；直点收起→exit包装+Q0(false)补记；hint竞态→setHint拦+重申。
+    private const val SEARCH_HINT_F41 = "搜索剪贴板"
+    @Volatile
+    private var feedingDropdownF41 = false
+    @Volatile
+    private var f41DropdownSrcHooked = false
+    @Volatile
+    private var f41ExpandHooked = false
+    @Volatile
+    private var f41HintHooked = false
+    @Volatile
+    private var f41CollapseHooked = false
+    @Volatile
+    private var inCollapseF41 = false
+    private val wrappedExitViewsF41: MutableSet<View> =
+        Collections.newSetFromMap(WeakHashMap<View, Boolean>())
+    private val hintLayoutListenersF41: MutableMap<EditText, View.OnLayoutChangeListener> =
+        Collections.synchronizedMap(WeakHashMap<EditText, View.OnLayoutChangeListener>())
 
     /**
      * F5图标线（新缝基准）：centerY=图标cluster均值，halfH=簇内图标高均值/2（现算不写死，
@@ -385,6 +444,14 @@ internal object WeTypeClipboardSearchUi {
         try {
             if (nHost == null) return
             val decor = overlayParentRef?.get() ?: return
+            // F41：翻译卡原生高为准，不再钳小窗。若原生k在（已复用），一律不动（仅防爆钳，禁为少抬升而压高）。
+            // 原生复用点：k#getCurrentHeight（q1.e0(d0+156)），窗高N#J3原生写S_cache+k高。
+            val nativeK = runCatching { findTranslatorTopView(decor) }.getOrNull()
+            if (nativeK != null && nativeK.parent != null) {
+                val kH = runCatching { nativeKHeightF41(nativeK) }.getOrNull()
+                AndroidLog.i(TAG, "strip F41 window: SKIP clamp (native k wins kH=$kH，J3原生高为准，仅防爆，diag only)")
+                return
+            }
             val strip = decor.findViewWithTag<View>(TAG_SEARCH_BOX_CONTAINER) ?: return
             if (strip.visibility != View.VISIBLE || strip.parent == null) return
             if (Looper.myLooper() != Looper.getMainLooper()) {
@@ -507,18 +574,105 @@ internal object WeTypeClipboardSearchUi {
     @Volatile
     private var stripKbDyF32: Float = 0f
 
-    // F34（接F33缝19~21+视图n>=5唯一门已合入未提交，在此基础上改，不reset）：反编译定论藏栏原生=是，
-    // 零位移以工具栏/logo行dy=0判定，Q行位移属原生藏栏正常不再判FAIL；Q基线按mode分列
-    // （normal vs translating/search），toolbar高现量不写死；工具栏探测加Q行显式veto；
-    // bar定位排除Q容器子树。F32几何+F33门不动，缝19~21+视图n>=5仍唯一门，像素只diag，
-    // q-after保持SKIP/PASS/DRIFT-diag三分态DRIFT只diag不REVERT；fail-closed禁仿制兜底，
-    // 圆角B仍WeTypeSettings.getCornerRadiusXposed。
-    private data class QBaselineF34(
-        val baseline: Int,
-        val translating: Boolean?,
-        val toolbarH: Int?,
-        val modeSrc: String
-    )
+    // F40（接F39保栏已合入未提交，在此基础上改，不reset）：C43 FAIL根因全修。
+    // 挂载初值对（mounted iconTop/barTop/gapToIcon=20）但F32-move后logo_iv V->V(isShown=false)、
+    // logoContainer G->V单vis、bar y=1190被顶走175、条y压栏；窗F20全程77到不了192、F28三步STALL；
+    // 缝stack gap=-95→REVERT；Q F33/F22 qTop=-1连带判挂；toolbar-zero F32-verify PASS假阳。
+    // 修：①挂载基线现量现记（mount初值iconTop/barTop/stripBottom，gap 19~21+viewN>=5才记，不过写死1365，
+    // 1365仅C44验收参考）；②F32栏不动dy=0只条落位，1190位移/压栏/isShown=false即REVERT fail-closed，
+    // 不再新施translationY；③toolbar-zero含isShown双真+位置（iconTop≈基线±8+dy0+F32栏+压栏），否则FAIL/REVERT；
+    // ④Q kb/decor回退（QWERTYUIOP>=5+极差<=0.06H+>midY，digit仅可见时要求，对标1494±8，kbId模糊回退+hop放宽）；
+    // ⑤窗藏栏不推/显栏推对对象（J3唯一钳439->192不动，push只publish+N/float重刷，不写LP）。
+    // 缝19~21+viewN>=5仍唯一门像素只diag、顶4~7、圆角B、收起还账、J3唯一钳、q.t序全不动；
+    // 禁仿制禁GradientDrawable/硬编码色/系统图标/f0(32)。
+    private const val STRIP_F40_POS_TOL_PX = 8
+    @Volatile
+    private var stripMountIconTopF40: Int = -1
+    @Volatile
+    private var stripMountBarTopF40: Int = -1
+    @Volatile
+    private var stripMountStripBottomF40: Int = -1
+    /** F40挂载基线现量现记（只读几何+记账，不碰视图）：mount后条/栏布局稳时记iconTop/barTop/stripBottom；仅gap19~21+viewN>=5才覆盖（mount初值对才记，错位不污染基线）。 */
+    private fun noteMountBaselineF40(decor: ViewGroup, row: View) {
+        // F41丢弃：F40挂载基线（藏栏/少抬升门）不再记，回到翻译态原生判定，像素只diag。
+        AndroidLog.i(TAG, "strip F41 baseline: SKIP F40 mount-baseline (translation native wins, diag only)")
+        if (true) return
+        try {
+            if (row.getTag() != TAG_SEARCH_BOX_CONTAINER || row.parent == null) return
+            val rloc = IntArray(2)
+            runCatching { row.getLocationOnScreen(rloc) }
+            if (rloc[1] <= 0 || row.height <= 0) return
+            val stripBottom = rloc[1] + row.height
+            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
+            val viewLine = runCatching { scanSquareIconLine(decor, logo) }.getOrNull() ?: run {
+                AndroidLog.i(TAG, "strip F40 mount-baseline: SKIP viewLine missing (fail-closed，不污染基线)")
+                return
+            }
+            if (viewLine.top <= 0 || viewLine.n < 5) {
+                AndroidLog.i(TAG, "strip F40 mount-baseline: SKIP viewN=${viewLine.n} top=${viewLine.top.toInt()} (需n>=5才记)")
+                return
+            }
+            val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
+            val bloc = IntArray(2)
+            if (bar != null) runCatching { bar.getLocationOnScreen(bloc) }
+            val barTop = if (bar != null) bloc[1] else -1
+            if (barTop <= 0) {
+                AndroidLog.i(TAG, "strip F40 mount-baseline: SKIP barTop unlaid=$barTop (fail-closed)")
+                return
+            }
+            val gap = (viewLine.top - stripBottom).toInt()
+            if (gap !in STRIP_F32_GAP_MIN_PX..STRIP_F32_GAP_MAX_PX) {
+                AndroidLog.i(TAG, "strip F40 mount-baseline: SKIP gap=$gap(需19~21才记，不污染基线) " +
+                    "viewTop=${viewLine.top.toInt()} n=${viewLine.n} barTop=$barTop stripBottom=$stripBottom")
+                return
+            }
+            stripMountIconTopF40 = viewLine.top.toInt()
+            stripMountBarTopF40 = barTop
+            stripMountStripBottomF40 = stripBottom
+            AndroidLog.i(TAG, "strip F40 mount-baseline: iconTop=$stripMountIconTopF40 barTop=$stripMountBarTopF40 " +
+                "stripBottom=$stripMountStripBottomF40 gap=$gap(19~21) viewN=${viewLine.n} (mount初值，bar不动基准，stripBottom+20≈iconTop)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F40 mount-baseline failed: $t")
+        }
+    }
+    /** F40基线清理（退壳拆条全还时调，幂等，只清记账不碰视图）。 */
+    private fun clearMountBaselineF40() {
+        stripMountIconTopF40 = -1
+        stripMountBarTopF40 = -1
+        stripMountStripBottomF40 = -1
+    }
+    /** F40祖先显性链（只动VISIBLE，不碰LP/垫/边/位移/条/壳/s0/J3/圆角B/DEL/commit/logo自身值）：把v到decor直系祖先中GONE/INVISIBLE逐个VISIBLE+requestLayout，返改动数。isShown=false多为祖先藏，用此还账。 */
+    private fun ensureAncestorsVisibleF40(v: View, decor: ViewGroup): Int {
+        var n = 0
+        try {
+            var p = v.parent
+            var guard = 0
+            while (p is ViewGroup && guard < 10) {
+                if (p === decor) break
+                if (p.visibility != View.VISIBLE) {
+                    runCatching { p.visibility = View.VISIBLE }
+                    runCatching { p.requestLayout() }
+                    n++
+                }
+                if (p.parent == null) break
+                p = p.parent
+                guard++
+            }
+            if (n > 0) runCatching { v.requestLayout() }
+        } catch (_: Throwable) {
+        }
+        return n
+    }
+
+    // F39保栏（接F34残留清理，在此基础上改，不reset）：剪贴板搜索态强制保栏，
+    // translating=true亦须VISIBLE可测，不做三态判定，不断言藏栏合理；
+    // 零位移以customToolbarRv/logo/logoContainerRl+bar行dy=0且VISIBLE判定；
+    // Q基线只留normal=1494±8（translating藏栏1404仅真正翻译态，搜索态不走）；
+    // 工具栏探测加Q行显式veto；bar定位排除Q容器子树。F32几何+F33门不动，
+    // 缝19~21+视图n>=5仍唯一门，像素只diag，窗windowBar 192±4（F31 439->192+正确push），
+    // q-after保持SKIP/PASS/DRIFT-diag三分态DRIFT只diag不REVERT；fail-closed禁仿制兜底
+    // （禁GradientDrawable/硬编码色/系统图标），圆角B仍WeTypeSettings.getCornerRadiusXposed，
+    // J3唯一钳点、挂条全序q.t r0→A2/e0/N2→J3不动，收起/跳回全还账不动。
     private data class QRowDetailF34(
         val qTop: Int,
         val qTops: List<Int>,
@@ -531,224 +685,6 @@ internal object WeTypeClipboardSearchUi {
         val midY: Int,
         val decorH: Int
     )
-    /** F34 mode主探针（三态）：q.t0()/m0()无参Boolean优先，缺失返null不猜（上层fallback工具栏可见性）。只读不碰视图。 */
-    private fun isTranslatingByQRawF34(anchor: View): Boolean? {
-        return try {
-            val mgr = translatingMgr(anchor) ?: return null
-            val cls = mgr.javaClass
-            val t0 = cls.declaredMethods.firstOrNull { it.name == "t0" && it.parameterTypes.isEmpty() }
-            if (t0 != null) {
-                t0.isAccessible = true
-                val r = runCatching { t0.invoke(mgr) as? Boolean }.getOrNull() ?: return null
-                return r
-            }
-            val m0 = cls.declaredMethods.firstOrNull { it.name == "m0" && it.parameterTypes.isEmpty() }
-            if (m0 != null) {
-                m0.isAccessible = true
-                val r = runCatching { m0.invoke(mgr) as? Boolean }.getOrNull() ?: return null
-                return r
-            }
-            null
-        } catch (_: Throwable) {
-            null
-        }
-    }
-    /** F34 toolbar.x.A.getValue()旁证（三态）：toolbar视图x字段->A字段->getValue() Boolean，任一步缺失返null。只读。 */
-    private fun queryToolbarLiveTranslatingF34(toolbarView: View?): Boolean? {
-        return try {
-            if (toolbarView == null) return null
-            val xField = runCatching {
-                var c: Class<*>? = toolbarView.javaClass
-                var f: java.lang.reflect.Field? = null
-                while (c != null && c != Any::class.java && c != View::class.java && c != ViewGroup::class.java) {
-                    f = runCatching { c.getDeclaredField("x") }.getOrNull()
-                    if (f != null) break
-                    c = c.superclass
-                }
-                f
-            }.getOrNull() ?: return null
-            xField.isAccessible = true
-            val xObj = runCatching { xField.get(toolbarView) }.getOrNull() ?: return null
-            val aField = runCatching {
-                var c: Class<*>? = xObj.javaClass
-                var f: java.lang.reflect.Field? = null
-                while (c != null && c != Any::class.java) {
-                    f = runCatching { c.getDeclaredField("A") }.getOrNull()
-                    if (f != null) break
-                    c = c.superclass
-                }
-                f
-            }.getOrNull() ?: return null
-            aField.isAccessible = true
-            val live = runCatching { aField.get(xObj) }.getOrNull() ?: return null
-            val getValue = runCatching {
-                live.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.isEmpty() }
-            }.getOrNull() ?: return null
-            getValue.isAccessible = true
-            runCatching { getValue.invoke(live) as? Boolean }.getOrNull()
-        } catch (_: Throwable) {
-            null
-        }
-    }
-    /** F34 customToolbarRv定位（全宿主原生s字段现取，exact优先fuzzy回退，找不到返null fail-closed）。 */
-    private fun resolveCustomToolbarViewF34(decor: ViewGroup): View? {
-        return try {
-            val cl = hostClassLoader ?: decor.context?.classLoader ?: return null
-            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull() ?: return null
-            val exacts = arrayOf("customToolbarRv", "custom_toolbar_rv", "toolbar_rv", "customToolbarRecyclerView")
-            for (n in exacts) {
-                val id = runCatching { sCls.getField(n).getInt(null) }.getOrNull()
-                    ?: runCatching { sCls.getDeclaredField(n).also { it.isAccessible = true }.getInt(null) }.getOrNull()
-                if (id != null && id != 0) {
-                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
-                    if (v != null) return v
-                }
-            }
-            for (f in sCls.declaredFields) {
-                try {
-                    if (f.type != Int::class.javaPrimitiveType && f.type != Integer::class.java) continue
-                    val nm = f.name.lowercase()
-                    if (!nm.contains("toolbar")) continue
-                    if (!(nm.contains("custom") || nm.contains("rv") || nm.contains("recycler") || nm.contains("list"))) continue
-                    f.isAccessible = true
-                    val id = runCatching { f.getInt(null) }.getOrNull() ?: continue
-                    if (id == 0) continue
-                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
-                    if (v != null) return v
-                } catch (_: Throwable) {
-                    continue
-                }
-            }
-            null
-        } catch (_: Throwable) {
-            null
-        }
-    }
-    /** F34 logoContainerRl定位（全宿主原生s字段现取，exact优先fuzzy回退，找不到返null）。 */
-    private fun resolveLogoContainerViewF34(decor: ViewGroup): View? {
-        return try {
-            val cl = hostClassLoader ?: decor.context?.classLoader ?: return null
-            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull() ?: return null
-            val exacts = arrayOf("logoContainerRl", "logo_container_rl", "logoContainer", "toolbar_logo_container")
-            for (n in exacts) {
-                val id = runCatching { sCls.getField(n).getInt(null) }.getOrNull()
-                    ?: runCatching { sCls.getDeclaredField(n).also { it.isAccessible = true }.getInt(null) }.getOrNull()
-                if (id != null && id != 0) {
-                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
-                    if (v != null) return v
-                }
-            }
-            for (f in sCls.declaredFields) {
-                try {
-                    if (f.type != Int::class.javaPrimitiveType && f.type != Integer::class.java) continue
-                    val nm = f.name.lowercase()
-                    if (!nm.contains("logo")) continue
-                    if (!(nm.contains("container") || nm.contains("rl") || nm.contains("layout"))) continue
-                    f.isAccessible = true
-                    val id = runCatching { f.getInt(null) }.getOrNull() ?: continue
-                    if (id == 0) continue
-                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
-                    if (v != null) return v
-                } catch (_: Throwable) {
-                    continue
-                }
-            }
-            null
-        } catch (_: Throwable) {
-            null
-        }
-    }
-    /** F34 工具栏可见性旁证（三态）：customToolbarRv.isShown/logo visibility综合，藏栏预期GONE/INVISIBLE，复现预期VISIBLE；不可判返null。只读。 */
-    private fun queryModeViaToolbarVisibilityF34(decor: ViewGroup): Boolean? {
-        return try {
-            val custom = runCatching { resolveCustomToolbarViewF34(decor) }.getOrNull()
-            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
-            val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
-            var hiddenVotes = 0
-            var visibleVotes = 0
-            var total = 0
-            if (custom != null) {
-                total++
-                if (custom.visibility != View.VISIBLE || !custom.isShown) hiddenVotes++ else visibleVotes++
-            }
-            if (logo != null) {
-                total++
-                if (logo.visibility != View.VISIBLE || !logo.isShown) hiddenVotes++ else visibleVotes++
-            }
-            if (bar != null) {
-                total++
-                if (bar.visibility != View.VISIBLE || !bar.isShown) hiddenVotes++ else visibleVotes++
-            }
-            if (total == 0) return null
-            if (hiddenVotes == total) true
-            else if (visibleVotes == total) false
-            else null
-        } catch (_: Throwable) {
-            null
-        }
-    }
-    /** F34 mode综合（三态）：q.t0()/m0()优先，其次toolbar.x.A.getValue()，再customToolbarRv.isShown/logo visibility；全缺返null。 */
-    private fun isTranslatingModeF34(decor: ViewGroup): Pair<Boolean?, String> {
-        return try {
-            val qDirect: Boolean? = try { isTranslatingByQRawF34(decor) } catch (_: Throwable) { null }
-            if (qDirect != null) return qDirect to "q.t0/m0"
-            val customForLive = runCatching { resolveCustomToolbarViewF34(decor) }.getOrNull()
-                ?: runCatching { findStripToolbarBar(decor) }.getOrNull()
-            val liveDirect: Boolean? = try { queryToolbarLiveTranslatingF34(customForLive) } catch (_: Throwable) { null }
-            if (liveDirect != null) return liveDirect to "toolbar.x.A"
-            val visDirect: Boolean? = try { queryModeViaToolbarVisibilityF34(decor) } catch (_: Throwable) { null }
-            if (visDirect != null) return visDirect to "toolbarVis/logoVis"
-            null to "unknown"
-        } catch (_: Throwable) {
-            null to "unknown"
-        }
-    }
-    /** F34 toolbar高现量（只读）：customToolbar/bar/logoContainer首个可布局高>0，失败返null fail-closed，不写死。 */
-    private fun toolbarHeightF34(decor: ViewGroup): Int? {
-        return try {
-            val custom = runCatching { resolveCustomToolbarViewF34(decor) }.getOrNull()
-            val ch = custom?.height?.takeIf { it > 0 } ?: custom?.measuredHeight?.takeIf { it > 0 }
-            if (ch != null && ch > 0) return ch
-            val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
-            val bh = bar?.height?.takeIf { it > 0 } ?: bar?.measuredHeight?.takeIf { it > 0 }
-            if (bh != null && bh > 0) return bh
-            val logoC = runCatching { resolveLogoContainerViewF34(decor) }.getOrNull()
-            val lh = logoC?.height?.takeIf { it > 0 } ?: logoC?.measuredHeight?.takeIf { it > 0 }
-            if (lh != null && lh > 0) return lh
-            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
-            val lp = logo?.parent as? ViewGroup
-            val ph = lp?.height?.takeIf { it > 0 } ?: lp?.measuredHeight?.takeIf { it > 0 }
-            if (ph != null && ph > 0) return ph
-            null
-        } catch (_: Throwable) {
-            null
-        }
-    }
-    /** F34 Q基线按mode分列（只读）：normal=1494±8；translating/search=1494-toolbarH现量；mode未知或toolbar高缺测回退normal记diag（DRIFT只diag不REVERT故安全）。 */
-    private fun qBaselineForModeF34(decor: ViewGroup): QBaselineF34 {
-        return try {
-            val (translating, src) = isTranslatingModeF34(decor)
-            if (translating == true) {
-                val th = runCatching { toolbarHeightF34(decor) }.getOrNull()
-                if (th != null && th > 0) {
-                    val base = STRIP_F32_Q_BASELINE - th
-                    AndroidLog.i(TAG, "strip F34 mode: translating=true src=$src toolbarH=$th baseline=$base(1494-toolbarH现量) tol=±$STRIP_F32_Q_TOL_PX")
-                    return QBaselineF34(base, true, th, src)
-                }
-                AndroidLog.i(TAG, "strip F34 mode: translating=true src=$src toolbarH缺测回退normal baseline=$STRIP_F32_Q_BASELINE±$STRIP_F32_Q_TOL_PX (fail-closed, DRIFT只diag)")
-                return QBaselineF34(STRIP_F32_Q_BASELINE, true, null, "$src+fallback")
-            }
-            if (translating == false) {
-                AndroidLog.i(TAG, "strip F34 mode: translating=false src=$src baseline=$STRIP_F32_Q_BASELINE±$STRIP_F32_Q_TOL_PX (normal)")
-                return QBaselineF34(STRIP_F32_Q_BASELINE, false, null, src)
-            }
-            AndroidLog.i(TAG, "strip F34 mode: unknown src=$src baseline=$STRIP_F32_Q_BASELINE±$STRIP_F32_Q_TOL_PX (fail-closed回退normal, DRIFT只diag)")
-            QBaselineF34(STRIP_F32_Q_BASELINE, null, null, src)
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "strip F34 mode failed: $t")
-            QBaselineF34(STRIP_F32_Q_BASELINE, null, null, "exception-fallback")
-        }
-    }
     /** F34 Q行明细（复用F33 findQTopOnScreen可信门：kb容器内QWERTYUIOP>=5+极差<=0.06H+digitTop<QTop+>midY；附lefts/dxs/keyH供veto比对10键11缝）。缺测返null。只读。 */
     private fun qRowDetailF34(decor: ViewGroup): QRowDetailF34? {
         return try {
@@ -772,7 +708,8 @@ internal object WeTypeClipboardSearchUi {
             val q: ArrayDeque<View> = ArrayDeque()
             q.add(kbScope)
             var hops = 0
-            while (q.isNotEmpty() && hops < 600) {
+            // F40：hop 600→800（kb子树深键偶发截断致qTop=-1连带判挂；800与他处同量级，仍有界）。
+            while (q.isNotEmpty() && hops < 800) {
                 val v = q.removeFirst()
                 hops++
                 if (v.getTag() == TAG_SEARCH_BUTTON || v.getTag() == TAG_SEARCH_BOX_CONTAINER ||
@@ -816,6 +753,7 @@ internal object WeTypeClipboardSearchUi {
             val rangeTol = (decorH * 0.06f).toInt().coerceAtLeast(28)
             if (qBest <= midY) return null
             if (qRange > rangeTol) return null
+            // F40：digit仅可见时要求（digitBest==null即放宽，对标1494±8由调用方另判；此处逆序才拒）。
             if (digitBest != null && qBest < digitBest) return null
             val dxs = ArrayList<Int>()
             for (k in 0 until qLefts.size - 1) dxs.add(qLefts[k + 1] - qLefts[k])
@@ -857,213 +795,363 @@ internal object WeTypeClipboardSearchUi {
             false
         }
     }
-    /** F34 零位移改判（只读diag，不gate）：logo_iv/customToolbarRv/logoContainerRl行translationY/dy=0且visibility按q.t0()预期（true=>GONE/INVISIBLE藏栏，false=>VISIBLE复现）；Q位移不再判FAIL。原生取不到即SKIP fail-closed。返true=PASS/false=FAIL/null=SKIP。
-     * F37藏栏visibility（接F34，在此基础上改，不reset）：C40 translating=true应藏但customToolbarRv仍V vs logoContainer G不一致致FAIL。修：藏栏判定以logo/logoContainer/bar primary为准，custom残V只diag不判FAIL（截图已隐，残影V）；dy仍全员0；附hide-chain diag（toolbar.x.A/innerTranslatingState只读）。F32几何/F33门/F34基线/圆角B不动。 */
-    private fun verifyToolbarZeroShiftF34(decor: ViewGroup, tag: String): Boolean? {
+    /** F39 customToolbarRv定位（全宿主原生s字段现取，exact优先fuzzy回退，找不到返null fail-closed；禁仿制兜底禁GradientDrawable/硬编码色/系统图标）。 */
+    private fun resolveCustomToolbarViewF39(decor: ViewGroup): View? {
         return try {
-            val (translating, src) = isTranslatingModeF34(decor)
-            if (translating == null) {
-                AndroidLog.i(TAG, "strip F34 toolbar-zero [$tag]: SKIP mode未知src=$src (fail-closed, Q不再判FAIL)")
-                return null
+            val cl = hostClassLoader ?: decor.context?.classLoader ?: return null
+            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull() ?: return null
+            val exacts = arrayOf("customToolbarRv", "custom_toolbar_rv", "toolbar_rv", "customToolbarRecyclerView")
+            for (n in exacts) {
+                val id = runCatching { sCls.getField(n).getInt(null) }.getOrNull()
+                    ?: runCatching { sCls.getDeclaredField(n).also { it.isAccessible = true }.getInt(null) }.getOrNull()
+                if (id != null && id != 0) {
+                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
+                    if (v != null) return v
+                }
             }
-            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
-            val custom = runCatching { resolveCustomToolbarViewF34(decor) }.getOrNull()
-            val logoC = runCatching { resolveLogoContainerViewF34(decor) }.getOrNull()
+            for (f in sCls.declaredFields) {
+                try {
+                    if (f.type != Int::class.javaPrimitiveType && f.type != Integer::class.java) continue
+                    val nm = f.name.lowercase()
+                    if (!nm.contains("toolbar")) continue
+                    if (!(nm.contains("custom") || nm.contains("rv") || nm.contains("recycler") || nm.contains("list"))) continue
+                    f.isAccessible = true
+                    val id = runCatching { f.getInt(null) }.getOrNull() ?: continue
+                    if (id == 0) continue
+                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
+                    if (v != null) return v
+                } catch (_: Throwable) {
+                    continue
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+    /** F39 logoContainerRl定位（全宿主原生s字段现取，exact优先fuzzy回退，找不到返null fail-closed；禁仿制兜底）。 */
+    private fun resolveLogoContainerViewF39(decor: ViewGroup): View? {
+        return try {
+            val cl = hostClassLoader ?: decor.context?.classLoader ?: return null
+            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull() ?: return null
+            val exacts = arrayOf("logoContainerRl", "logo_container_rl", "logoContainer", "toolbar_logo_container")
+            for (n in exacts) {
+                val id = runCatching { sCls.getField(n).getInt(null) }.getOrNull()
+                    ?: runCatching { sCls.getDeclaredField(n).also { it.isAccessible = true }.getInt(null) }.getOrNull()
+                if (id != null && id != 0) {
+                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
+                    if (v != null) return v
+                }
+            }
+            for (f in sCls.declaredFields) {
+                try {
+                    if (f.type != Int::class.javaPrimitiveType && f.type != Integer::class.java) continue
+                    val nm = f.name.lowercase()
+                    if (!nm.contains("logo")) continue
+                    if (!(nm.contains("container") || nm.contains("rl") || nm.contains("layout"))) continue
+                    f.isAccessible = true
+                    val id = runCatching { f.getInt(null) }.getOrNull() ?: continue
+                    if (id == 0) continue
+                    val v = runCatching { decor.findViewById<View>(id) }.getOrNull()
+                    if (v != null) return v
+                } catch (_: Throwable) {
+                    continue
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+    /** F39 toolbar.x.A读（只读）：toolbar视图x字段->A字段->getValue() Boolean，任一步缺失返null fail-closed。 */
+    private fun queryToolbarLiveF39(toolbarView: View?): Boolean? {
+        return try {
+            if (toolbarView == null) return null
+            var c: Class<*>? = toolbarView.javaClass
+            var xField: java.lang.reflect.Field? = null
+            while (c != null && c != Any::class.java && c != View::class.java && c != ViewGroup::class.java) {
+                xField = runCatching { c.getDeclaredField("x") }.getOrNull()
+                if (xField != null) break
+                c = c.superclass
+            }
+            xField ?: return null
+            xField.isAccessible = true
+            val xObj = runCatching { xField.get(toolbarView) }.getOrNull() ?: return null
+            var c2: Class<*>? = xObj.javaClass
+            var aField: java.lang.reflect.Field? = null
+            while (c2 != null && c2 != Any::class.java) {
+                aField = runCatching { c2.getDeclaredField("A") }.getOrNull()
+                if (aField != null) break
+                c2 = c2.superclass
+            }
+            aField ?: return null
+            aField.isAccessible = true
+            val live = runCatching { aField.get(xObj) }.getOrNull() ?: return null
+            val getValue = runCatching {
+                live.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.isEmpty() }
+            }.getOrNull() ?: return null
+            getValue.isAccessible = true
+            runCatching { getValue.invoke(live) as? Boolean }.getOrNull()
+        } catch (_: Throwable) {
+            null
+        }
+    }
+    /** F39 toolbar.x.A写回（原生调用为准）：live==true才setValue(false)恢复显栏；缺失fail-closed不动；禁硬写死高度。返true=已恢复。 */
+    private fun tryRestoreToolbarLiveF39(decor: ViewGroup): Boolean {
+        return try {
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                mainHandler.post { runCatching { tryRestoreToolbarLiveF39(decor) } }
+                return false
+            }
+            val custom = runCatching { resolveCustomToolbarViewF39(decor) }.getOrNull()
             val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
-            val hideChainF37 = runCatching { queryToolbarHideChainF37(decor) }.getOrNull() ?: ""
+            val anchor: View = custom ?: bar ?: return false
+            val cur = runCatching { queryToolbarLiveF39(anchor) }.getOrNull() ?: return false
+            if (cur != true) return false
+            var c: Class<*>? = anchor.javaClass
+            var xField: java.lang.reflect.Field? = null
+            while (c != null && c != Any::class.java && c != View::class.java && c != ViewGroup::class.java) {
+                xField = runCatching { c.getDeclaredField("x") }.getOrNull()
+                if (xField != null) break
+                c = c.superclass
+            }
+            xField ?: return false
+            xField.isAccessible = true
+            val xObj = runCatching { xField.get(anchor) }.getOrNull() ?: return false
+            var c2: Class<*>? = xObj.javaClass
+            var aField: java.lang.reflect.Field? = null
+            while (c2 != null && c2 != Any::class.java) {
+                aField = runCatching { c2.getDeclaredField("A") }.getOrNull()
+                if (aField != null) break
+                c2 = c2.superclass
+            }
+            aField ?: return false
+            aField.isAccessible = true
+            val live = runCatching { aField.get(xObj) }.getOrNull() ?: return false
+            val setValue = runCatching {
+                live.javaClass.methods.firstOrNull {
+                    it.name == "setValue" && it.parameterTypes.size == 1
+                }
+            }.getOrNull() ?: run {
+                val postValue = runCatching {
+                    live.javaClass.methods.firstOrNull {
+                        it.name == "postValue" && it.parameterTypes.size == 1
+                    }
+                }.getOrNull() ?: return false
+                postValue.isAccessible = true
+                runCatching { postValue.invoke(live, false) }
+                AndroidLog.i(TAG, "strip F39 keep-bar live.x.A true->false via postValue (原生还账，禁硬写死高度)")
+                return true
+            }
+            setValue.isAccessible = true
+            runCatching { setValue.invoke(live, false) }
+            AndroidLog.i(TAG, "strip F39 keep-bar live.x.A true->false via setValue (原生还账，禁硬写死高度)")
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+    /** F39保栏（挂条路径显式恢复/阻止藏）：customToolbarRv/logo/logoContainerRl原生取后VISIBLE且dy=0；
+     * 翻译链自动藏栏则先经toolbar.x.A原生还账（setValue false），再直复VISIBLE/dy=0；取不到fail-closed不动；
+     * 禁仿制兜底禁GradientDrawable/硬编码色/系统图标；禁硬写死高度；J3唯一钳点不动。返true=有视图可保。 */
+    private fun ensureToolbarVisibleF39(decor: ViewGroup, tag: String): Boolean {
+        // F41丢弃：F39保栏强改不再执行。工具栏following翻译态原生（藏栏为翻译原生行为，不强制显栏）。
+        AndroidLog.i(TAG, "strip F41 keep-bar [$tag]: SKIP F39 (translation native wins, diag only)")
+        if (true) return false
+        return try {
+            if (runCatching { isAiBarShowing(decor) }.getOrDefault(false)) {
+                AndroidLog.i(TAG, "strip F39 keep-bar [$tag]: SKIP AI条态logo暂隐不强制 (fail-closed)")
+                return false
+            }
+            runCatching { tryRestoreToolbarLiveF39(decor) }
+            val custom = runCatching { resolveCustomToolbarViewF39(decor) }.getOrNull()
+            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
+            val logoC = runCatching { resolveLogoContainerViewF39(decor) }.getOrNull()
+            val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
+            if (custom == null && logo == null && logoC == null && bar == null) {
+                AndroidLog.e(TAG, "strip F39 keep-bar [$tag]: SKIP all-missing (fail-closed)")
+                return false
+            }
+            var changed = false
+            val parts = ArrayList<String>()
+            fun one(nm: String, v: View?) {
+                if (v == null) {
+                    parts.add("$nm:null")
+                    return
+                }
+                val vis = v.visibility
+                val visStr = when (vis) { View.VISIBLE -> "V"; View.GONE -> "G"; View.INVISIBLE -> "I"; else -> "$vis" }
+                val dy = runCatching { v.translationY }.getOrDefault(0f)
+                val needVis = (vis != View.VISIBLE || !v.isShown)
+                // F40：bar不动dy=0无豁免（F39的isF32Bar豁免致1190位移残留，已删；F32不再新施，残留由还账清）。
+                val needDy = kotlin.math.abs(dy) > 1f
+                if (needVis && v.parent != null) {
+                    runCatching { v.visibility = View.VISIBLE }
+                    runCatching { v.requestLayout() }
+                    (v.parent as? ViewGroup)?.let { runCatching { it.requestLayout() } }
+                    changed = true
+                }
+                // F40：VISIBLE但isShown=false多为直系祖先藏（C43 logo_iv V->V isShown=false），逐级还显。
+                if (v.visibility == View.VISIBLE && !v.isShown && v.parent != null) {
+                    val ancN = runCatching { ensureAncestorsVisibleF40(v, decor) }.getOrDefault(0)
+                    if (ancN > 0) {
+                        runCatching { v.requestLayout() }
+                        changed = true
+                    }
+                    parts.add("$nm:ancestors+$ancN")
+                }
+                if (needDy && v.parent != null) {
+                    runCatching { v.translationY = 0f }
+                    runCatching { v.requestLayout() }
+                    (v.parent as? ViewGroup)?.let { runCatching { it.requestLayout() } }
+                    changed = true
+                }
+                val loc = IntArray(2)
+                runCatching { v.getLocationOnScreen(loc) }
+                val afterVis = v.visibility
+                val afterStr = when (afterVis) { View.VISIBLE -> "V"; View.GONE -> "G"; View.INVISIBLE -> "I"; else -> "$afterVis" }
+                parts.add("$nm:$visStr->${afterStr}(isShown=${v.isShown} dy=${dy.toInt()}->${v.translationY.toInt()} y=${loc[1]} h=${v.height})")
+            }
+            one("customToolbarRv", custom)
+            one("logo_iv", logo)
+            one("logoContainerRl", logoC)
+            if (bar != null && bar !== custom && bar !== logo && bar !== logoC) one("bar", bar)
+            // F40：双真（VISIBLE+isShown，bar亦含isShown；F39只验bar vis致假阳，已修；logoContainer G->V须双真）。
+            val allVis = listOf(custom, logo, logoC).filterNotNull().all { it.visibility == View.VISIBLE && it.isShown } &&
+                (bar == null || (bar.visibility == View.VISIBLE && bar.isShown))
+            if (allVis) {
+                AndroidLog.i(TAG, "strip F39 keep-bar [$tag]: VISIBLE visOk=true changed=$changed " + parts.joinToString(" | ") + " (搜索态强制保栏，translating藏栏不跟，dy=0)")
+            } else {
+                AndroidLog.e(TAG, "strip F40 keep-bar [$tag]: FAIL visOk=false changed=$changed " + parts.joinToString(" | ") + " (保住isShown=true，logo_iv isShown=false即FAIL还账不判PASS，logoContainer须VISIBLE+isShown双真)")
+            }
+            allVis
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F39 keep-bar failed [$tag]: $t")
+            false
+        }
+    }
+    /** F40工具栏零位移判定（只读，gateF32 verify）：custom/logo/logoC/bar行dy=0且VISIBLE+isShown双真才是PASS；
+     * 另含位置（iconTop≈mount基线±8，现量不写死1365；1365仅C44验收参考）+F32栏dy+压栏（条须在栏上，不许条y压栏）。
+     * 任一不满足即FAIL（F39的VISIBLE-vis假PASS已修）；Q位移由q-after按1494±8另判。原生取不到即SKIP fail-closed。返true=PASS/false=FAIL/null=SKIP。 */
+    private fun verifyToolbarZeroShiftF34(decor: ViewGroup, tag: String): Boolean? {
+        // F41丢弃：验证门回到翻译态原生可见性判定，像素只diag。本门不再gate（返null=SKIP diag）。
+        AndroidLog.i(TAG, "strip F41 verify [$tag]: SKIP F34 toolbar-zero (translation native wins, diag only)")
+        runCatching { verifyNativeTranslationStateDiagF41(decor, "F34-$tag") }
+        if (true) return null
+        return try {
+            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
+            val custom = runCatching { resolveCustomToolbarViewF39(decor) }.getOrNull()
+            val logoC = runCatching { resolveLogoContainerViewF39(decor) }.getOrNull()
+            val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
             val targets = ArrayList<Triple<String, View, Int>>()
             if (logo != null) targets.add(Triple("logo_iv", logo, logo.visibility))
             if (custom != null) targets.add(Triple("customToolbarRv", custom, custom.visibility))
             if (logoC != null) targets.add(Triple("logoContainerRl", logoC, logoC.visibility))
             if (targets.isEmpty() && bar == null) {
-                AndroidLog.i(TAG, "strip F34 toolbar-zero [$tag]: SKIP toolbar/logo全缺测 src=$src translating=$translating (fail-closed)")
+                AndroidLog.i(TAG, "strip F34 toolbar-zero [$tag]: SKIP toolbar/logo全缺测 (fail-closed)")
                 return null
             }
             if (targets.isEmpty() && bar != null) targets.add(Triple("barFallback", bar, bar.visibility))
             var allDyZero = true
             var allVisOk = true
-            var primaryVisOkF37 = true
-            var primaryCountF37 = 0
-            var customVisOkF37: Boolean? = null
             val parts = ArrayList<String>()
             for ((nm, v, vis) in targets) {
                 val dy = runCatching { v.translationY }.getOrDefault(0f)
                 val dyOk = kotlin.math.abs(dy) <= 1f
                 if (!dyOk) allDyZero = false
                 val visStr = when (vis) { View.VISIBLE -> "V"; View.GONE -> "G"; View.INVISIBLE -> "I"; else -> "$vis" }
-                val expectHidden = translating == true
-                val visOk = if (expectHidden) (vis == View.GONE || vis == View.INVISIBLE || !v.isShown) else (vis == View.VISIBLE && v.isShown)
+                val visOk = (vis == View.VISIBLE && v.isShown)
                 if (!visOk) allVisOk = false
-                if (nm != "customToolbarRv") {
-                    primaryCountF37++
-                    if (!visOk) primaryVisOkF37 = false
-                } else {
-                    customVisOkF37 = visOk
-                }
                 val loc = IntArray(2)
                 runCatching { v.getLocationOnScreen(loc) }
                 parts.add("$nm:dy=${dy.toInt()}(ok=$dyOk) vis=$visStr(isShown=${v.isShown} ok=$visOk) y=${loc[1]} h=${v.height}")
             }
-            // F37：藏栏时以primary（logo/logoC/bar）为准，custom残V只diag。
-            val pass: Boolean
-            val visOkForPass: Boolean
-            var f37note = ""
-            if (translating == true) {
-                visOkForPass = if (primaryCountF37 > 0) primaryVisOkF37 else allVisOk
-                pass = allDyZero && visOkForPass
-                f37note = "F37藏栏以logoC为准custom只diag(customOk=${customVisOkF37 ?: "na"})"
-            } else {
-                visOkForPass = allVisOk
-                pass = allDyZero && allVisOk
+            // F40：F32栏位移亦须dy=0（targets非空时bar被排除致1190假阳，已修；此处显式补验）。
+            var f32DyOk = true
+            val f32Bar = stripBarAppliedF32
+            if (f32Bar != null && f32Bar.parent != null &&
+                bar != null && f32Bar !== custom && f32Bar !== logo && f32Bar !== logoC && f32Bar !== bar
+            ) {
+                val fdy = runCatching { f32Bar.translationY }.getOrDefault(0f)
+                f32DyOk = kotlin.math.abs(fdy) <= 1f
+                if (!f32DyOk) allDyZero = false
+                val floc = IntArray(2)
+                runCatching { f32Bar.getLocationOnScreen(floc) }
+                val fvisOk = (f32Bar.visibility == View.VISIBLE && f32Bar.isShown)
+                if (!fvisOk) allVisOk = false
+                parts.add("f32bar:dy=${fdy.toInt()}(ok=$f32DyOk) visOk=$fvisOk y=${floc[1]} h=${f32Bar.height}")
+            } else if (bar != null && (targets.none { it.second === bar })) {
+                // F40：原生bar未在targets内时亦补dy/isShown（barTop1190位移须FAIL）。
+                val bdy = runCatching { bar.translationY }.getOrDefault(0f)
+                val bdyOk = kotlin.math.abs(bdy) <= 1f
+                if (!bdyOk) allDyZero = false
+                val bloc0 = IntArray(2)
+                runCatching { bar.getLocationOnScreen(bloc0) }
+                val bvisOk = (bar.visibility == View.VISIBLE && bar.isShown)
+                if (!bvisOk) allVisOk = false
+                parts.add("bar:dy=${bdy.toInt()}(ok=$bdyOk) visOk=$bvisOk y=${bloc0[1]} h=${bar.height}")
             }
-            AndroidLog.i(TAG, "strip F34 toolbar-zero [$tag]: ${if (pass) "PASS" else "FAIL"} translating=$translating(src=$src) " +
-                "dy0=$allDyZero visOk=$visOkForPass(${if (translating) "GONE/INVISIBLE藏栏预期" else "VISIBLE复现预期"}) " +
-                parts.joinToString(" | ") + " hideChain=[$hideChainF37] $f37note (Q位移不再判FAIL, 零位移以本行为准)")
+            // F40位置：iconTop≈mount基线±8（现量现比，不写死1365；基线缺测则SKIP位置不FAIL）。
+            var posOk: Boolean? = null
+            var viewTopF40 = -1
+            var baseTopF40 = -1
+            val viewLineF40 = runCatching { scanSquareIconLine(decor, logo) }.getOrNull()
+            if (viewLineF40 != null && viewLineF40.top > 0) {
+                viewTopF40 = viewLineF40.top.toInt()
+                baseTopF40 = stripMountIconTopF40
+                if (baseTopF40 > 0) {
+                    posOk = kotlin.math.abs(viewTopF40 - baseTopF40) <= STRIP_F40_POS_TOL_PX
+                }
+            }
+            // F40栏位：barTop≈mount基线±8（1190位移即FAIL；基线缺测则SKIP）。
+            var barPosOk: Boolean? = null
+            var barTopNowF40 = -1
+            if (bar != null) {
+                val bl = IntArray(2)
+                runCatching { bar.getLocationOnScreen(bl) }
+                barTopNowF40 = bl[1]
+                val baseBar = stripMountBarTopF40
+                if (barTopNowF40 > 0 && baseBar > 0) {
+                    barPosOk = kotlin.math.abs(barTopNowF40 - baseBar) <= STRIP_F40_POS_TOL_PX
+                }
+            }
+            // F40压栏：条须在栏上（stripBottom<=barTop），条y压栏即FAIL。
+            var overlapF40 = false
+            var stripBottomF40 = -1
+            val rowF40 = runCatching { decor.findViewWithTag<View>(TAG_SEARCH_BOX_CONTAINER) }.getOrNull()
+            if (rowF40 != null && barTopNowF40 > 0) {
+                val rl = IntArray(2)
+                runCatching { rowF40.getLocationOnScreen(rl) }
+                if (rl[1] > 0 && rowF40.height > 0) {
+                    stripBottomF40 = rl[1] + rowF40.height
+                    overlapF40 = stripBottomF40 > barTopNowF40
+                }
+            }
+            val posGate = (posOk == null || posOk == true)
+            val barGate = (barPosOk == null || barPosOk == true)
+            val pass = allDyZero && allVisOk && posGate && barGate && !overlapF40
+            if (pass) {
+                AndroidLog.i(TAG, "strip F40 toolbar-zero [$tag]: PASS " +
+                    "dy0=$allDyZero visOk=$allVisOk(VISIBLE+isShown双真) " +
+                    "posOk=${posOk ?: "skip"}(viewTop=$viewTopF40≈base=$baseTopF40±$STRIP_F40_POS_TOL_PX) " +
+                    "barPosOk=${barPosOk ?: "skip"}(barTop=$barTopNowF40) " +
+                    "overlap=$overlapF40(stripBottom=${stripBottomF40}须<=barTop，不许条y压栏) " +
+                    parts.joinToString(" | ") + " (Q位移由q-after按1494±8另判)")
+            } else {
+                AndroidLog.e(TAG, "strip F40 toolbar-zero [$tag]: FAIL " +
+                    "dy0=$allDyZero visOk=$allVisOk(VISIBLE+isShown双真，logo_iv isShown=false即FAIL) " +
+                    "posOk=${posOk ?: "skip"}(viewTop=$viewTopF40≈base=$baseTopF40±$STRIP_F40_POS_TOL_PX) " +
+                    "barPosOk=${barPosOk ?: "skip"}(barTop=$barTopNowF40，1190位移即FAIL) " +
+                    "overlap=$overlapF40(stripBottom=${stripBottomF40}须<=barTop，不许条y压栏) " +
+                    parts.joinToString(" | ") + " (去假阳：VISIBLE-vis不判PASS)")
+            }
             pass
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F34 toolbar-zero failed: $t")
             null
         }
     }
-    /** F35证据兜底（只读diag，不gate）：bar-miss/藏栏/q缺测仍须发射SKIP三行，确保C39不再零证据。
-     * mode/toolbar-zero/q-after只挂bar-move成功后，miss即零证据已修：此处显式补SKIP并注明miss原因。
-     * 缝19~21+视图n>=5仍唯一门，像素只diag；F32几何/F34按mode基线/toolbar dy=0/圆角B全不动。 */
-    private fun emitF34MissSkipF35(decor: ViewGroup, tag: String, reason: String) {
-        try {
-            val qb = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-            val base = qb?.baseline ?: STRIP_F32_Q_BASELINE
-            val src = qb?.modeSrc ?: "fallback"
-            val trans = qb?.translating
-            val th = qb?.toolbarH
-            AndroidLog.i(TAG, "strip F34 mode [$tag]: SKIP reason=$reason src=$src translating=$trans " +
-                "toolbarH=${th ?: -1} baseline=$base±$STRIP_F32_Q_TOL_PX (fail-closed, miss不断言)")
-            runCatching { verifyToolbarZeroShiftF34(decor, tag) }
-            AndroidLog.i(TAG, "strip F34 toolbar-zero [$tag]: SKIP reason=$reason src=$src translating=$trans " +
-                "(fail-closed, miss不断言, 详见同tag明细行)")
-            AndroidLog.i(TAG, "strip F32 q-after: SKIP reason=$reason baseline=$base±$STRIP_F32_Q_TOL_PX " +
-                "mode=$src translating=$trans toolbarH=${th ?: -1} kbDy=${stripKbDyF32.toInt()} (fail-closed, miss不断言)")
-        } catch (_: Throwable) {
-        }
-    }
-
-    /** F37藏栏四路 helpers（只读diag，不gate主门；F32几何+F33缝19~21+viewN>=5唯一门像素只diag+F34 mode基线+toolbar dy=0+圆角B全不动；禁GradientDrawable/硬编码色/系统图标/f0(32)；Y/collect/u0/P0-Q0不直驱，J3唯一钳点；挂条全序q.t r0→A2/e0/N2→J3）。
-     * 1)缝门藏栏SKIP/KEEP转窗槽/Q；2)藏栏不推bar+推动对象核验；3)藏栏visibility以logoContainer为准custom只diag+hide链diag；4)Q藏栏回退口径+1494-toolbarH现量diag。 */
-    private fun logHiddenWindowSlotQF37(decor: ViewGroup, row: View?, tag: String, reason: String) {
-        try {
-            val (trans, src) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-            val winBar = runCatching {
-                if (row != null) measureWindowToBarF20(row, decor) else null
-            }.getOrNull()
-            val windowTop = winBar?.first ?: -1
-            val barTopWin = winBar?.second ?: -1
-            val windowBar = winBar?.third ?: -1
-            val slotTarget = runCatching {
-                if (row != null) slotTargetHeightForF16(row, STRIP_M_BOTTOM_PX) else null
-            }.getOrNull() ?: -1
-            val qb = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-            val base = qb?.baseline ?: STRIP_F32_Q_BASELINE
-            val th = qb?.toolbarH ?: -1
-            val qTop = runCatching { findQTopOnScreen(decor) }.getOrNull() ?: -1
-            val stripDims = if (row != null) {
-                val rl = IntArray(2)
-                runCatching { row.getLocationOnScreen(rl) }
-                "${row.width}x${row.height} y=[${rl[1]},${rl[1] + row.height}]"
-            } else "norow"
-            AndroidLog.i(TAG, "strip F37 hidden-window [$tag]: reason=$reason translating=$trans(src=$src) " +
-                "strip=$stripDims windowTop=$windowTop barTopWin=$barTopWin windowBar=$windowBar(target=$slotTarget±$STRIP_WINDOW_BAR_TOL_PX) " +
-                "slotTarget=$slotTarget(trueH+顶1.5dp+底${STRIP_M_BOTTOM_PX}px现算) " +
-                "qTop=$qTop(baseline=$base±$STRIP_F32_Q_TOL_PX mode=${qb?.modeSrc} toolbarH=$th) " +
-                "(藏栏缝门SKIP/KEEP，转窗槽/Q为准，原生取不到fail-closed)")
-        } catch (_: Throwable) {
-        }
-    }
-    /** F37推动对象核验（只读）：bar是否含图标簇叶子（同一子树？）+kids vs n。返Triple(containsIcons, barKids, iconN)。 */
-    private fun barPushTargetCheckF37(bar: ViewGroup, decor: ViewGroup): Triple<Boolean, Int, Int>? {
-        return try {
-            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
-            val leaves = runCatching { collectIconClusterLeafViews(decor, logo) }.getOrNull() ?: emptyList()
-            val iconN = leaves.size
-            val barKids = bar.childCount
-            var contained = 0
-            for (leaf in leaves) {
-                if (isAncestorOf(bar, leaf)) contained++
-            }
-            // 同一子树判定：过半叶子在bar内即同一子树，否则不同子树（C40 bar kids=2 vs n=5/6即不同）。
-            val sameSubtree = iconN >= 5 && contained * 2 >= iconN
-            AndroidLog.i(TAG, "strip F37 push-target: bar=${bar.javaClass.simpleName} kids=$barKids iconN=$iconN " +
-                "contained=$contained sameSubtree=$sameSubtree (bar动icons不动即不同子树，藏栏不推bar)")
-            Triple(sameSubtree, barKids, iconN)
-        } catch (_: Throwable) {
-            null
-        }
-    }
-    /** F37藏栏链 diag（只读）：toolbar.x.A.getValue()+logoContainer/custom/bar visibility+translationY，不碰视图不直驱。 */
-    private fun queryToolbarHideChainF37(decor: ViewGroup): String {
-        return try {
-            val custom = runCatching { resolveCustomToolbarViewF34(decor) }.getOrNull()
-            val logoC = runCatching { resolveLogoContainerViewF34(decor) }.getOrNull()
-            val logo = runCatching { resolveLogoView(decor) }.getOrNull()
-            val bar = runCatching { findStripToolbarBar(decor) }.getOrNull()
-            val liveAnchor = custom ?: bar
-            val live = runCatching { queryToolbarLiveTranslatingF34(liveAnchor) }.getOrNull()
-            fun visStr(v: View?): String {
-                if (v == null) return "null"
-                val s = when (v.visibility) { View.VISIBLE -> "V"; View.GONE -> "G"; View.INVISIBLE -> "I"; else -> "${v.visibility}" }
-                val loc = IntArray(2)
-                runCatching { v.getLocationOnScreen(loc) }
-                return "$s(isShown=${v.isShown} dy=${v.translationY.toInt()} y=${loc[1]} h=${v.height})"
-            }
-            val s = "live.x.A=$live logo=${visStr(logo)} custom=${visStr(custom)} logoC=${visStr(logoC)} bar=${visStr(bar)}"
-            AndroidLog.i(TAG, "strip F37 hide-chain: $s (藏栏预期logo/logoC G，custom残V只diag不判FAIL，补原生藏全以logoC为准)")
-            s
-        } catch (t: Throwable) {
-            "hide-chain failed: $t"
-        }
-    }
-    /** F37 Q藏栏回退 diag（只读，不gate）：kb/decor双miss且translating时，试kb父容器+记1494-toolbarH现量；取不到仍返null fail-closed。 */
-    private fun qHiddenFallbackDiagF37(decor: ViewGroup): Int? {
-        return try {
-            val (trans, src) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-            if (trans != true) return null
-            val qb = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-            val base = qb?.baseline ?: STRIP_F32_Q_BASELINE
-            val th = qb?.toolbarH
-            val cl = hostClassLoader ?: decor.context?.classLoader
-            val kbId = cl?.let { runCatching { resolveKeyboardContainerId(it) }.getOrNull() }
-            val kb = kbId?.let { runCatching { decor.findViewById<View>(it) as? ViewGroup }.getOrNull() }
-            val dloc = IntArray(2)
-            runCatching { decor.getLocationOnScreen(dloc) }
-            val decorH = decor.height.takeIf { it > 0 } ?: -1
-            val midY = if (decorH > 0) dloc[1] + (decorH * 0.5f).toInt() else -1
-            // kb父容器回退（疑换容器）：同判据扫一遍，仅diag不gate。
-            var parentHit: Int? = null
-            var parentN = -1
-            if (kb != null) {
-                val parent = kb.parent as? ViewGroup
-                if (parent != null && parent !== decor) {
-                    val ps = runCatching { scanQScopeF35(parent, midY) }.getOrNull()
-                    if (ps != null) {
-                        parentN = ps.qCount
-                        val qr = if (ps.qTops.size >= 2) ps.qTops.last() - ps.qTops.first() else 0
-                        val rangeTol = if (decorH > 0) (decorH * 0.06f).toInt().coerceAtLeast(28) else 28
-                        val credible = ps.qBest != null && ps.qCount >= 5 && ps.qBest!! > midY && qr <= rangeTol &&
-                            (ps.digitBest == null || ps.qBest!! >= ps.digitBest!!)
-                        AndroidLog.i(TAG, "strip F37 q-hidden-parent: scope=kbParent(${parent.javaClass.simpleName}) " +
-                            "digitN=${ps.digitCount} digitTop=${ps.digitBest ?: -1} qRowN=${ps.qCount} qTop=${ps.qBest ?: -1} " +
-                            "range=$qr(tol=$rangeTol) credible=$credible baseline=$base±$STRIP_F32_Q_TOL_PX toolbarH=${th ?: -1}(1494-toolbarH现量) src=$src (diagOnly)")
-                        if (credible) parentHit = ps.qBest
-                    }
-                }
-            }
-            AndroidLog.i(TAG, "strip F37 q-hidden-diag: kbId=$kbId kbScope=${kb?.javaClass?.simpleName} decorH=$decorH midY=$midY " +
-                "baseline=$base±$STRIP_F32_Q_TOL_PX toolbarH=${th ?: -1}(F35例90→1404) src=$src parentHit=${parentHit ?: -1}(n=$parentN diagOnly) " +
-                "(藏栏回退Q≥5持续-1缺参照，kb/decor/parent三口径同判据，取不到fail-closed)")
-            // 仍fail-closed：即使parent命中亦只diag不返（保F33门大原则，q-after仍SKIP由调用方记）。
-            null
-        } catch (_: Throwable) {
-            null
-        }
-    }
+    // F35/F37已剔除（审计定案：无用户拍板且与铁律冲突）：emit兜底与隐藏链路删除，miss仅记常规diag。
 
     /**
      * F32栏容器定位（只读）：按类+屏位找条态工具栏RecyclerView（barTop≈1190那个）。
@@ -1119,12 +1207,9 @@ internal object WeTypeClipboardSearchUi {
                 cands.add(v to top)
             }
             if (cands.isEmpty()) {
-                // F36藏栏inKb误杀门精细化（接F35藏栏兼容，在此基础上改，不reset）：C39 FAIL根因cands==0时
-                // diagBar ConstraintLayout@1190被inKb一刀切误杀（inKb=true即fail-closed，pick/move计数0）。
-                // 藏栏虽在kb window内但非Q按键子树，故将“在kb子树即veto”改为精细veto：仅当bar自身即kb容器
-                // （===或id==kb容器id）或bar子树含QWERTY/数字单字按键（TextView单字，可见且 laid）才veto；
-                // 我条排除仍按contains（hasStrip）+自tag（selfTag）判定，不按整树一刀切。取不到即fail-closed不动，
-                // 禁仿制兜底禁GradientDrawable/硬编码色/系统图标。F32几何+F33门+F34 mode/toolbar dy=0+圆角B全不动。
+                // F36 inKb门（审计后：只留kb本身判定）：cands==0时diagBar ConstraintLayout回退，
+                // 仅当bar自身即kb容器（===或id==kb容器id）才veto；我条排除仍按contains+自tag判定。
+                // 取不到即fail-closed不动。F32几何+F33门+toolbar dy=0+圆角B不动。
                 val nativeBarF35 = runCatching { findStripToolbarBar(decor) }.getOrNull()
                 if (nativeBarF35 != null) {
                     val clsF35 = nativeBarF35.javaClass.name
@@ -1146,48 +1231,15 @@ internal object WeTypeClipboardSearchUi {
                         nativeBarF35.getTag() == TAG_SEARCH_BOX
                     val isKbItselfF36 = kbScopeF34 != null && (nativeBarF35 === kbScopeF34 ||
                         (nativeBarF35.id != View.NO_ID && kbScopeF34.id != View.NO_ID && nativeBarF35.id == kbScopeF34.id))
-                    val containsQF36: Boolean = runCatching {
-                        val qSetF36 = setOf("Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P")
-                        val dSetF36 = setOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
-                        val dqF36: ArrayDeque<View> = ArrayDeque()
-                        dqF36.add(nativeBarF35)
-                        var hopsF36 = 0
-                        var hitF36 = false
-                        while (dqF36.isNotEmpty() && hopsF36 < 200 && !hitF36) {
-                            val vv = dqF36.removeFirst()
-                            hopsF36++
-                            val tg = vv.getTag()
-                            if (tg == TAG_SEARCH_BOX_CONTAINER || tg == TAG_SEARCH_BUTTON ||
-                                tg == TAG_SEARCH_CLEAR || tg == TAG_SEARCH_BOX
-                            ) continue
-                            if (vv is android.widget.EditText) continue
-                            if (vv is android.widget.TextView) {
-                                if (vv.visibility == View.VISIBLE && vv.isShown && vv.width > 0 && vv.height > 0) {
-                                    val tt = runCatching { vv.text?.toString()?.trim() }.getOrNull() ?: ""
-                                    if (tt.length == 1) {
-                                        val up = tt.uppercase()
-                                        if (up in qSetF36 || tt in dSetF36) hitF36 = true
-                                    }
-                                }
-                                continue
-                            }
-                            if (vv is ViewGroup) {
-                                for (i in 0 until minOf(vv.childCount, 25)) {
-                                    vv.getChildAt(i)?.let { dqF36.add(it) }
-                                }
-                            }
-                        }
-                        hitF36
-                    }.getOrDefault(true)
-                    val kbVetoF36 = isKbItselfF36 || containsQF36
+                    val kbVetoF36 = isKbItselfF36
                     if (isClF35 && visOkF35 && inRangeF35 && !hasStripF35 && !selfTagF36 && !kbVetoF36) {
                         AndroidLog.i(TAG, "strip F32 bar pick: $clsF35 barTop=$topF35 h=${nativeBarF35.height} " +
                             "kids=${nativeBarF35.childCount} cand=[$candTop,$candBottom] cands=0 qExcluded=$qExcludedF34 inKb=$inKbF35 " +
-                            "selfTag=$selfTagF36 isKbItself=$isKbItselfF36 containsQ=$containsQF36 kbVeto=$kbVetoF36 (ConstraintLayout-fallback藏栏兼容，原生取+F36精细放行)")
+                            "selfTag=$selfTagF36 isKbItself=$isKbItselfF36 kbVeto=$kbVetoF36 (ConstraintLayout-fallback原生取放行)")
                         return nativeBarF35
                     }
                     AndroidLog.e(TAG, "strip F32 bar miss: no RecyclerView in cand[$candTop,$candBottom] " +
-                        "cands=0 diagBar=$clsF35 diagTop=${locF35[1]} fallbackReject=(isCL=$isClF35 visOk=$visOkF35 inRange=$inRangeF35 hasStrip=$hasStripF35 inKb=$inKbF35 selfTag=$selfTagF36 isKbItself=$isKbItselfF36 containsQ=$containsQF36 kbVeto=$kbVetoF36) (fail-closed不动)")
+                        "cands=0 diagBar=$clsF35 diagTop=${locF35[1]} fallbackReject=(isCL=$isClF35 visOk=$visOkF35 inRange=$inRangeF35 hasStrip=$hasStripF35 inKb=$inKbF35 selfTag=$selfTagF36 isKbItself=$isKbItselfF36 kbVeto=$kbVetoF36) (fail-closed不动)")
                     return null
                 }
                 AndroidLog.e(TAG, "strip F32 bar miss: no RecyclerView in cand[$candTop,$candBottom] " +
@@ -1231,48 +1283,43 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
-     * F32稳态入口：条挂稳态后把栏移到候选框下方 + 键盘补偿移回。
-     * 栏：top=候选框底-栏内衬（图标顶-barTop现量），使图标顶=条底+20px；只动栏translationY记账。
-     * 键盘：Q顶≠1494±8则补偿移回（只动键盘容器translationY记账）。
-     * 任一未布局fail-closed不动；已施加不再重施；壳/s0/J3/圆角B/DEL/commit/logo全不动。
+     * F40稳态入口（接F32，在此基础上改，不reset）：C43 barTop 1365→1190被顶走175、条y压栏，
+     * F39只保vis没保住isShown/位置。修：以mount基线为准，bar不动（dy=0）只条落位；
+     * 若栏被顶离基线（±8外，如1190）/条y压栏/logo isShown=false即还账fail-closed，不再新施translationY。
+     * 已施加残留先验后还，不双施。键盘：Q顶≠1494±8则补偿移回（只动键盘容器translationY记账）。
+     * 任一未布局fail-closed不动；壳/s0/J3/圆角B/DEL/commit/logo全不动。
      */
     private fun tryMoveBarBelowCandF32(row: View, decor: ViewGroup) {
+        // F41：丢弃F32下移补偿（与翻译卡原生冲突则删）。工具栏/键盘following翻译态原生，
+        // 不为留缝20去动bar/keyboard；像素只diag。
+        AndroidLog.i(TAG, "strip F41 bar: SKIP F32 move (translation native wins, diag only)")
+        return
+    }
+    // F41-discarded: 以下F32/F40藏栏/少抬升增量已丢弃（保留函数备查，入口已SKIP不执行）。
+    private fun tryMoveBarBelowCandF32Discarded(row: View, decor: ViewGroup) {
         try {
             if (row.getTag() != TAG_SEARCH_BOX_CONTAINER) return
             if (row.parent == null) return
-            if (stripBarAppliedF32 != null && stripBarAppliedF32?.parent != null) {
-                AndroidLog.i(TAG, "strip F32 bar skip: already applied dy=$stripBarDyF32 (no double)")
-                runCatching { tryCompensateKeyboardF32(decor) }
+            // F40：已施加残留先验后还（C43的1190位移多为上轮F32残留，不双施；好则留，坏则还）。
+            val appliedBefore = stripBarAppliedF32
+            if (appliedBefore != null && appliedBefore.parent != null) {
+                val keepBefore = runCatching { verifyToolbarZeroShiftF34(decor, "F40-applied-check") }.getOrNull()
+                if (keepBefore == true) {
+                    AndroidLog.i(TAG, "strip F40 bar-immobile: already applied KEEP dy=${stripBarDyF32.toInt()} (no double)")
+                    runCatching { tryCompensateKeyboardF32(decor) }
+                    return
+                }
+                runCatching { revertBarF32(appliedBefore) }
+                AndroidLog.e(TAG, "strip F40 bar-immobile: REVERT applied残留 toolbar-zero!=PASS (还账fail-closed，bar不动dy=0)")
                 return
             }
-            // F37藏栏不推bar（接F36，在此基础上改，不reset）：C40 translating=true藏栏时图标1190是隐藏残影，
-            // bar kids=2 vs icons n=5/6不在同一子树，bar动icons不动（iconTop钉1190/windowTop钉1113/N-refresh delta=0）。
-            // 修：藏栏时不推bar（找原生推动点，Y/collect/u0/P0-Q0不直驱，J3唯一钳点；挂条全序q.t r0→A2/e0/N2→J3），
-            // 转窗槽/Q为准（只读，原生取不到fail-closed）。F32几何+F33门+F34基线+toolbar dy=0+圆角B不动。
-            val (transMoveF37, srcMoveF37) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-            if (transMoveF37 == true) {
-                runCatching { logHiddenWindowSlotQF37(decor, row, "F32-bar-skip-hidden", "translating藏栏不推bar") }
-                runCatching { queryToolbarHideChainF37(decor) }
-                AndroidLog.i(TAG, "strip F37 bar skip-hidden: translating=true src=$srcMoveF37 藏栏时不推bar " +
-                    "(bar kids vs icons不同子树，Y/collect/u0/P0-Q0不直驱，J3唯一钳点；挂条全序q.t r0→A2/e0/N2→J3，转窗槽/Q为准)")
-                runCatching { tryCompensateKeyboardF32(decor) }
-                runCatching { verifyToolbarZeroShiftF34(decor, "F32-bar-skip-hidden") }
-                // F38 C41-N/A补齐（只读diag，不推bar/不还账/不动几何J3）：等价证据F21 kids=2＋F30 drift baseline iconN=5/strip n=6＋F37注释bar kids vs icons不同子树已覆盖，此处仅终审字面齐补F32-verify-hidden三行。
-                runCatching { verifyStripStacking(decor, row, "F32-verify-hidden") }
-                runCatching { verifyToolbarZeroShiftF34(decor, "F32-verify-hidden") }
-                runCatching {
-                    val barDiagF38 = runCatching { findStripToolbarBar(decor) }.getOrNull()
-                    if (barDiagF38 != null) {
-                        val chkF38 = barPushTargetCheckF37(barDiagF38, decor)
-                        if (chkF38 != null && !chkF38.first) {
-                            AndroidLog.i(TAG, "strip F37 push-mismatch-diag: bar kids=${chkF38.second} iconN=${chkF38.third} sameSubtree=false " +
-                                "translating=true(src=$srcMoveF37) F32-bar-skip-hidden只读 (不同子树bar动icons不动，藏栏不推bar，Y/collect/u0/P0-Q0不直驱J3唯一钳点)")
-                        }
-                    } else {
-                        AndroidLog.i(TAG, "strip F37 push-mismatch-diag: bar=null iconN=diagOnly translating=true(src=$srcMoveF37) " +
-                            "F32-bar-skip-hidden只读 (bar未取到fail-closed，不推bar)")
-                    }
-                }
+            // F39保栏：挂条前后不断言translating藏栏合理，不以translating=true为由SKIP缝门/不推bar；
+            // 先显式保栏（custom/logo/logoC原生取VISIBLE+dy=0+祖先显，live.x.A原生还账），双真失败即还账不推bar。
+            val keepOk = runCatching { ensureToolbarVisibleF39(decor, "F32-move") }.getOrDefault(false)
+            if (!keepOk) {
+                val applied = stripBarAppliedF32
+                if (applied != null) runCatching { revertBarF32(applied) }
+                AndroidLog.e(TAG, "strip F40 bar-immobile: REVERT keep-bar FAIL(isShown=false，保住isShown=true不判PASS) (还账fail-closed)")
                 return
             }
             val candMeas = candBottomScreenF32(decor) ?: return
@@ -1297,7 +1344,6 @@ internal object WeTypeClipboardSearchUi {
             val viewLineBeforeF33 = runCatching { scanSquareIconLine(decor, logo) }.getOrNull()
             if (viewLineBeforeF33 == null || viewLineBeforeF33.top <= 0) {
                 AndroidLog.e(TAG, "strip F32 bar skip: viewLine missing n=${viewLineBeforeF33?.n} (fail-closed)")
-                runCatching { emitF34MissSkipF35(decor, "F32-bar-miss", "viewLine-missing n=${viewLineBeforeF33?.n ?: -1}") }
                 return
             }
             val iconDiagBeforeF33 = runCatching { resolveIconLineF22(decor, logo) }.getOrNull()
@@ -1310,23 +1356,31 @@ internal object WeTypeClipboardSearchUi {
             val iconTopForGeomF33 = viewLineBeforeF33.top
             val viewNBeforeF33 = viewLineBeforeF33.n
             val bar = findBarRecyclerF32(decor, candTop, candBottom) ?: run {
-                runCatching { emitF34MissSkipF35(decor, "F32-bar-miss", "bar-miss cand[$candTop,$candBottom]") }
+                AndroidLog.e(TAG, "strip F32 bar skip: bar-miss cand[$candTop,$candBottom] (fail-closed)")
                 return
-            }
-            // F37推动对象核验（只读diag）：bar kids vs icons n+同一子树？不同即bar动icons不动，藏栏已上游SKIP，此处仅diag不断链（显式仍按F32几何走）。
-            runCatching {
-                val chk = barPushTargetCheckF37(bar, decor)
-                if (chk != null && !chk.first) {
-                    val (transChk, srcChk) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-                    AndroidLog.i(TAG, "strip F37 push-mismatch-diag: bar kids=${chk.second} iconN=${chk.third} sameSubtree=false " +
-                        "translating=$transChk(src=$srcChk) barTop现量后验 (不同子树bar动icons不动，藏栏已SKIP，显式仍F32几何，Y/collect/u0/P0-Q0不直驱J3唯一钳点)")
-                }
             }
             val bloc = IntArray(2)
             runCatching { bar.getLocationOnScreen(bloc) }
             val barTop = bloc[1]
             if (barTop <= 0) {
                 AndroidLog.e(TAG, "strip F32 bar skip: barTop unlaid=$barTop")
+                return
+            }
+            // F40：压栏即REVERT（条须在栏上，不许条y=[1118,1285]压栏1190；stripBottom须<=barTop）。
+            if (stripBottom > barTop) {
+                val applied = stripBarAppliedF32
+                if (applied != null) runCatching { revertBarF32(applied) }
+                AndroidLog.e(TAG, "strip F40 bar-immobile: REVERT overlap stripBottom=$stripBottom>barTop=$barTop " +
+                    "(条y压栏，基线栏≈mount基线${stripMountBarTopF40}，bar不动dy=0，还账fail-closed)")
+                return
+            }
+            // F40：栏离基线即REVERT（mount基线±8外，如1365→1190被顶走175；基线缺测则SKIP位置只验缝）。
+            val baseBarF40 = stripMountBarTopF40
+            if (baseBarF40 > 0 && kotlin.math.abs(barTop - baseBarF40) > STRIP_F40_POS_TOL_PX) {
+                val applied = stripBarAppliedF32
+                if (applied != null) runCatching { revertBarF32(applied) }
+                AndroidLog.e(TAG, "strip F40 bar-immobile: REVERT displaced barTop=$barTop≈基线$baseBarF40±${STRIP_F40_POS_TOL_PX}外 " +
+                    "(1190即还账fail-closed，bar不动dy=0，只条落位)")
                 return
             }
             val innerPad = (iconTopForGeomF33 - barTop).toInt()
@@ -1336,81 +1390,42 @@ internal object WeTypeClipboardSearchUi {
             }
             val gapBefore = (iconTopForGeomF33 - stripBottom).toInt()
             if (gapBefore in STRIP_F32_GAP_MIN_PX..STRIP_F32_GAP_MAX_PX && viewNBeforeF33 >= 5) {
-                AndroidLog.i(TAG, "strip F32 bar pass: gap=$gapBefore(19~21) viewN=$viewNBeforeF33(>=5) " +
-                    "viewTop=${viewLineBeforeF33.top.toInt()} pixDiagOnly barTop=$barTop candBottom=$candBottom stripBottom=$stripBottom")
-                runCatching { tryCompensateKeyboardF32(decor) }
-                return
-            }
-            val desiredBarTop = candBottom - innerPad
-            val dy = (desiredBarTop - barTop).toFloat()
-            if (kotlin.math.abs(dy) <= 1f) {
-                AndroidLog.i(TAG, "strip F32 bar pass: dy<=1 barTop=$barTop desired=$desiredBarTop no move")
-                runCatching { tryCompensateKeyboardF32(decor) }
-                return
-            }
-            val expectIconTop = desiredBarTop + innerPad
-            val expectGap = expectIconTop - stripBottom
-            synchronized(stripBarTransOrigF32) {
-                if (!stripBarTransOrigF32.containsKey(bar)) {
-                    stripBarTransOrigF32[bar] = bar.translationY
+                val zeroOk = runCatching { verifyToolbarZeroShiftF34(decor, "F40-move-pass") }.getOrNull()
+                if (zeroOk == true) {
+                    AndroidLog.i(TAG, "strip F40 bar-immobile: PASS gap=$gapBefore(19~21) viewN=$viewNBeforeF33(>=5) " +
+                        "viewTop=${viewLineBeforeF33.top.toInt()} barTop=$barTop candBottom=$candBottom stripBottom=$stripBottom " +
+                        "toolbar-zero=PASS(isShown双真+位置±8+dy0) dy=0 no move (只条落位)")
+                    runCatching { tryCompensateKeyboardF32(decor) }
+                    return
                 }
+                val applied = stripBarAppliedF32
+                if (applied != null) runCatching { revertBarF32(applied) }
+                AndroidLog.e(TAG, "strip F40 bar-immobile: REVERT gap=$gapBefore viewN=${viewNBeforeF33}但toolbar-zero!=PASS (去假阳，还账)")
+                return
             }
-            bar.translationY = bar.translationY + dy
-            stripBarAppliedF32 = bar
-            stripBarDyF32 = dy
-            runCatching { bar.requestLayout() }
-            (bar.parent as? ViewGroup)?.let { runCatching { it.requestLayout() } }
-            runCatching { row.requestLayout() }
-            AndroidLog.i(TAG, "strip F32 bar move: barTop $barTop->$desiredBarTop dy=${dy.toInt()} " +
-                "innerPad=$innerPad(iconTop=${iconTopForGeomF33.toInt()}(view)-barTop) candBottom=$candBottom " +
-                "stripBottom=$stripBottom expectIconTop=$expectIconTop expectGap=$expectGap(≈20) " +
-                "bar=${bar.javaClass.name} (requestLayout+300ms复测视图n>=5且缝19~21否则还账，像素仅diag)")
+            // F40：缝未对但栏在基线且无压栏——bar不动dy=0，只条落位（条落位由mount/postAlign/槽保证，本步不再平移栏，fail-closed记账）。
+            AndroidLog.e(TAG, "strip F40 bar-immobile: SKIP no bar move gap=$gapBefore(需19~21) viewN=$viewNBeforeF33 " +
+                "viewTop=${viewLineBeforeF33.top.toInt()} barTop=$barTop(base=${if (baseBarF40 > 0) baseBarF40 else "缺测"}±$STRIP_F40_POS_TOL_PX) " +
+                "candBottom=$candBottom stripBottom=$stripBottom innerPad=$innerPad " +
+                "(bar不动dy=0只条落位，不再translationY；缝19~21+viewN>=5唯一门，像素只diag)")
             runCatching { tryCompensateKeyboardF32(decor) }
-            runCatching { scheduleBarVerifyF32(row, decor, bar, dy) }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F32 bar move failed: $t")
         }
     }
 
-    /** F33单步复测（接F32，在此基础上改，不reset）：300ms后缝19~21且视图n>=5才留，否则还账；像素仅记diag不再一票否决（像素扫描保留继续修）；禁盲累加。位移/退壳/壳/s0/J3钳/圆角B/DEL/commit/logo全不动。
-     * F37缝门藏栏SKIP/KEEP（接F36，在此基础上改，不reset）：C40 translating=true藏栏时图标1190是隐藏残影（截图已隐），仍以gapToIcon判-95必REVERT。修：藏栏时缝门SKIP/KEEP不REVERT，转窗槽/Q为准（只读，原生取不到fail-closed）。F32几何+F33缝19~21+viewN>=5唯一门像素只diag+F34基线+toolbar dy=0+圆角B不动。 */
+    /** F40单步复测（接F32 bar-immobile，在此基础上改，不reset）：缝19~21且视图n>=5且toolbar-zero PASS（含isShown双真+位置±8+dy0+F32栏+压栏）才留，否则还账；像素仅记diag；禁盲累加。位移/退壳/壳/s0/J3钳/圆角B/DEL/commit/logo全不动。 */
     private fun scheduleBarVerifyF32(row: View, decor: ViewGroup, bar: View, dy: Float) {
+        // F41丢弃：F32复测不再执行（翻译原生在位即PASS，像素只diag）。
+        AndroidLog.i(TAG, "strip F41 bar: SKIP F32 verify (translation native wins, diag only)")
+        if (true) return
         try {
             row.postDelayed({
                 try {
                     if (stripBarAppliedF32 !== bar) return@postDelayed
                     if (row.parent == null || bar.parent == null) {
                         runCatching { revertBarF32(bar) }
-                        runCatching { emitF34MissSkipF35(decor, "F32-verify-detached", "verify-detached rowParent=${row.parent == null} barParent=${bar.parent == null}") }
-                        return@postDelayed
-                    }
-                    // F37：藏栏先判，缝门SKIP/KEEP不以gapToIcon判REVERT。
-                    val (transVerifyF37, srcVerifyF37) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-                    if (transVerifyF37 == true) {
-                        val logoH = runCatching { resolveLogoView(decor) }.getOrNull()
-                        val viewH = runCatching { scanSquareIconLine(decor, logoH) }.getOrNull()
-                        val rlocH = IntArray(2)
-                        runCatching { row.getLocationOnScreen(rlocH) }
-                        val stripBottomH = if (rlocH[1] > 0 && row.height > 0) rlocH[1] + row.height else -1
-                        val gapH = if (viewH != null) (viewH.top - stripBottomH).toInt() else -999
-                        runCatching { logHiddenWindowSlotQF37(decor, row, "F32-verify-hidden", "translating藏栏缝门SKIP") }
-                        runCatching { verifyStripStacking(decor, row, "F32-verify-hidden") }
-                        val qbH = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-                        val qBaseH = qbH?.baseline ?: STRIP_F32_Q_BASELINE
-                        val qTopH = runCatching { findQTopOnScreen(decor) }.getOrNull()
-                        runCatching { qHiddenFallbackDiagF37(decor) }
-                        if (qTopH == null) {
-                            AndroidLog.i(TAG, "strip F32 q-after-hidden: SKIP qTop缺测不断言 " +
-                                "(baseline=$qBaseH±$STRIP_F32_Q_TOL_PX mode=${qbH?.modeSrc} translating=${qbH?.translating} toolbarH=${qbH?.toolbarH ?: -1}) kbDy=${stripKbDyF32.toInt()} (F37藏栏回退Q≥5持续-1diag)")
-                        } else {
-                            val qOkH = kotlin.math.abs(qTopH - qBaseH) <= STRIP_F32_Q_TOL_PX
-                            AndroidLog.i(TAG, "strip F32 q-after-hidden: ${if (qOkH) "PASS" else "DRIFT-diag"} " +
-                                "qTop=$qTopH(baseline=$qBaseH±$STRIP_F32_Q_TOL_PX mode=${qbH?.modeSrc} translating=${qbH?.translating} toolbarH=${qbH?.toolbarH ?: -1}) " +
-                                "kbDy=${stripKbDyF32.toInt()} (不断言/不REVERT)")
-                        }
-                        runCatching { verifyToolbarZeroShiftF34(decor, "F32-verify-hidden") }
-                        AndroidLog.i(TAG, "strip F32 verify=KEEP-hidden(300ms): gap=$gapH(藏栏残影不判) nView=${viewH?.n ?: -1}(viewTop=${viewH?.top?.toInt() ?: -1}) " +
-                            "stripBottom=$stripBottomH barTopHidden diagOnly src=$srcVerifyF37 (SKIP/KEEP，转窗槽/Q为准，fail-closed，不还账)")
+                        AndroidLog.e(TAG, "strip F32 verify=REVERT(detached): rowParent=${row.parent == null} barParent=${bar.parent == null} (还账)")
                         return@postDelayed
                     }
                     val logo = runCatching { resolveLogoView(decor) }.getOrNull()
@@ -1430,7 +1445,6 @@ internal object WeTypeClipboardSearchUi {
                         runCatching { revertBarF32(bar) }
                         AndroidLog.e(TAG, "strip F32 verify=REVERT(unmeasurable): viewNull=${viewLineF33 == null} " +
                             "stripBottom=$stripBottom barTop=$barTopAfter dy=${dy.toInt()} (还账)")
-                        runCatching { emitF34MissSkipF35(decor, "F32-verify-unmeasurable", "verify-unmeasurable viewNull=${viewLineF33 == null} stripBottom=$stripBottom") }
                         return@postDelayed
                     }
                     val gap = (viewLineF33.top - stripBottom).toInt()
@@ -1442,10 +1456,20 @@ internal object WeTypeClipboardSearchUi {
                     val gapPass = gap in STRIP_F32_GAP_MIN_PX..STRIP_F32_GAP_MAX_PX
                     val viewPass = nView >= 5
                     runCatching { verifyStripStacking(decor, row, "F32-verify") }
-                    if (gapPass && viewPass) {
-                        AndroidLog.i(TAG, "strip F32 verify=KEEP(300ms): gap=$gap(19~21) nView=$nView(viewTop=$viewTopF33>=5) " +
+                    // F40去假阳门：toolbar-zero须PASS（含isShown双真+位置±8+dy0+F32栏+压栏），否则即使缝对亦REVERT。
+                    val zeroOkF40 = runCatching { verifyToolbarZeroShiftF34(decor, "F32-verify") }.getOrNull()
+                    val zeroPassF40 = zeroOkF40 == true
+                    // F40栏位门：barTop离mount基线±8外（如1190）即FAIL；压栏（stripBottom>barTop）即FAIL。
+                    var barPosPassF40 = true
+                    val baseBarVerify = stripMountBarTopF40
+                    if (baseBarVerify > 0 && barTopAfter > 0 &&
+                        kotlin.math.abs(barTopAfter - baseBarVerify) > STRIP_F40_POS_TOL_PX
+                    ) barPosPassF40 = false
+                    val overlapF40 = stripBottom > 0 && barTopAfter > 0 && stripBottom > barTopAfter
+                    if (gapPass && viewPass && zeroPassF40 && barPosPassF40 && !overlapF40) {
+                        AndroidLog.i(TAG, "strip F40 verify=KEEP(300ms): gap=$gap(19~21) nView=$nView(viewTop=$viewTopF33>=5) " +
                             "nPix=$nPix(pixTop=$pixTop diagOnly) mixedTop=$mixedTopF33(diagOnly) stripBottom=$stripBottom " +
-                            "barTop=$barTopAfter dy=${dy.toInt()} (留)")
+                            "barTop=$barTopAfter dy=${dy.toInt()} zero=PASS posOk barPosOk noOverlap (留)")
                     } else {
                         runCatching { revertBarF32(bar) }
                         val after = runCatching {
@@ -1453,28 +1477,26 @@ internal object WeTypeClipboardSearchUi {
                             bar.getLocationOnScreen(bl)
                             bl[1]
                         }.getOrNull() ?: -1
-                        AndroidLog.e(TAG, "strip F32 verify=REVERT(300ms): gap=$gap(19~21? $gapPass) " +
+                        AndroidLog.e(TAG, "strip F40 verify=REVERT(300ms): gap=$gap(19~21? $gapPass) " +
                             "nView=$nView(>=5? $viewPass viewTop=$viewTopF33) nPix=$nPix(diagOnly pixTop=$pixTop) " +
                             "mixedTop=$mixedTopF33(diagOnly) stripBottom=$stripBottom " +
-                            "barTop=$barTopAfter->afterRevert=$after " +
-                            "dy=${dy.toInt()} (还账)")
+                            "barTop=$barTopAfter->afterRevert=$after zero=${zeroOkF40 ?: "skip"}(须PASS) " +
+                            "barPosOk=$barPosPassF40(base=${if (baseBarVerify > 0) baseBarVerify else "缺测"}±$STRIP_F40_POS_TOL_PX) " +
+                            "overlap=$overlapF40(须false) dy=${dy.toInt()} (还账)")
                     }
                     val qTopAfter = runCatching { findQTopOnScreen(decor) }.getOrNull()
-                    // F34：Q基线按mode分列（normal=1494±8，translating/search=1494-toolbarH现量，见qBaselineForModeF34），
-                    // q-after保持SKIP/PASS/DRIFT-diag三分态，DRIFT只diag不REVERT；缝19~21+视图n>=5仍唯一门（上已判），像素只diag。
-                    val qbAfterF34 = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-                    val qBaseAfterF34 = qbAfterF34?.baseline ?: STRIP_F32_Q_BASELINE
-                    val modeAfterF34 = qbAfterF34?.modeSrc ?: "fallback"
+                    // Q基线只留normal=1494±8；q-after保持SKIP/PASS/DRIFT-diag三分态，DRIFT只diag不REVERT；缝19~21+视图n>=5仍唯一门（上已判），像素只diag。
+                    val qBaseAfterF34 = STRIP_F32_Q_BASELINE
                     if (qTopAfter == null) {
                         AndroidLog.i(TAG, "strip F32 q-after: SKIP qTop缺测不断言 " +
-                            "(baseline=$qBaseAfterF34±$STRIP_F32_Q_TOL_PX mode=$modeAfterF34) kbDy=${stripKbDyF32.toInt()}")
+                            "(baseline=$qBaseAfterF34±$STRIP_F32_Q_TOL_PX) kbDy=${stripKbDyF32.toInt()}")
                     } else {
                         val qOk = kotlin.math.abs(qTopAfter - qBaseAfterF34) <= STRIP_F32_Q_TOL_PX
                         AndroidLog.i(TAG, "strip F32 q-after: ${if (qOk) "PASS" else "DRIFT-diag"} " +
-                            "qTop=$qTopAfter(baseline=$qBaseAfterF34±$STRIP_F32_Q_TOL_PX mode=$modeAfterF34 translating=${qbAfterF34?.translating} toolbarH=${qbAfterF34?.toolbarH ?: -1}) " +
+                            "qTop=$qTopAfter(baseline=$qBaseAfterF34±$STRIP_F32_Q_TOL_PX) " +
                             "kbDy=${stripKbDyF32.toInt()} (不断言/不REVERT)")
                     }
-                    // F34零位移改判证据行（只读diag，不gate）：工具栏/logo行dy=0+visibility按q.t0()预期，Q位移不再判FAIL。
+                    // F40工具栏零位移证据行（gateF32 verify，去假阳）：dy=0且VISIBLE+isShown双真+位置±8+F32栏+压栏才是PASS。
                     runCatching { verifyToolbarZeroShiftF34(decor, "F32-verify") }
                 } catch (t: Throwable) {
                     AndroidLog.e(TAG, "strip F32 verify failed: $t")
@@ -1510,27 +1532,24 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
-     * F32键盘补偿（只读判据+记账位移）：F34改按mode分列基线（normal=1494±8，translating/search=1494-toolbarH现量，
-     * q.t0()/m0()或toolbar.x.A/customToolbarRv.isShown/logo visibility分，见qBaselineForModeF34；不写死toolbar高），
+     * F32键盘补偿（只读判据+记账位移）：Q基线只留normal=1494±8，
      * 漂移超差则键盘容器translationY补偿移回。只动键盘容器自身translationY，不碰LP/垫/边/条/栏/壳/s0/J3/圆角B/DEL/commit/logo。返补偿量px。
-     * F34零位移改判：本函数仅补键盘，零位移PASS/FAIL以verifyToolbarZeroShiftF34工具栏行dy=0+visibility预期为准，Q位移不再判FAIL（此处DRIFT仅记账不REVERT）。
+     * 零位移判定：本函数仅补键盘，零位移PASS/FAIL以verifyToolbarZeroShiftF34工具栏行dy=0且VISIBLE为准，Q位移由q-after按1494±8另判（此处DRIFT仅记账不REVERT）。
      */
     private fun tryCompensateKeyboardF32(decor: ViewGroup): Int {
+        // F41丢弃：F32键盘补偿不再执行。键盘following翻译态原生，不动。
+        AndroidLog.i(TAG, "strip F41 kb: SKIP F32 compensate (translation native wins, diag only)")
+        if (true) return 0
         return try {
             val qTop = runCatching { findQTopOnScreen(decor) }.getOrNull() ?: run {
                 AndroidLog.e(TAG, "strip F32 kb skip: qTop missing (fail-closed)")
-                runCatching { emitF34MissSkipF35(decor, "F32-kb-skip", "qTop-missing") }
                 return 0
             }
-            // F34：Q基线按mode分列现量（normal vs translating/search），F32固定1494改为按mode取。
-            val qbF34 = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-            val qBaseF34 = qbF34?.baseline ?: STRIP_F32_Q_BASELINE
-            val modeSrcF34 = qbF34?.modeSrc ?: "fallback"
-            val transF34 = qbF34?.translating
-            val thF34 = qbF34?.toolbarH
+            // Q基线只留normal=1494±8。
+            val qBaseF34 = STRIP_F32_Q_BASELINE
             val drift = qTop - qBaseF34
             if (kotlin.math.abs(drift) <= STRIP_F32_Q_TOL_PX) {
-                AndroidLog.i(TAG, "strip F32 kb pass: qTop=$qTop(baseline=$qBaseF34±$STRIP_F32_Q_TOL_PX mode=$modeSrcF34 translating=$transF34 toolbarH=${thF34 ?: -1}) no move")
+                AndroidLog.i(TAG, "strip F32 kb pass: qTop=$qTop(baseline=$qBaseF34±$STRIP_F32_Q_TOL_PX) no move")
                 runCatching { verifyToolbarZeroShiftF34(decor, "F32-kb-pass") }
                 return 0
             }
@@ -1566,7 +1585,7 @@ internal object WeTypeClipboardSearchUi {
             runCatching { kb.requestLayout() }
             (kb.parent as? ViewGroup)?.let { runCatching { it.requestLayout() } }
             AndroidLog.i(TAG, "strip F32 kb compensate: qTop $qTop->$qBaseF34 drift=$drift " +
-                "dy=${dy.toInt()} kb=${kb.javaClass.name} mode=$modeSrcF34 translating=$transF34 toolbarH=${thF34 ?: -1} (记账，退壳拆条全还)")
+                "dy=${dy.toInt()} kb=${kb.javaClass.name} (记账，退壳拆条全还)")
             runCatching { verifyToolbarZeroShiftF34(decor, "F32-kb-compensate") }
             dy.toInt()
         } catch (t: Throwable) {
@@ -1812,6 +1831,12 @@ internal object WeTypeClipboardSearchUi {
                                 try {
                                     box.post {
                                         try {
+                                            // F41：原生k框（trackedBoxes含原生edit）走原生跳回；自绘框走旧容器路。
+                                            if (nativeKEditRefF41?.get() === box) {
+                                                AndroidLog.i(TAG, "strip F41 enter route: jumping back (native k)")
+                                                jumpBackToClipboardF41()
+                                                return@post
+                                            }
                                             var node: View? = box
                                             while (node != null && node.getTag() != TAG_SEARCH_BOX_CONTAINER) {
                                                 node = node.parent as? View
@@ -1820,7 +1845,13 @@ internal object WeTypeClipboardSearchUi {
                                                 AndroidLog.i(TAG, "strip enter route: jumping back")
                                                 jumpBackToClipboard(node)
                                             } else {
-                                                AndroidLog.e(TAG, "strip enter route: container not found")
+                                                // F41兜底：容器失联但原生k在，仍走原生跳回（fail-closed不丢词）。
+                                                if (nativeKRefF41?.get()?.parent != null) {
+                                                    AndroidLog.i(TAG, "strip F41 enter route fallback: native k jump")
+                                                    jumpBackToClipboardF41()
+                                                } else {
+                                                    AndroidLog.e(TAG, "strip enter route: container not found")
+                                                }
                                             }
                                         } catch (t: Throwable) {
                                             AndroidLog.e(TAG, "strip enter route apply failed: ${t.message}")
@@ -2491,6 +2522,1011 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
+     * F41原生复用件（只改文案，不自绘；任一步原生取不到即整条fail-closed，禁仿制兜底）。
+     * 复用点：
+     * - 壳：translatingwhilewriting.q#Q0(mgr,true/false,…)（driveTranslatorShell已封）。
+     * - 槽：ImeCandidateView#s0/r0(View,int,FrameLayout.LP)（q $t 1499-1516原生已挂k，我方不再s0）。
+     * - 卡：translatingwhilewriting.k（NATIVE_TOPVIEW_CLASS）整卡复用，只改文案。
+     * - 上行左：k内currentLanguageModeTv（TextView，初值r.b(r.c())如“中英互译”）改搜索类型；
+     *   下拉容器k内languageOptionsContainer（translatingwhilewriting.d extends RecyclerView）
+     *   经b#k(List<m>)喂搜索项 + d#setOnItemClick覆盖为搜索切换（OCR无效果）。
+     * - 下行：k内sourceContentEditView（ImeEditText，hint“输入要翻译的内容”）改hint“搜索剪贴板”，
+     *   加TextWatcher复用keywordListener过滤链（原生翻译watcher保留，翻译副作用随壳退账）。
+     * - 右收起：k内exitButton（TextView“收起”）原生点击即p→I.n+r0+Q0(false)，
+     *   我方不覆盖点击，仅经Q0(false)走原生S()/J0/V0/U0/C0/s()+N三连全还账。
+     * - 卡高：k#getCurrentHeight()（q1.e0(d0+156)，k.java 1440-1442），窗高N#J3原生写，
+     *   我方不钳小窗（J3仅防爆，bar/keyboard不动，验证门回翻译态原生，像素只diag）。
+     */
+    private data class NativeKPartsF41(
+        val k: View,
+        val edit: EditText,
+        val modeTv: android.widget.TextView,
+        val dropdown: ViewGroup,
+        val exit: View?
+    )
+
+    /** F41：k内件定位（只读+按型/文案现取，不写死字段名/id值；任一缺失返null fail-closed）。 */
+    private fun findNativeKPartsF41(k: View): NativeKPartsF41? {
+        return try {
+            var edit: EditText? = null
+            var modeTv: android.widget.TextView? = null
+            var exitTv: View? = null
+            var dropdown: ViewGroup? = null
+            val q: ArrayDeque<View> = ArrayDeque()
+            q.add(k)
+            var hops = 0
+            while (q.isNotEmpty() && hops < 200) {
+                val v = q.removeFirst()
+                hops++
+                if (v is EditText && edit == null) {
+                    // k内唯一ImeEditText即sourceContentEditView（hint“输入要翻译的内容”旁证）。
+                    val hint = runCatching { v.hint?.toString() }.getOrNull().orEmpty()
+                    if (hint.contains("翻译") || v.hint == null || hint.isEmpty() || hint.contains("搜索")) {
+                        edit = v
+                    } else {
+                        edit = edit ?: v
+                    }
+                }
+                if (v is android.widget.TextView && v !is EditText) {
+                    val t = runCatching { v.text?.toString() }.getOrNull().orEmpty()
+                    if (t == "收起" && exitTv == null) exitTv = v
+                    // modeTv初值如“中英互译”，含“译”或“∨”旁证；排除“收起”/“轻触此处继续输入”。
+                    if (modeTv == null && t.isNotEmpty() && t != "收起" && !t.contains("轻触")) {
+                        // 候选：长度<=8的上行小字（40sp级），先记候选，下文按k直系operationBar内再确证。
+                        modeTv = v
+                    }
+                }
+                // dropdown：translatingwhilewriting.d（二进制名$d）即RecyclerView子类。
+                if (dropdown == null && v.javaClass.name == "com.tencent.wetype.plugin.hld.translatingwhilewriting.d") {
+                    dropdown = v as? ViewGroup
+                }
+                if (v is ViewGroup) {
+                    for (i in 0 until minOf(v.childCount, 25)) {
+                        v.getChildAt(i)?.let { q.add(it) }
+                    }
+                }
+            }
+            if (edit == null) {
+                AndroidLog.e(TAG, "strip F41 reuse: SKIP native edit missing (fail-closed)")
+                return null
+            }
+            if (modeTv == null) {
+                AndroidLog.e(TAG, "strip F41 reuse: SKIP native modeTv missing (fail-closed)")
+                return null
+            }
+            if (dropdown == null) {
+                AndroidLog.e(TAG, "strip F41 reuse: SKIP native dropdown(d) missing (fail-closed)")
+                return null
+            }
+            // modeTv确证：取operationBar容器内（k直系ConstraintLayout子链）文本最短者为准；
+            // 上面BFS首个文本可能误取tip（GONE），此处以isShown+父链operationBar旁证纠正。
+            val confirmedMode = runCatching { confirmModeTvInOpBarF41(k, modeTv) }.getOrNull() ?: modeTv
+            NativeKPartsF41(k, edit, confirmedMode, dropdown, exitTv)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 reuse parts failed: $t")
+            null
+        }
+    }
+
+    /** F41：operationBar内modeTv确证（只读）：k子链中operationBarContainer（高e0(100)级）内可见TextView首个非收起即mode。 */
+    private fun confirmModeTvInOpBarF41(k: View, fallback: android.widget.TextView): android.widget.TextView {
+        return try {
+            if (k !is ViewGroup) return fallback
+            // 遍历k直系：operationBarContainer为ConstraintLayout且含“收起”兄弟即是。
+            for (i in 0 until minOf(k.childCount, 12)) {
+                val root = k.getChildAt(i) as? ViewGroup ?: continue
+                // rootContainer（ImeRadiusConstraintLayout）内再找operationBar。
+                val chain: ArrayDeque<View> = ArrayDeque()
+                chain.add(root)
+                var hops = 0
+                while (chain.isNotEmpty() && hops < 80) {
+                    val v = chain.removeFirst()
+                    hops++
+                    if (v is ViewGroup) {
+                        var hasExit = false
+                        var candMode: android.widget.TextView? = null
+                        for (j in 0 until minOf(v.childCount, 12)) {
+                            val c = v.getChildAt(j) ?: continue
+                            if (c is android.widget.TextView && c !is EditText) {
+                                val t = runCatching { c.text?.toString() }.getOrNull().orEmpty()
+                                if (t == "收起") hasExit = true
+                                else if (t.isNotEmpty() && !t.contains("轻触") && candMode == null) candMode = c
+                            }
+                        }
+                        if (hasExit && candMode != null) return candMode
+                        for (j in 0 until minOf(v.childCount, 25)) {
+                            v.getChildAt(j)?.let { chain.add(it) }
+                        }
+                    }
+                }
+            }
+            fallback
+        } catch (_: Throwable) {
+            fallback
+        }
+    }
+
+    /** F41：原生k卡高（k#getCurrentHeight()，q1.e0(d0+156)；取不到返null fail-closed，不写死）。 */
+    private fun nativeKHeightF41(k: View): Int? {
+        return try {
+            val m = k.javaClass.declaredMethods.firstOrNull {
+                it.name == "getCurrentHeight" && it.parameterTypes.isEmpty()
+            } ?: run {
+                AndroidLog.e(TAG, "strip F41 height: k#getCurrentHeight missing (fail-closed)")
+                return null
+            }
+            m.isAccessible = true
+            (m.invoke(k) as? Number)?.toInt()
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 height failed: $t")
+            null
+        }
+    }
+
+    /** F41：切搜索模式（UI切换生效+即换过滤stub：重推当前词走现有过滤链；OCR不进此函数，點擊無效果由dropdown守卫）。 */
+    private fun setSearchModeF41(mode: Int, reason: String) {
+        try {
+            if (mode != SEARCH_MODE_FULL && mode != SEARCH_MODE_FUZZY) return
+            if (searchModeF41 == mode) return
+            searchModeF41 = mode
+            val tv = nativeKModeTvRefF41?.get()
+            if (tv != null && tv.parent != null) {
+                runCatching {
+                    if (Looper.myLooper() == Looper.getMainLooper()) tv.text = searchModeNameF41(mode)
+                    else tv.post { runCatching { tv.text = searchModeNameF41(mode) } }
+                }
+            }
+            // 切模式即换过滤（stub：同关键词重推一次，复用现有S5防抖+后台+setList回放链）。
+            val kw = pendingKeyword
+            runCatching { keywordListenerImpl?.invoke(kw) }
+            AndroidLog.i(TAG, "strip F41 mode: ${searchModeNameF41(mode)} reason=$reason kwLen=${kw.length} (UI切换生效，切模式即换过滤stub)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 setMode failed: $t")
+        }
+    }
+
+    /** F41：翻译态原生可见性判定（只读，像素只diag）：q.t0/innerState + k挂载 + toolbar.x.A + exit/isShown。 */
+    private fun verifyNativeTranslationStateDiagF41(decor: ViewGroup, tag: String): Boolean {
+        return try {
+            val mgr = runCatching { translatingMgr(decor) }.getOrNull()
+            val translating = if (mgr != null) runCatching { isTranslating(mgr) }.getOrDefault(false) else false
+            val k = runCatching { findTranslatorTopView(decor) }.getOrNull()
+            val kOn = k != null && k.parent != null && k.visibility == View.VISIBLE
+            val kH = if (k != null) runCatching { nativeKHeightF41(k) }.getOrNull() else null
+            val live = runCatching {
+                val bar = findStripToolbarBar(decor)
+                queryToolbarLiveF39(bar)
+            }.getOrNull()
+            AndroidLog.i(TAG, "strip F41 verify [$tag]: translating=$translating kOn=$kOn kH=$kH toolbarLive=$live " +
+                "mode=${searchModeNameF41(searchModeF41)} (翻译态原生判定，像素只diag，不压高不动栏/键)")
+            // F41门：壳byUs且k在即PASS（翻译态原生在位）；其余只diag不REVERT。
+            translatorShellByUs && kOn
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 verify failed: $t")
+            false
+        }
+    }
+
+    /** F41：复用原生k（只改文案，不自绘；失败fail-closed退壳）。 */
+    private fun repurposeNativeKForSearchF41(decor: ViewGroup, k: View): Boolean {
+        return try {
+            val parts = findNativeKPartsF41(k) ?: run {
+                AndroidLog.e(TAG, "strip F41 reuse dropped: parts missing")
+                return false
+            }
+            // 圆角B：条圆角跟输入法背景走（WeTypeSettings.getCornerRadiusXposed，与WindowHooks同源）；
+            // k内rootContainer（ImeRadiusConstraintLayout）setRadius(B)+setBorderWidth(1f)已在X()为f0(32)，
+            // 此处仅当B可取才覆盖为B，不可取则保留原生（fail-closed不自绘，禁f0(32)/GradientDrawable/硬编码色）。
+            runCatching {
+                val root = findNativeKRootContainerF41(k)
+                if (root != null) {
+                    val radius = try {
+                        TypedValue.applyDimension(
+                            TypedValue.COMPLEX_UNIT_DIP,
+                            WeTypeSettings.getCornerRadiusXposed(root.context).toFloat(),
+                            root.resources.displayMetrics
+                        ).roundToInt()
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "strip F41 radius: B missing, keep native ($t)")
+                        null
+                    }
+                    if (radius != null) {
+                        val setRadius = root.javaClass.declaredMethods.firstOrNull {
+                            it.name == "setRadius" && it.parameterTypes.size == 1
+                        }
+                        if (setRadius != null) {
+                            setRadius.isAccessible = true
+                            when (setRadius.parameterTypes[0]) {
+                                Int::class.javaPrimitiveType, Integer::class.java ->
+                                    setRadius.invoke(root, radius)
+                                Float::class.javaPrimitiveType, java.lang.Float::class.java ->
+                                    setRadius.invoke(root, radius.toFloat())
+                            }
+                            AndroidLog.i(TAG, "strip F41 radius: B=$radius applied on ${root.javaClass.simpleName} (原生复用，仅圆角B)")
+                        }
+                    }
+                }
+            }
+            // 上行左：改搜索类型文案（保留原生字号/肤色/padding/手势，仅改text）。
+            runCatching {
+                parts.modeTv.text = searchModeNameF41(searchModeF41)
+            }
+            // 下拉：经b#k喂搜索项 + d#setOnItemClick覆盖为搜索切换（OCR守卫无效果）；失败fail-closed。
+            if (!wireNativeDropdownF41(parts)) {
+                AndroidLog.e(TAG, "strip F41 reuse dropped: dropdown wire failed")
+                return false
+            }
+            // 下行：hint改搜索剪贴板 + 输入即过滤（复用keywordListener链）；失败fail-closed。
+            if (!wireNativeInputF41(parts)) {
+                AndroidLog.e(TAG, "strip F41 reuse dropped: input wire failed")
+                return false
+            }
+            // C46：直点收起可观测（exit包装+Q0补记，只记账不抢原生时序；失败只diag不拦mount）。
+            runCatching { wireNativeExitF41(parts) }
+            runCatching { ensureCollapseHookF41(parts.k) }
+            nativeKRefF41 = java.lang.ref.WeakReference(k)
+            nativeKEditRefF41 = java.lang.ref.WeakReference(parts.edit)
+            nativeKModeTvRefF41 = java.lang.ref.WeakReference(parts.modeTv)
+            overlayParentRef = java.lang.ref.WeakReference(decor)
+            overlayPending = false
+            // 卡高：原生k.getCurrentHeight现量（充分利用扩充高度，不钳小窗；J3原生写窗，bar/键following原生）。
+            val h = runCatching { nativeKHeightF41(k) }.getOrNull()
+            AndroidLog.i(TAG, "strip F41 mounted: native k reused mode=${searchModeNameF41(searchModeF41)} " +
+                "kH=$h hint=搜索剪贴板 exit=原生收起(S/J0/V0/U0/C0/s) class=${k.javaClass.name}")
+            // 焦点：原生q0()已请求，仍显式补一次（只requestFocus，不碰布局/高度/栏/键）。
+            runCatching {
+                parts.edit.post {
+                    runCatching { parts.edit.requestFocus() }
+                    AndroidLog.i(TAG, "strip F41 focus: requested hasFocus=${parts.edit.hasFocus()} class=${parts.edit.javaClass.name}")
+                }
+            }
+            // 验证门：翻译态原生可见性判定，像素只diag。
+            runCatching { verifyNativeTranslationStateDiagF41(decor, "mount") }
+            true
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 reuse failed: $t")
+            false
+        }
+    }
+
+    /** F41：k内rootContainer定位（只读）：ImeRadiusConstraintLayout首个即是（k ctor仅此一白卡根）。 */
+    private fun findNativeKRootContainerF41(k: View): ViewGroup? {
+        return try {
+            if (k !is ViewGroup) return null
+            val q: ArrayDeque<View> = ArrayDeque()
+            q.add(k)
+            var hops = 0
+            while (q.isNotEmpty() && hops < 120) {
+                val v = q.removeFirst()
+                hops++
+                if (v.javaClass.name == NATIVE_RADIUS_CLASS) return v as? ViewGroup
+                if (v is ViewGroup && v !== k) {
+                    // k直系第一层即rootContainer（ConstraintLayout.LayoutParams），优先直系。
+                }
+                if (v is ViewGroup) {
+                    for (i in 0 until minOf(v.childCount, 25)) {
+                        v.getChildAt(i)?.let { q.add(it) }
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** F41：下拉接线（原生复用）：b#k喂[全量/模糊/OCR]m项 + d#setOnItemClick覆盖；OCR位灰色disabled+点击无效果。 */
+    private fun wireNativeDropdownF41(parts: NativeKPartsF41): Boolean {
+        return try {
+            val cl = hostClassLoader ?: parts.k.context?.classLoader ?: return false
+            val mCls = runCatching { Class.forName("com.tencent.wetype.plugin.hld.translatingwhilewriting.m", false, cl) }.getOrNull() ?: run {
+                AndroidLog.e(TAG, "strip F41 dropdown: m missing (fail-closed)")
+                return false
+            }
+            val ctor = runCatching { mCls.getDeclaredConstructor(Int::class.javaPrimitiveType, String::class.java) }.getOrNull() ?: run {
+                AndroidLog.e(TAG, "strip F41 dropdown: m(int,String) missing (fail-closed)")
+                return false
+            }
+            ctor.isAccessible = true
+            val dropdown = parts.dropdown
+            // 先经adapter.b#k直喂（绕过d#t的o()强制回默认语言，避免r.d副作用）；取不到adapter则fail-closed。
+            val adapter = resolveDropdownAdapterF41(dropdown) ?: run {
+                AndroidLog.e(TAG, "strip F41 dropdown: adapter missing (fail-closed)")
+                return false
+            }
+            val kMethod = adapter.javaClass.declaredMethods.firstOrNull {
+                it.name == "k" && it.parameterTypes.size == 1 && List::class.java.isAssignableFrom(it.parameterTypes[0])
+            } ?: run {
+                AndroidLog.e(TAG, "strip F41 dropdown: b#k(List) missing (fail-closed)")
+                return false
+            }
+            kMethod.isAccessible = true
+            // C46：mount直喂一次（首屏）；展开时原生重绑由b#k拦+ s0重喂兜底（下 hook）。
+            if (!feedSearchItemsF41(adapter, kMethod, mCls, ctor)) return false
+            if (!applyDropdownClickHandlerF41(parts, cl)) {
+                AndroidLog.e(TAG, "strip F41 dropdown: d#setOnItemClick missing (fail-closed)")
+                return false
+            }
+            // C46：拦数据源（展开重绑仍是我方三项）+ 展开重喂（s0后补喂+补灰+补点击）。
+            runCatching { ensureDropdownSrcHookF41(adapter, kMethod, parts, mCls, ctor) }
+            runCatching { ensureExpandRefeedHookF41(parts, mCls, ctor) }
+            // OCR灰色disabled：下拉展开后子项现取，OCR位enabled=false+alpha0.4（原生图标同值，非硬编码色）；
+            // 此处先记账，展开时由post补灰（dropdown为RecyclerView，子ViewHolder延迟绑定）。
+            runCatching {
+                dropdown.post {
+                    runCatching { grayOutOcrItemF41(parts) }
+                }
+                // 再下一帧补一次（首帧ViewHolder未绑定时）。
+                dropdown.postDelayed({ runCatching { grayOutOcrItemF41(parts) } }, 300)
+            }
+            AndroidLog.i(TAG, "strip F41 dropdown: wired 全量/模糊/OCR灰 (b#k直喂+d#setOnItemClick覆盖，原生复用)")
+            true
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 dropdown wire failed: $t")
+            false
+        }
+    }
+
+    /** C46：下拉adapter定位（只读）：getLanguageListAdapter优先，字段回退；取不到返null。 */
+    private fun resolveDropdownAdapterF41(dropdown: ViewGroup): Any? {
+        return try {
+            val getter = dropdown.javaClass.declaredMethods.firstOrNull {
+                it.name == "getLanguageListAdapter" && it.parameterTypes.isEmpty()
+            }
+            if (getter != null) {
+                getter.isAccessible = true
+                getter.invoke(dropdown)
+            } else {
+                val f = dropdown.javaClass.declaredFields.firstOrNull { it.type.name.endsWith(".translatingwhilewriting.b") }
+                    ?: dropdown.javaClass.declaredFields.firstOrNull {
+                        it.type.superclass?.name?.contains("RecyclerView") == true || it.type.name.contains("RecyclerView")
+                    } ?: return null
+                f.isAccessible = true
+                f.get(dropdown)
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** C46：组我方三项m对象（只改文案，id 1001/1002/1003现取常量，不写死语言）。 */
+    private fun buildSearchItemsF41(mCls: Class<*>, ctor: java.lang.reflect.Constructor<*>): ArrayList<Any> {
+        val full = ctor.newInstance(SEARCH_MODE_FULL_ID, "全量匹配")
+        val fuzzy = ctor.newInstance(SEARCH_MODE_FUZZY_ID, "模糊匹配")
+        val ocr = ctor.newInstance(SEARCH_MODE_OCR_ID, "OCR识别")
+        return arrayListOf(full, fuzzy, ocr)
+    }
+
+    /** C46：经b#k直喂三项（feeding守卫防hook自递归；失败false fail-closed）。 */
+    private fun feedSearchItemsF41(adapter: Any, kMethod: java.lang.reflect.Method, mCls: Class<*>, ctor: java.lang.reflect.Constructor<*>): Boolean {
+        if (feedingDropdownF41) return true
+        return try {
+            feedingDropdownF41 = true
+            kMethod.invoke(adapter, buildSearchItemsF41(mCls, ctor))
+            true
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 dropdown feed failed: $t")
+            false
+        } finally {
+            feedingDropdownF41 = false
+        }
+    }
+
+    /** C46：覆盖d#setOnItemClick为搜索切换（OCR守卫：id==1003即无效果；其余切模式+收下拉经k#s0反射）。 */
+    private fun applyDropdownClickHandlerF41(parts: NativeKPartsF41, cl: ClassLoader): Boolean {
+        return try {
+            val dropdown = parts.dropdown
+            val setCb = dropdown.javaClass.declaredMethods.firstOrNull {
+                it.name == "setOnItemClick" && it.parameterTypes.size == 1
+            } ?: return false
+            setCb.isAccessible = true
+            val paramType = setCb.parameterTypes[0]
+            val handler = java.lang.reflect.Proxy.newProxyInstance(cl, arrayOf(paramType)) { _, method, args ->
+                try {
+                    if (method.name == "invoke" || method.name == "a") {
+                        val info = args?.firstOrNull()
+                        val id = runCatching {
+                            val g = info?.javaClass?.declaredMethods?.firstOrNull {
+                                (it.name == "getId" || it.name == "a") && it.parameterTypes.isEmpty()
+                            }
+                            g?.also { it.isAccessible = true }?.invoke(info) as? Number
+                        }?.getOrNull()?.toInt()
+                        if (id == SEARCH_MODE_OCR_ID) {
+                            AndroidLog.i(TAG, "strip F41 dropdown: OCR clicked no-op (灰色disabled接口)")
+                            // 无效果：不切模式、不换过滤、不收下拉（fail-closed灰色）。
+                            null
+                        } else if (id == SEARCH_MODE_FULL_ID) {
+                            setSearchModeF41(SEARCH_MODE_FULL, "dropdown")
+                            runCatching { closeNativeDropdownF41(parts.k) }
+                            null
+                        } else if (id == SEARCH_MODE_FUZZY_ID) {
+                            setSearchModeF41(SEARCH_MODE_FUZZY, "dropdown")
+                            runCatching { closeNativeDropdownF41(parts.k) }
+                            null
+                        } else {
+                            AndroidLog.e(TAG, "strip F41 dropdown: unknown id=$id (fail-closed)")
+                            null
+                        }
+                    } else if (method.name == "toString") {
+                        "F41SearchModeClick"
+                    } else null
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 dropdown cb failed: $t")
+                    null
+                }
+            }
+            setCb.invoke(dropdown, handler)
+            true
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 dropdown cb apply failed: $t")
+            false
+        }
+    }
+
+    /** C46：拦b#k数据源（全局一次）：原生展开重绑走此路即换回我方三项；after补点击+补灰。 */
+    private fun ensureDropdownSrcHookF41(adapter: Any, kMethod: java.lang.reflect.Method, parts: NativeKPartsF41, mCls: Class<*>, ctor: java.lang.reflect.Constructor<*>) {
+        if (f41DropdownSrcHooked) return
+        f41DropdownSrcHooked = true
+        try {
+            kMethod.hookBefore { param ->
+                try {
+                    if (feedingDropdownF41) return@hookBefore
+                    if (!translatorShellByUs) return@hookBefore
+                    if (nativeKRefF41?.get()?.parent == null) return@hookBefore
+                    val arg = param.args.firstOrNull() as? List<*> ?: return@hookBefore
+                    // 已是我方三项（1001/1002/1003）则放行，防抖。
+                    val ids = arg.mapNotNull {
+                        runCatching {
+                            val g = it?.javaClass?.declaredMethods?.firstOrNull {
+                                (it.name == "getId" || it.name == "a") && it.parameterTypes.isEmpty()
+                            }
+                            g?.also { m -> m.isAccessible = true }?.invoke(it) as? Number
+                        }.getOrNull()?.toInt()
+                    }.toSet()
+                    if (ids == setOf(SEARCH_MODE_FULL_ID, SEARCH_MODE_FUZZY_ID, SEARCH_MODE_OCR_ID)) return@hookBefore
+                    param.args[0] = buildSearchItemsF41(mCls, ctor)
+                    AndroidLog.i(TAG, "strip F41 dropdown: native rebind intercepted->search items (展开重绑已拦)")
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 rebind intercept failed: $t")
+                }
+            }
+            kMethod.hookAfter {
+                try {
+                    if (feedingDropdownF41) return@hookAfter
+                    if (!translatorShellByUs) return@hookAfter
+                    val cur = nativeKRefF41?.get() ?: return@hookAfter
+                    if (cur.parent == null) return@hookAfter
+                    val cl = hostClassLoader ?: cur.context?.classLoader ?: return@hookAfter
+                    // 原生重绑可能连带重置点击监听，补一次；灰条后一帧补。
+                    val p = runCatching {
+                        var node: NativeKPartsF41? = null
+                        runCatching {
+                            val dd = cur.let { findNativeKPartsF41(it) }
+                            if (dd != null) node = dd
+                        }
+                        node
+                    }.getOrNull()
+                    if (p != null) {
+                        runCatching { applyDropdownClickHandlerF41(p, cl) }
+                        p.dropdown.post { runCatching { grayOutOcrItemF41(p) } }
+                        p.dropdown.postDelayed({ runCatching { grayOutOcrItemF41(p) } }, 300)
+                    } else {
+                        runCatching {
+                            parts.dropdown.post { runCatching { grayOutOcrItemF41(parts) } }
+                        }
+                    }
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 rebind after failed: $t")
+                }
+            }
+            AndroidLog.i(TAG, "strip F41 dropdown: src hook armed (b#k拦)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 src hook arm failed: $t")
+            f41DropdownSrcHooked = false
+        }
+    }
+
+    /** C46：展开重喂兜底（全局一次）：k#s0 toggle后补喂+补点击+补灰，防b#k拦漏网。 */
+    private fun ensureExpandRefeedHookF41(parts: NativeKPartsF41, mCls: Class<*>, ctor: java.lang.reflect.Constructor<*>) {
+        if (f41ExpandHooked) return
+        f41ExpandHooked = true
+        try {
+            val s0 = parts.k.javaClass.declaredMethods.firstOrNull {
+                it.name == "s0" && it.parameterTypes.isEmpty()
+            } ?: run {
+                f41ExpandHooked = false
+                return
+            }
+            s0.isAccessible = true
+            s0.hookAfter {
+                try {
+                    if (!translatorShellByUs) return@hookAfter
+                    val cur = nativeKRefF41?.get() ?: return@hookAfter
+                    if (cur.parent == null) return@hookAfter
+                    cur.postDelayed({
+                        try {
+                            val fresh = runCatching { findNativeKPartsF41(cur) }.getOrNull() ?: return@postDelayed
+                            val ad = runCatching { resolveDropdownAdapterF41(fresh.dropdown) }.getOrNull() ?: return@postDelayed
+                            val km = ad.javaClass.declaredMethods.firstOrNull {
+                                it.name == "k" && it.parameterTypes.size == 1 && List::class.java.isAssignableFrom(it.parameterTypes[0])
+                            } ?: return@postDelayed
+                            km.isAccessible = true
+                            // 展开时重喂：直喂三项（feeding守卫内hookBefore自动放行）。
+                            runCatching { feedSearchItemsF41(ad, km, mCls, ctor) }
+                            val cl = hostClassLoader ?: cur.context?.classLoader ?: return@postDelayed
+                            runCatching { applyDropdownClickHandlerF41(fresh, cl) }
+                            runCatching { grayOutOcrItemF41(fresh) }
+                            fresh.dropdown.postDelayed({ runCatching { grayOutOcrItemF41(fresh) } }, 300)
+                            AndroidLog.i(TAG, "strip F41 dropdown: expand refeed done (s0后重喂+补灰)")
+                        } catch (t: Throwable) {
+                            AndroidLog.e(TAG, "strip F41 expand refeed failed: $t")
+                        }
+                    }, 120)
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 expand hook failed: $t")
+                }
+            }
+            AndroidLog.i(TAG, "strip F41 dropdown: expand hook armed (k#s0后重喂)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 expand hook arm failed: $t")
+            f41ExpandHooked = false
+        }
+    }
+
+    /** F41：收下拉（k#s0 toggle；当前展开态才调，状态经currentLanguageModeSelectionState读，缺失则反射t0(0)兜底）。 */
+    private fun closeNativeDropdownF41(k: View) {
+        try {
+            val s0 = k.javaClass.declaredMethods.firstOrNull {
+                it.name == "s0" && it.parameterTypes.isEmpty()
+            } ?: return
+            s0.isAccessible = true
+            // s0为toggle：仅当下拉展开（selection==2）才调关；否则不动防误开。
+            val sel = runCatching {
+                val g = k.javaClass.declaredMethods.firstOrNull {
+                    it.name == "getCurrentLanguageModeSelectionState" && it.parameterTypes.isEmpty()
+                }
+                g?.also { it.isAccessible = true }?.invoke(k)?.let { flow ->
+                    val gv = flow.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.isEmpty() }
+                    gv?.also { it.isAccessible = true }?.invoke(flow) as? Number
+                }?.toInt()
+            }.getOrNull()
+            if (sel == 2) {
+                s0.invoke(k)
+                AndroidLog.i(TAG, "strip F41 dropdown: closed via k#s0 (sel=2)")
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 dropdown close failed: $t")
+        }
+    }
+
+    /** F41：OCR位灰色disabled（只碰OCR位视图：enabled=false+alpha0.4；找不到只diag不炸）。 */
+    private fun grayOutOcrItemF41(parts: NativeKPartsF41) {
+        try {
+            // 不直引RecyclerView类（模块无依赖，按ViewGroup子遍历，fail-closed）。
+            val rv = parts.dropdown as? ViewGroup ?: return
+            for (i in 0 until rv.childCount) {
+                val child = rv.getChildAt(i) ?: continue
+                val tv = runCatching {
+                    var found: android.widget.TextView? = null
+                    val qq: ArrayDeque<View> = ArrayDeque()
+                    qq.add(child)
+                    var hops = 0
+                    while (qq.isNotEmpty() && hops < 30 && found == null) {
+                        val v = qq.removeFirst()
+                        hops++
+                        if (v is android.widget.TextView) found = v
+                        if (v is ViewGroup) {
+                            for (j in 0 until minOf(v.childCount, 10)) {
+                                v.getChildAt(j)?.let { qq.add(it) }
+                            }
+                        }
+                    }
+                    found
+                }.getOrNull() ?: continue
+                val t = runCatching { tv.text?.toString() }.getOrNull().orEmpty()
+                if (t == "OCR识别") {
+                    runCatching { child.isEnabled = false }
+                    runCatching { tv.isEnabled = false }
+                    runCatching { child.alpha = 0.4f }
+                    runCatching { tv.alpha = 0.4f }
+                    // 点击吞掉：子链加空消费监听（不触发adapter回调，因adapter回调走rootView的r1.C，
+                    // 此处仅保险；主守卫仍在d#setOnItemClick的OCR分支）。
+                    runCatching { child.isClickable = false }
+                    AndroidLog.i(TAG, "strip F41 dropdown: OCR grayed enabled=false alpha=0.4 (点击无效果)")
+                }
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 OCR gray failed: $t")
+        }
+    }
+
+    private fun grayOutOcrByTextF41(root: ViewGroup) {
+        try {
+            val q: ArrayDeque<View> = ArrayDeque()
+            q.add(root)
+            var hops = 0
+            while (q.isNotEmpty() && hops < 120) {
+                val v = q.removeFirst()
+                hops++
+                if (v is android.widget.TextView && runCatching { v.text?.toString() }.getOrNull() == "OCR识别") {
+                    runCatching { v.isEnabled = false }
+                    runCatching { v.alpha = 0.4f }
+                    (v.parent as? View)?.let {
+                        runCatching { it.isEnabled = false }
+                        runCatching { it.alpha = 0.4f }
+                    }
+                    AndroidLog.i(TAG, "strip F41 dropdown: OCR grayed (text fallback)")
+                    return
+                }
+                if (v is ViewGroup) {
+                    for (i in 0 until minOf(v.childCount, 25)) {
+                        v.getChildAt(i)?.let { q.add(it) }
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 OCR gray fallback failed: $t")
+        }
+    }
+
+    /** F41：输入行接线（只改hint+加watcher复用过滤链；字号/肤色/padding/光标/行高一律原生不动）。 */
+    private fun wireNativeInputF41(parts: NativeKPartsF41): Boolean {
+        return try {
+            val box = parts.edit
+            // C46：hint稳定搜索剪贴板（只改文案）：直设+布局监听重申+延时重申+setHint拦，原生蓝占位竞态即压回。
+            runCatching { applySearchHintF41(box) }
+            runCatching { ensureHintStableF41(box) }
+            synchronized(trackedBoxes) { trackedBoxes.add(box) }
+            synchronized(nativeKWatchersF41) {
+                if (nativeKWatchersF41[box] == null) {
+                    val w = object : TextWatcher {
+                        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                        override fun afterTextChanged(s: Editable?) {
+                            try {
+                                val raw = s?.toString().orEmpty()
+                                // 换行键兜底：回车即跳回剪贴板（与自绘条同语义）。
+                                if (raw.contains('\n') || raw.contains('\r')) {
+                                    val clean = raw.replace("\n", "").replace("\r", "")
+                                    box.post {
+                                        try {
+                                            box.setText(clean)
+                                            box.setSelection(clean.length.coerceAtMost(box.text?.length ?: 0))
+                                            AndroidLog.i(TAG, "strip F41 newline-as-enter: jumping back")
+                                            jumpBackToClipboardF41()
+                                        } catch (t: Throwable) {
+                                            AndroidLog.e(TAG, "strip F41 newline jump failed: ${t.message}")
+                                        }
+                                    }
+                                    pendingKeyword = clean
+                                    keywordListenerImpl?.invoke(clean)
+                                    updateClearVisibility(box)
+                                    return
+                                }
+                                pendingKeyword = raw
+                                keywordListenerImpl?.invoke(pendingKeyword)
+                            } catch (t: Throwable) {
+                                AndroidLog.e(TAG, "strip F41 keyword failed: ${t.message}")
+                            }
+                            updateClearVisibility(box)
+                        }
+                    }
+                    box.addTextChangedListener(w)
+                    nativeKWatchersF41[box] = w
+                }
+            }
+            // 回车/✓跳回：EditorAction+OnKey双路（聚焦+可见双门卫，与自绘条同判据）。
+            runCatching {
+                box.setOnEditorActionListener { _, _, _ ->
+                    try {
+                        AndroidLog.i(TAG, "strip F41 editor action: jumping back")
+                        jumpBackToClipboardF41()
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "strip F41 search action failed: ${t.message}")
+                    }
+                    true
+                }
+            }
+            runCatching {
+                box.setOnKeyListener { _, keyCode, event ->
+                    try {
+                        if ((keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                                keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) &&
+                            event.action == android.view.KeyEvent.ACTION_DOWN
+                        ) {
+                            if (box.visibility == View.VISIBLE && box.hasFocus() && box.parent != null) {
+                                var chainOk = true
+                                var p = box.parent
+                                while (p is View) {
+                                    if ((p as View).visibility != View.VISIBLE) { chainOk = false; break }
+                                    p = (p as View).parent
+                                }
+                                if (chainOk) {
+                                    AndroidLog.i(TAG, "strip F41 enter key: jumping back via onKey")
+                                    jumpBackToClipboardF41()
+                                    true
+                                } else false
+                            } else false
+                        } else false
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "strip F41 onKey enter failed: ${t.message}")
+                        false
+                    }
+                }
+            }
+            // 清除按钮：原生翻译条无X，不自建X（禁系统图标兜底）；清空走框内删字+clearSearch语义由过滤链空词恢复。
+            AndroidLog.i(TAG, "strip F41 input: wired hint=搜索剪贴板 (原生ImeEditText+skin.w保留，输入即过滤复用链)")
+            true
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 input wire failed: $t")
+            false
+        }
+    }
+
+    /** C46：直设hint搜索剪贴板（只改文案，不碰字号/肤色/padding/光标/行高）。 */
+    private fun applySearchHintF41(box: EditText) {
+        try {
+            if (box.hint?.toString() == SEARCH_HINT_F41) return
+            if (Looper.myLooper() == Looper.getMainLooper()) box.hint = SEARCH_HINT_F41
+            else box.post { runCatching { if (box.hint?.toString() != SEARCH_HINT_F41) box.hint = SEARCH_HINT_F41 } }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 hint apply failed: $t")
+        }
+    }
+
+    /** C46：hint稳定（布局监听+延时重申+setHint拦，原生蓝占位竞态压回；只改文案）。 */
+    private fun ensureHintStableF41(box: EditText) {
+        try {
+            synchronized(hintLayoutListenersF41) {
+                if (hintLayoutListenersF41[box] == null) {
+                    val l = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                        try {
+                            if (nativeKEditRefF41?.get() !== box) return@OnLayoutChangeListener
+                            if (box.hint?.toString() != SEARCH_HINT_F41) {
+                                box.hint = SEARCH_HINT_F41
+                                AndroidLog.i(TAG, "strip F41 hint: reasserted 搜索剪贴板 (layout, 原生蓝占位已压回)")
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    box.addOnLayoutChangeListener(l)
+                    hintLayoutListenersF41[box] = l
+                }
+            }
+            // 延时双补（原生setHint后到时序）：300/800ms各一次，只改文案。
+            box.postDelayed({ runCatching { applySearchHintF41(box) } }, 300)
+            box.postDelayed({ runCatching { applySearchHintF41(box) } }, 800)
+            ensureHintHookF41()
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 hint stable failed: $t")
+        }
+    }
+
+    /** C46：全局一次拦TextView#setHint（仅我方原生框，非我方框一律放行；fail-closed）。 */
+    private fun ensureHintHookF41() {
+        if (f41HintHooked) return
+        f41HintHooked = true
+        try {
+            val setHintCs = android.widget.TextView::class.java.declaredMethods.firstOrNull {
+                it.name == "setHint" && it.parameterTypes.size == 1 && it.parameterTypes[0] == CharSequence::class.java
+            } ?: run {
+                f41HintHooked = false
+                return
+            }
+            setHintCs.isAccessible = true
+            setHintCs.hookBefore { param ->
+                try {
+                    val tv = param.thisObject as? EditText ?: return@hookBefore
+                    if (nativeKEditRefF41?.get() !== tv) return@hookBefore
+                    if (!translatorShellByUs) return@hookBefore
+                    val incoming = param.args.firstOrNull()?.toString().orEmpty()
+                    if (incoming != SEARCH_HINT_F41) {
+                        param.args[0] = SEARCH_HINT_F41
+                        AndroidLog.i(TAG, "strip F41 hint: native setHint intercepted [$incoming]->搜索剪贴板")
+                    }
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 hint intercept failed: $t")
+                }
+            }
+            // int型resId版：after补回（before无法把int换成string不进原方法会丢布局副作用，after重申最稳）。
+            val setHintRes = android.widget.TextView::class.java.declaredMethods.firstOrNull {
+                it.name == "setHint" && it.parameterTypes.size == 1 && it.parameterTypes[0] == Int::class.javaPrimitiveType
+            }
+            if (setHintRes != null) {
+                setHintRes.isAccessible = true
+                setHintRes.hookAfter { param ->
+                    try {
+                        val tv = param.thisObject as? EditText ?: return@hookAfter
+                        if (nativeKEditRefF41?.get() !== tv) return@hookAfter
+                        if (!translatorShellByUs) return@hookAfter
+                        if (tv.hint?.toString() != SEARCH_HINT_F41) {
+                            tv.post { runCatching { applySearchHintF41(tv) } }
+                        }
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+            AndroidLog.i(TAG, "strip F41 hint: hook armed (setHint拦，只改文案)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 hint hook arm failed: $t")
+            f41HintHooked = false
+        }
+    }
+
+    /** C46：直点收起可观测（exit包装：原生点击保留+finally补collapse记账；取不到listener只diag）。 */
+    private fun wireNativeExitF41(parts: NativeKPartsF41): Boolean {
+        return try {
+            val exit = parts.exit ?: run {
+                AndroidLog.i(TAG, "strip F41 exit: native exit missing, collapse via Q0 hook only (diag)")
+                return true
+            }
+            if (!wrappedExitViewsF41.add(exit)) return true
+            val orig = runCatching {
+                val m = View::class.java.getDeclaredMethod("getListenerInfo")
+                m.isAccessible = true
+                val info = m.invoke(exit) ?: return@runCatching null
+                val f = info.javaClass.getDeclaredField("mOnClickListener")
+                f.isAccessible = true
+                f.get(info) as? View.OnClickListener
+            }.getOrNull()
+            exit.setOnClickListener { v ->
+                try {
+                    runCatching { orig?.onClick(v) }
+                    // 原生listener为空（挂载时序早）则原生通路未走，补一次原生收起语义由collapse承接。
+                } finally {
+                    runCatching { collapseStripF41() }
+                }
+            }
+            // 原生后设监听会覆盖我方包装，300ms后若被覆盖则重包一次（只包一次，不抢时序）。
+            exit.postDelayed({
+                try {
+                    val cur = runCatching {
+                        val m = View::class.java.getDeclaredMethod("getListenerInfo")
+                        m.isAccessible = true
+                        val info = m.invoke(exit) ?: return@postDelayed
+                        val f = info.javaClass.getDeclaredField("mOnClickListener")
+                        f.isAccessible = true
+                        f.get(info) as? View.OnClickListener
+                    }.getOrNull()
+                    // 若当前监听已不是我方包装（被原生后设覆盖），则再包一层。
+                    if (cur != null && nativeKRefF41?.get()?.parent != null) {
+                        val tag = runCatching { exit.getTag("f41_exit_wrapped".hashCode()) }.getOrNull()
+                        if (tag == null) {
+                            val inner = cur
+                            exit.setOnClickListener { v ->
+                                try {
+                                    runCatching { inner.onClick(v) }
+                                } finally {
+                                    runCatching { collapseStripF41() }
+                                }
+                            }
+                            runCatching { exit.setTag("f41_exit_wrapped".hashCode(), true) }
+                            AndroidLog.i(TAG, "strip F41 exit: rewrapped after native override")
+                        }
+                    }
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 exit rewrap failed: $t")
+                }
+            }, 300)
+            AndroidLog.i(TAG, "strip F41 exit: wrapped (直点收起接collapse记账，原生点击保留)")
+            true
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 exit wire failed: $t")
+            true
+        }
+    }
+
+    /** C46：Q0(false)直收补记（全局一次）：直点原生收起走原生通路时补F41 collapsed记账，不重复Q0。 */
+    private fun ensureCollapseHookF41(anchor: View) {
+        if (f41CollapseHooked) return
+        f41CollapseHooked = true
+        try {
+            val mgr = runCatching { translatingMgr(anchor) }.getOrNull() ?: run {
+                f41CollapseHooked = false
+                return
+            }
+            val q0 = mgr.javaClass.declaredMethods.firstOrNull {
+                it.name == "Q0" && it.parameterTypes.size == 6 && java.lang.reflect.Modifier.isStatic(it.modifiers)
+            } ?: run {
+                f41CollapseHooked = false
+                return
+            }
+            q0.isAccessible = true
+            q0.hookAfter { param ->
+                try {
+                    val enter = param.args.getOrNull(1) as? Boolean ?: return@hookAfter
+                    if (enter) return@hookAfter
+                    if (inCollapseF41) return@hookAfter
+                    if (!translatorShellByUs) return@hookAfter
+                    // 我方壳被原生直收（收起键/系统收起）：k已摘或将摘，补记账不清Q0（原生已收）。
+                    mainHandler.post {
+                        try {
+                            if (!translatorShellByUs) return@post
+                            if (inCollapseF41) return@post
+                            pendingKeyword = ""
+                            overlayPending = false
+                            overlayParentRef = null
+                            nativeKRefF41 = null
+                            nativeKEditRefF41 = null
+                            nativeKModeTvRefF41 = null
+                            runCatching { clearSearch() }
+                            AndroidLog.i(TAG, "strip F41 collapsed (原生直收Q0补记 S/J0/V0/U0/C0/s 全还账)")
+                        } catch (t: Throwable) {
+                            AndroidLog.e(TAG, "strip F41 direct collapse note failed: $t")
+                        }
+                    }
+                } catch (t: Throwable) {
+                    AndroidLog.e(TAG, "strip F41 collapse hook failed: $t")
+                }
+            }
+            AndroidLog.i(TAG, "strip F41 collapse: hook armed (Q0直收补记)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 collapse hook arm failed: $t")
+            f41CollapseHooked = false
+        }
+    }
+
+    /** F41：跳回剪贴板（原生k版）：存词→Q0(false)原生收起全还账→复用现有编程式+图标行跳回链。 */
+    private fun jumpBackToClipboardF41() {
+        try {
+            val edit = nativeKEditRefF41?.get()
+            pendingKeyword = runCatching { edit?.text?.toString().orEmpty() }.getOrNull().orEmpty()
+            overlayPending = false
+            val decor = overlayParentRef?.get()
+            // 原生收起：Q0(false)走S()/J0/V0/U0/C0/s()+N三连全还账（collapseStripF41同出口）。
+            if (decor != null) {
+                runCatching { exitTranslatorShell(decor) }
+                mainHandler.postDelayed({ runCatching { restoreToolbarState(decor, "jumpF41", 0) } }, 120)
+                AndroidLog.i(TAG, "strip F41 removed for jump, keyword len=${pendingKeyword.length}")
+                decor.post {
+                    try {
+                        var ok = jumpBackProgrammatically(decor)
+                        if (!ok) ok = jumpBackViaToolbarIcon(decor)
+                        AndroidLog.i(TAG, "strip F41 jumping back to clipboard ok=$ok keyword len=${pendingKeyword.length}")
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "strip F41 jump dispatch failed: ${t.message}")
+                    }
+                }
+            } else {
+                // decor失联仍尝试编程式跳回（fail-closed不炸）。
+                AndroidLog.e(TAG, "strip F41 jump: decor missing, keyword kept len=${pendingKeyword.length}")
+            }
+            nativeKRefF41 = null
+            nativeKEditRefF41 = null
+            nativeKModeTvRefF41 = null
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 jump failed: ${t.message}")
+        }
+    }
+
+    /** F41：收起（复用原生收起）：Q0(false)走原生S()/J0/V0/U0/C0/s()还账，不自拆k。 */
+    private fun collapseStripF41() {
+        // C46：直点收起与Q0补记同口径，inCollapse防Q0 hook二次记账；只改记账不碰布局。
+        if (inCollapseF41) return
+        try {
+            inCollapseF41 = true
+            pendingKeyword = ""
+            overlayPending = false
+            val parent = overlayParentRef?.get()
+            overlayParentRef = null
+            nativeKRefF41 = null
+            nativeKEditRefF41 = null
+            nativeKModeTvRefF41 = null
+            if (parent != null) {
+                // 原生k由S()摘除，我方不手动removeView（禁抢原生拆壳时序）；仅Q0(false)+统一还账出口。
+                exitTranslatorShell(parent)
+                mainHandler.postDelayed({ runCatching { restoreToolbarState(parent, "collapseF41", 0) } }, 120)
+            }
+            clearSearch()
+            AndroidLog.i(TAG, "strip F41 collapsed (原生收起 S/J0/V0/U0/C0/s 全还账)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F41 collapse failed: ${t.message}")
+        } finally {
+            inCollapseF41 = false
+        }
+    }
+
+    /**
      * 壳模式红钮：导航回键盘 → 判用户态 → drive(true)进壳置byUs →
      * 轮询等k挂载 → 摘k记账 → s0挂己条 → publish Y → N三连 → float u0。
      * 用户自己的翻译态（t0=true）直接 fail-closed，不抢不关。
@@ -2535,10 +3571,11 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
-     * 壳模式轮询：等键盘页切回 + 等k挂载（150ms×12）。N.O2 是异步切页，
-     * 键盘容器在剪贴板页也存在——只判容器存在会挂到隐藏页上
-     *（条被压扁、logo 对齐按零高行误算）。门控：容器已布局 +
-     * 剪贴板列表不在展示 + k已挂载；命中即摘k记账后挂己条。
+     * 壳模式轮询（F41翻译卡原生复用）：等键盘页切回 + 等k挂载（150ms×12）。N.O2 是异步切页，
+     * 键盘容器在剪贴板页也存在——只判容器存在会挂到隐藏页上。门控：容器已布局 +
+     * 剪贴板列表不在展示 + k已挂载；命中即直接复用原生k（只改文案，不摘k不自绘）。
+     * F33-F40藏栏/少抬升增量已丢弃（skip-hidden/KEEP-hidden/bar-immobile/保栏强改/Q按mode藏栏基线等
+     * 不再走，工具栏/键盘following翻译态原生，卡高用k.getCurrentHeight，J3仅防爆，验证门回翻译态原生）。
      * 超时 fail-closed（清pending + 退壳还账）。
      */
     private fun pollKeyboardThenMount(decor: ViewGroup, kbId: Int, left: Int) {
@@ -2549,19 +3586,17 @@ internal object WeTypeClipboardSearchUi {
             ) {
                 val k = findTranslatorTopView(decor)
                 if (k != null) {
-                    if (!detachTranslatorKForStrip(k)) {
-                        AndroidLog.e(TAG, "translator k detach failed, strip dropped")
+                    // F41：直接复用原生翻译卡k（不摘k，不挂自绘条；失败fail-closed退壳）。
+                    if (!repurposeNativeKForSearchF41(decor, k)) {
+                        AndroidLog.e(TAG, "strip F41 reuse failed, strip dropped (fail-closed)")
                         overlayPending = false
                         exitTranslatorShell(decor)
                         return
                     }
-                    mountStripOnKeyboard(decor, kbId)
-                    // F29 mount-once（接F28，在此基础上改，不reset）：C32主控判500/1200ms复挂每次
-                    // publish+N+float可能叠加撑窗（280≈25+192+63？），改单挂载：首次挂上即停，
-                    // 复挂逻辑记账禁用，只留mountCount日志（见noteStripMountF28）。
-                    // 顶4~7/底19~21/槽192/栏键钉死/壳/s0/圆角B/DEL/commit/logo/退壳全不动。
-                    AndroidLog.i(TAG, "strip F29 mount-once: first mount done, 500/1200ms remount disabled " +
-                        "(mountCount见F28, publish/N/float只此一次)")
+                    // F41 mount-once：原生k已由q $t经r0挂载，Y流+k高+N#J3原生写窗已撑高；
+                    // 我方不再publish/N三连/float（防叠加撑窗），单次复用即停。
+                    AndroidLog.i(TAG, "strip F41 mount-once: native k reused, publish/N/float following native " +
+                        "(k.getCurrentHeight原生高，J3原生写窗，bar/键不动)")
                     return
                 }
             }
@@ -2620,6 +3655,7 @@ internal object WeTypeClipboardSearchUi {
             runCatching { restoreSeamF27() }
             runCatching { restoreSkipF28() }
             runCatching { restoreBarKeyboardF32() }
+            runCatching { clearMountBaselineF40() }
             if (!translatorShellByUs) return
             translatorShellByUs = false
             removedTranslatorKRef = null
@@ -2641,6 +3677,8 @@ internal object WeTypeClipboardSearchUi {
             runCatching { restoreSeamF27() }
             runCatching { restoreSkipF28() }
             runCatching { restoreBarKeyboardF32() }
+            // F40收起还账：mount基线清账（次挂重记；只清记账不碰视图）。
+            runCatching { clearMountBaselineF40() }
             // F28拆条后无条稳态基线（只读）：退壳后1000ms量windowBar0，应≈140？记baseline。
             runCatching {
                 val decorAfter = (anchor as? ViewGroup)
@@ -2695,11 +3733,33 @@ internal object WeTypeClipboardSearchUi {
     private fun resolveKeyboardContainerId(cl: ClassLoader): Int? {
         return try {
             val sCls = Class.forName("com.tencent.wetype.plugin.hld.s", false, cl)
-            val f = sCls.getDeclaredField("keyboard_container_rl")
-            f.isAccessible = true
-            val id = f.getInt(null)
-            AndroidLog.i(TAG, "keyboard container id resolved: $id")
-            id
+            // F40：exact优先，混淆漂移时fuzzy回退（Int字段名含keyboard+container/rl/layout，现取不写死id值）。
+            val exact = runCatching {
+                val f = sCls.getDeclaredField("keyboard_container_rl")
+                f.isAccessible = true
+                f.getInt(null).takeIf { it != 0 }
+            }.getOrNull()
+            if (exact != null) {
+                AndroidLog.i(TAG, "keyboard container id resolved: $exact")
+                return exact
+            }
+            for (f in sCls.declaredFields) {
+                try {
+                    if (f.type != Int::class.javaPrimitiveType && f.type != Integer::class.java) continue
+                    val nm = f.name.lowercase()
+                    if (!nm.contains("keyboard")) continue
+                    if (!(nm.contains("container") || nm.contains("rl") || nm.contains("layout"))) continue
+                    f.isAccessible = true
+                    val id = runCatching { f.getInt(null) }.getOrNull() ?: continue
+                    if (id == 0) continue
+                    AndroidLog.i(TAG, "keyboard container id fuzzy resolved: $id field=${f.name}")
+                    return id
+                } catch (_: Throwable) {
+                    continue
+                }
+            }
+            AndroidLog.e(TAG, "resolve keyboard container id failed: exact+fuzzy miss")
+            null
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "resolve keyboard container id failed: $t")
             null
@@ -2717,6 +3777,23 @@ internal object WeTypeClipboardSearchUi {
      * 已存在只复用保焦点。赋值式，延迟重试自校正。
      */
     private fun mountStripOnKeyboard(decor: ViewGroup, kbContainerId: Int) {
+        // F41丢弃自绘挂载：直接取原生翻译卡k壳/Q0视图复用（只改文案，不自绘）。
+        // 本函数（自绘条build+s0挂载）已不再调用，保留备查；误调即fail-closed退壳，不挂自绘条。
+        AndroidLog.e(TAG, "strip F41: SKIP self-draw mount (discarded, use native k reuse)")
+        if (true) {
+            // 若原生k在，交由F41复用；否则退壳fail-closed（禁仿制兜底）。
+            val k = runCatching { findTranslatorTopView(decor) }.getOrNull()
+            if (k != null) {
+                if (!repurposeNativeKForSearchF41(decor, k)) {
+                    overlayPending = false
+                    exitTranslatorShell(decor)
+                }
+            } else {
+                overlayPending = false
+                runCatching { exitTranslatorShell(decor) }
+            }
+            return
+        }
         try {
             // F28挂载计数（只记诊断）：复挂叠加即>1，500/1200ms复挂查源头。
             runCatching { noteStripMountF28(decor) }
@@ -2758,6 +3835,8 @@ internal object WeTypeClipboardSearchUi {
             }
             overlayParentRef = java.lang.ref.WeakReference(decor)
             overlayPending = false
+            // F39保栏：挂条即保栏（翻译壳Q0(true)后自动藏栏则显式恢复；原生取fail-closed；挂条全序q.t r0→A2/e0/N2→J3不动）。
+            runCatching { ensureToolbarVisibleF39(decor, "mount") }
             row.post {
                 try {
                     val box = row.findViewWithTag<View>(TAG_SEARCH_BOX) as? EditText
@@ -2801,10 +3880,21 @@ internal object WeTypeClipboardSearchUi {
                         refreshFloatWindow(row, "mountF20")
                         runCatching { logWindowToBarF20(row, decor, "mountF20-afterPublish") }
                         alignToolbarRowWithLogo(decor)
+                        // F39保栏：N三连/float后翻译链若藏栏则显式恢复，再验缝/窗；J3唯一钳点不动。
+                        runCatching { ensureToolbarVisibleF39(decor, "mountF20-after") }
+                        runCatching { verifyToolbarZeroShiftF34(decor, "mountF20-after") }
                         // 条/工具栏/候选上下排布复检：条底 <= 工具栏顶为 pass，重叠即 warn。
                         verifyStripStacking(decor, row, "mounted")
+                        // F40挂载基线：mount初值对才记（gap19~21+viewN>=5，bar不动基准stripBottom+20≈iconTop）。
+                        runCatching { noteMountBaselineF40(decor, row) }
                         // F30条态快照（只读，同口径，关键字strip-snap+drift；顶底槽壳等全不动）。
                         runCatching { logStripSnapF30(decor, row, "mount") }
+                        // F40窗推移：J3钳后显栏推对对象（publish+N/float），藏栏不推，300ms后验192±4。
+                        runCatching {
+                            row.postDelayed({
+                                runCatching { pushWindowAfterJ3F40(row, decor, "mount") }
+                            }, POST_STABLE_DELAY_MS)
+                        }
                         // F21：inter归属搬稳态——条挂后5秒布局沉降后再dump栏容器+slot父链（steady-state只读定案）
                         // 再按定案单步修（栏垫≈88收零/首孩空占位GONE，单步验delta>=1）。顶底槽栏键钉死，
                         // 壳/s0/圆角B/DEL/commit/logo不动。
@@ -3044,6 +4134,9 @@ internal object WeTypeClipboardSearchUi {
      * 下轮复测stripBottom delta>=1px + 窗灰顶delta>=1px（top未PASS时）才算落实，否则停轮不再累加。
      */
     private fun scheduleStripPostAlign(decor: ViewGroup, row: View, iconGap: Int, left: Int) {
+        // F41丢弃：post对线（顶1.5dp/底20px/槽192/夹层/位移）不再执行，following翻译态原生。
+        AndroidLog.i(TAG, "strip F41 postAlign: SKIP (translation native wins, diag only)")
+        if (true) return
         try {
             if (row.parent == null) {
                 runCatching { restoreStripShift(row) }
@@ -5067,10 +6160,71 @@ internal object WeTypeClipboardSearchUi {
             }
             AndroidLog.i(TAG, "strip F20 windowBar [$tag]: windowTop=$windowTop barTop=$barTop " +
                 "gap=$gap($passStr，窗顶1041→1173方向栏1365不动，顶4~7/底19~21/槽192±3/栏键钉死不动)")
+            // F40推动对象核验（只读diag，不碰视图）：bar kids与icons不同子树（F37已证），推错对象即STALL。
+            runCatching {
+                val barD = findStripToolbarBar(decor)
+                val logoD = resolveLogoView(decor)
+                val iconD = scanSquareIconLine(decor, logoD)
+                val barCls = barD?.javaClass?.name ?: "null"
+                val barKids = (barD as? ViewGroup)?.childCount ?: -1
+                val iconTopD = iconD?.top?.toInt() ?: -1
+                val iconN = iconD?.n ?: -1
+                val sameAnc: String = if (barD != null && logoD != null) {
+                    val lca = runCatching { findCommonAncestor(listOf(barD, logoD), decor) }.getOrNull()
+                    if (lca == null) "lca=null(不同子树)"
+                    else "lca=${lca.javaClass.simpleName}"
+                } else "na"
+                AndroidLog.i(TAG, "strip F40 windowBar-push [$tag]: bar=$barCls kids=$barKids iconTop=$iconTopD n=$iconN $sameAnc " +
+                    "(bar kids vs icons不同子树，推对对象才达192±4；藏栏不推/显栏推publish+N/float，J3唯一钳439->192不动)")
+            }
             gap
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F20 windowBar log failed [$tag]: $t")
             null
+        }
+    }
+
+    /** F40窗推移（显栏推对对象，藏栏不推）：工具栏双真+位置ok才publish+N三连/float重刷，否则SKIP；
+     * 只用publish（高度流）+refresh（N/float），不写任何LP（J3唯一钳439->192不动）；目标192±4由调用方验。 */
+    private fun pushWindowAfterJ3F40(row: View, decor: ViewGroup, tag: String) {
+        // F41丢弃：F40窗推移不再执行。窗高N#J3原生写k高，藏/显栏following翻译态原生。
+        AndroidLog.i(TAG, "strip F41 window: SKIP F40 push [$tag] (translation native wins, diag only)")
+        if (true) return
+        try {
+            if (row.getTag() != TAG_SEARCH_BOX_CONTAINER || row.parent == null) return
+            val keepOk = runCatching { ensureToolbarVisibleF39(decor, "F40-push-$tag") }.getOrDefault(false)
+            if (!keepOk) {
+                AndroidLog.i(TAG, "strip F40 windowBar-push [$tag]: SKIP藏栏不推 (keep-bar FAIL，isShown=false，不断言/不REVERT)")
+                return
+            }
+            val zeroOk = runCatching { verifyToolbarZeroShiftF34(decor, "F40-push-$tag") }.getOrNull()
+            if (zeroOk != true) {
+                AndroidLog.i(TAG, "strip F40 windowBar-push [$tag]: SKIP toolbar-zero!=PASS不推 (去假阳，fail-closed)")
+                return
+            }
+            val before = runCatching { measureWindowToBarF20(row, decor) }.getOrNull()
+            // 正确push对象：高度流publish（现算槽高）+N三连/float重刷（窗跟上）；bar kids/icons子树不动。
+            val trueH = try {
+                val w = row.width.takeIf { it > 0 } ?: row.measuredWidth
+                row.measure(
+                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                )
+                row.measuredHeight.takeIf { it > 0 } ?: row.height
+            } catch (_: Throwable) {
+                row.height.takeIf { it > 0 } ?: row.measuredHeight
+            }
+            val publishH = runCatching { publishHeightForF20(row, trueH, STRIP_M_BOTTOM_PX) }.getOrNull() ?: trueH
+            runCatching { publishStripHeight(row, publishH, "F40-push-$tag") }
+            runCatching { refreshCandidateLayout(row, "F40-push-$tag") }
+            runCatching { refreshFloatWindow(row, "F40-push-$tag") }
+            row.postDelayed({
+                runCatching { logWindowToBarF20(row, decor, "F40-push-$tag-after") }
+            }, POST_STABLE_DELAY_MS)
+            AndroidLog.i(TAG, "strip F40 windowBar-push [$tag]: pushed publishH=$publishH(trueH=$trueH) +N/float " +
+                "beforeGap=${before?.third ?: -999}(J3 439->192+正确push达192±4)")
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "strip F40 windowBar-push [$tag] failed: $t")
         }
     }
 
@@ -5135,8 +6289,17 @@ internal object WeTypeClipboardSearchUi {
      * 返true=本轮施加（300ms后复测inter delta>=1留否则还账），false=已0/未布局/无候选。
      */
     private fun trimConstraintPadF20(row: View, decor: ViewGroup): Boolean {
+        // F41丢弃：垫收敛不再执行，following翻译态原生。
+        AndroidLog.i(TAG, "strip F41 trim: SKIP F20 (translation native wins, diag only)")
+        if (true) return false
         return try {
             if (row.getTag() != TAG_SEARCH_BOX_CONTAINER) return false
+            // F40：藏栏不推（工具栏isShown=false时不动垫，fail-closed；显栏才推对对象）。
+            val keepForTrim = runCatching { ensureToolbarVisibleF39(decor, "F20-trim-guard") }.getOrDefault(true)
+            if (!keepForTrim) {
+                AndroidLog.i(TAG, "strip F40 windowBar-push [F20-trim]: SKIP藏栏不推 (keep-bar FAIL)")
+                return false
+            }
             val last = stripConstraintLastViewF20
             if (last != null) {
                 val before = stripConstraintLastBeforeF20
@@ -5322,6 +6485,9 @@ internal object WeTypeClipboardSearchUi {
      * 顶底槽栏键钉死；壳/s0/圆角B/DEL/commit/logo不动。
      */
     private fun scheduleBarSteadyStateF21(decor: ViewGroup, row: View) {
+        // F41丢弃：稳态修（栏垫88/定高280/kids88/过期块/残留/缝）不再执行，following翻译态原生。
+        AndroidLog.i(TAG, "strip F41 steady: SKIP F21 (translation native wins, diag only)")
+        if (true) return
         try {
             if (row.getTag() != TAG_SEARCH_BOX_CONTAINER) return
             synchronized(stripSteadyScheduledF21) {
@@ -8911,17 +10077,7 @@ internal object WeTypeClipboardSearchUi {
         try {
             if (row.getTag() != TAG_SEARCH_BOX_CONTAINER) return
             if (row.parent == null) return
-            // F37窗槽藏栏SKIP（接F36，在此基础上改，不reset）：C40 windowBar 77->77 delta=0 gap=77 pass=false，
-            // windowTop钉1113，F28 ①②③全REVERT→STALL。藏栏时窗槽目标192±4按显式工具栏假设，隐藏残影下不适用；
-            // 修：translating时SKIP不跑①②③（Y/collect/u0/P0-Q0不直驱，J3唯一钳点；挂条全序q.t r0→A2/e0/N2→J3已走），
-            // 转窗槽现量/Q为准只读，原生取不到fail-closed。F32几何+F33门+F34基线+toolbar dy=0+圆角B不动。
-            val (transF28F37, srcF28F37) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-            if (transF28F37 == true) {
-                runCatching { logHiddenWindowSlotQF37(decor, row, "F28-SKIP-hidden", "translating藏栏窗槽SKIP不跑①②③") }
-                AndroidLog.i(TAG, "strip F28 SKIP-hidden: translating=true src=$srcF28F37 藏栏时不跑①②③ " +
-                    "(windowBar按显式栏假设不适用，转窗槽现量/Q为准，J3钳已在，原生取不到fail-closed)")
-                return
-            }
+            // F28跳过对照正常跑（审计定案：工具栏可见钉死，不做隐藏分支）。
             if (stripSkipRunningF28) {
                 AndroidLog.i(TAG, "strip F28 SKIP: running kind=$stripSkipLastKindF28 skip new")
                 return
@@ -10492,6 +11648,9 @@ internal object WeTypeClipboardSearchUi {
      * 只收槽/窗多余垫，不动条真高167/box143，不碰工具栏/键盘/壳/s0/圆角B/DEL/commit/logo。
      */
     private fun expandStripChainForWrap(row: View, cand: ViewGroup) {
+        // F41丢弃：槽WRAP收敛（顶垫/槽高）不再执行，following翻译态原生k链。
+        AndroidLog.i(TAG, "strip F41 wrap: SKIP expandStripChain (translation native wins, diag only)")
+        if (true) return
         try {
             // 条根自身：确保 WRAP（s0 传的已是 WRAP，此处只验不动定高）。
             runCatching {
@@ -10727,30 +11886,17 @@ internal object WeTypeClipboardSearchUi {
      * 条底贴图标顶19~21px为pass（目标STRIP_M_BOTTOM_PX=20px，现算px，容差±1px）；
      * 重叠（gap<0）即error盖图标，gap>21即warn中空。找不到图标cluster则fail-closed
      * diagnostically，不回退容器顶（barTop仅记empty诊断，不作基准）。
-     * F37藏栏SKIP（接F36，在此基础上改，不reset）：translating=true藏栏时图标1190是隐藏残影（截图已隐），不以gapToIcon判OVERLAP/GAP FAIL，转窗槽/Q为准（只读，原生取不到fail-closed）。 */
+     * 工具栏可见钉死：不做隐藏分支，重叠/空隙一律按缝判定。 */
     private fun verifyStripStacking(decor: ViewGroup, row: View, tag: String) {
+        // F41：验证门回到翻译态原生可见性判定，像素只diag。本函数（缝19~21门）不再gate，仅diag。
+        AndroidLog.i(TAG, "strip F41 stack [$tag]: SKIP seam gate (translation native wins, diag only)")
+        runCatching { verifyNativeTranslationStateDiagF41(decor, "stack-$tag") }
+        if (true) return
         try {
             val rloc = IntArray(2)
             runCatching { row.getLocationOnScreen(rloc) }
             val stripTop = rloc[1]
             val stripBottom = rloc[1] + row.height
-            // F37：藏栏先判，残影不判FAIL。
-            val (transStackF37, srcStackF37) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-            if (transStackF37 == true) {
-                val barH = findStripToolbarBar(decor)
-                val blocH = IntArray(2)
-                if (barH != null) runCatching { barH.getLocationOnScreen(blocH) }
-                val barTopH = if (barH != null) blocH[1] else -1
-                val logoH = runCatching { resolveLogoView(decor) }.getOrNull()
-                val iconH = resolveIconLineF22(decor, logoH)
-                val iconTopH = iconH?.top?.toInt() ?: -1
-                val gapH = if (iconTopH > 0 && stripBottom > 0) iconTopH - stripBottom else -999
-                runCatching { logHiddenWindowSlotQF37(decor, row, "$tag-hidden", "translating藏栏残影SKIP") }
-                AndroidLog.i(TAG, "strip stack [$tag]: SKIP-hidden translating=true(src=$srcStackF37) " +
-                    "strip=${row.width}x${row.height} y=[$stripTop,$stripBottom] iconTop=$iconTopH(隐藏残影不判) " +
-                    "n=${iconH?.n ?: -1} barTop=$barTopH gapToIcon=$gapH(不判OVERLAP/GAP) baseline=窗槽/Q(转窗槽/Q为准，fail-closed)")
-                return
-            }
             // F5：缝基准=图标顶（不是容器顶）。barTop仅供empty=iconTop-barTop诊断。
             // F22：verify亦走统一出口（现扫视图+像素交叉，差>20px用像素diagnostically），只读判据。
             val bar = findStripToolbarBar(decor)
@@ -10890,6 +12036,8 @@ internal object WeTypeClipboardSearchUi {
             runCatching { restoreSeamF27() }
             runCatching { restoreSkipF28() }
             runCatching { restoreBarKeyboardF32() }
+            // F40收起还账：mount基线清账（次挂重记，不复用旧值；只清记账不碰视图）。
+            runCatching { clearMountBaselineF40() }
             // F28拆条后无条稳态基线（只读）：摘条前捕获decor，摘后1000ms量windowBar0。
             val decorForBaseline = runCatching {
                 (card.rootView as? ViewGroup)
@@ -12242,7 +13390,8 @@ internal object WeTypeClipboardSearchUi {
             val q: ArrayDeque<View> = ArrayDeque()
             q.add(scope)
             var hops = 0
-            while (q.isNotEmpty() && hops < 600) {
+            // F40：hop 600→800（decor回退树深，600截断致qTop=-1；800有界，Q>=5+极差+>midY口径不动）。
+            while (q.isNotEmpty() && hops < 800) {
                 val v = q.removeFirst()
                 hops++
                 if (v.getTag() == TAG_SEARCH_BUTTON ||
@@ -12301,10 +13450,9 @@ internal object WeTypeClipboardSearchUi {
      * digit缺测则不判）；任一不可信即缺测返null skip。键盘补偿保留但Q从未动过。
      * 位移/退壳/壳/s0/J3钳/圆角B/DEL/commit/logo全不动。
      * FAIL①旧语义（白卡Q上方判定kt侧同源）保留：找不到返null上层回退decor带，不硬编码px。
-     * F35藏栏兼容（接F34，在此基础上改，不reset）：C38 translating藏栏态kb容器全程digitN=0/qRowN=0
-     * （疑数字首排gone/换容器），kb缺测/不可信时再试decor全树回退同判据（Q>=5+极差<=0.06H+>midY，
+     * F35回退（保留）：kb缺测/不可信时再试decor全树回退同判据（Q>=5+极差<=0.06H+>midY，
      * digitTop<QTop仅digit可见时要求，不可见即放宽），命中即返，仍缺测才skip不断言。
-     * F37 Q藏栏回退口径（接F35，在此基础上改，不reset）：C40藏栏回退Q≥5持续-1致verify缺参照。修：kb/decor双miss且translating时加kb父容器回退同判据仅diag（疑换容器），并对标1494-toolbarH现量记baseline（F35例toolbarH=90→1404）；取不到仍fail-closed返null，禁仿制。F32几何+F33缝19~21+viewN>=5唯一门像素只diag+F34基线+toolbar dy=0+圆角B不动。 */
+     * Q基线只留normal=1494±8。F32几何+F33缝19~21+viewN>=5唯一门像素只diag+toolbar dy=0+圆角B不动。 */
     private fun findQTopOnScreen(decor: ViewGroup): Int? {
         return try {
             // 键盘页作用域：优先键盘容器内找（防工具栏/候选区单字误检为Q）；容器缺失则回退全decor但仍按字面严格判据。
@@ -12353,29 +13501,20 @@ internal object WeTypeClipboardSearchUi {
                         "digitN=${firstF35.digitCount} digitTop=${firstF35.digitBest ?: -1} qRowN=${firstF35.qCount} qTop=${firstF35.qBest ?: -1} need=Q排≥5")
                 }
             }
-            // F35 decor回退：kb缺测/不可信且kb存在时再扫全decor同判据（藏栏态数字首排gone/换容器仍能取Q行）。
+            // F35 decor回退：kb缺测/不可信且kb存在时再扫全decor同判据。
             if (kbScopeF33 != null && scopeF33 !== decor) {
                 val secondF35 = runCatching { scanQScopeF35(decor, midY) }.getOrNull()
                 if (secondF35 != null) {
-                    AndroidLog.i(TAG, "strip F33 qTop scan: scope=decorFallbackForHidden digitN=${secondF35.digitCount} digitTop=${secondF35.digitBest ?: -1} " +
+                    AndroidLog.i(TAG, "strip F33 qTop scan: scope=decorFallback digitN=${secondF35.digitCount} digitTop=${secondF35.digitBest ?: -1} " +
                         "digitTops=${secondF35.digitTops.take(12)} qRowN=${secondF35.qCount} qTop=${secondF35.qBest ?: -1} qTops=${secondF35.qTops.take(12)} " +
-                        "azOther=${secondF35.azOther} midY=$midY (藏栏回退，同判据Q>=5+极差<=0.06H+>midY)")
+                        "azOther=${secondF35.azOther} midY=$midY (回退，同判据Q>=5+极差<=0.06H+>midY)")
                     if (isCredibleF35(secondF35)) {
-                        AndroidLog.i(TAG, "strip F33 qTop fallback-hit: qTop=${secondF35.qBest} scope=decorFallbackForHidden " +
+                        AndroidLog.i(TAG, "strip F33 qTop fallback-hit: qTop=${secondF35.qBest} scope=decorFallback " +
                             "qRowN=${secondF35.qCount} digitN=${secondF35.digitCount} (kb缺测回退命中)")
                         return secondF35.qBest
                     }
-                    AndroidLog.e(TAG, "strip F33 qTop missing (diag only, skip不动): scope=decorFallbackForHidden " +
+                    AndroidLog.e(TAG, "strip F33 qTop missing (diag only, skip不动): scope=decorFallback " +
                         "digitN=${secondF35.digitCount} digitTop=${secondF35.digitBest ?: -1} qRowN=${secondF35.qCount} qTop=${secondF35.qBest ?: -1} need=Q排≥5")
-                    runCatching {
-                        val (transF37b, srcF37b) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-                        if (transF37b == true) {
-                            val qbF37b = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-                            AndroidLog.i(TAG, "strip F37 q-hidden-baseline: translating=true src=$srcF37b toolbarH=${qbF37b?.toolbarH ?: -1} " +
-                                "baseline=${qbF37b?.baseline ?: STRIP_F32_Q_BASELINE}±$STRIP_F32_Q_TOL_PX(1494-toolbarH现量) (decor回退miss后对标)")
-                            runCatching { qHiddenFallbackDiagF37(decor) }
-                        }
-                    }
                     return null
                 }
             }
@@ -12385,18 +13524,6 @@ internal object WeTypeClipboardSearchUi {
             } else if (kbScopeF33 == null) {
                 AndroidLog.e(TAG, "strip F33 qTop missing (diag only, skip不动): scope=$scopeTagF33 " +
                     "digitN=${firstF35.digitCount} digitTop=${firstF35.digitBest ?: -1} qRowN=${firstF35.qCount} qTop=${firstF35.qBest ?: -1} need=Q排≥5")
-            }
-            // F37：藏栏双miss追加parent回退diag+1494-toolbarH现量对标（仍fail-closed返null）。
-            runCatching {
-                val (transF37, srcF37) = runCatching { isTranslatingModeF34(decor) }.getOrDefault(null to "unknown")
-                if (transF37 == true) {
-                    val qbF37 = runCatching { qBaselineForModeF34(decor) }.getOrNull()
-                    val baseF37 = qbF37?.baseline ?: STRIP_F32_Q_BASELINE
-                    val thF37 = qbF37?.toolbarH
-                    AndroidLog.i(TAG, "strip F37 q-hidden-baseline: translating=true src=$srcF37 toolbarH=${thF37 ?: -1} " +
-                        "baseline=$baseF37±$STRIP_F32_Q_TOL_PX(1494-toolbarH现量，F35例90→1404) midY=$midY decorH=$decorH (对标，取不到fail-closed)")
-                    runCatching { qHiddenFallbackDiagF37(decor) }
-                }
             }
             null
         } catch (_: Throwable) {
@@ -12823,6 +13950,12 @@ internal object WeTypeClipboardSearchUi {
      * 收起若宿主切AI条则等工具栏回归再还账或补一次post对线。
      */
     private fun collapseStrip() {
+        // F41：原生k在即走原生收起（S/J0/V0/U0/C0/s全还账）；否则走自绘条旧路（已丢弃，仅备查）。
+        val nk = nativeKRefF41?.get()
+        if (nk != null && nk.parent != null) {
+            collapseStripF41()
+            return
+        }
         try {
             pendingKeyword = ""
             overlayPending = false
@@ -12856,6 +13989,13 @@ internal object WeTypeClipboardSearchUi {
      * FAIL②：经restoreToolbarState统一出口（四连+post对线+AI条重试）。
      */
     private fun jumpBackToClipboard(card: View) {
+        // F41：原生k卡即走原生跳回（存词→Q0(false)全还账→编程式+图标行跳回）；自绘卡走旧路。
+        if (card.javaClass.name == NATIVE_TOPVIEW_CLASS || nativeKRefF41?.get() === card ||
+            nativeKEditRefF41?.get()?.let { card === it || (card is ViewGroup && containsView(card, it)) } == true
+        ) {
+            jumpBackToClipboardF41()
+            return
+        }
         try {
             val box = card.findViewWithTag<View>(TAG_SEARCH_BOX) as? EditText
             pendingKeyword = box?.text?.toString().orEmpty()
@@ -13517,6 +14657,12 @@ internal object WeTypeClipboardSearchUi {
      * FAIL②：经restoreToolbarState统一出口（四连+post对线+AI条重试）。
      */
     private fun teardownStrip() {
+        // F41：原生k在即走原生收起全还账；否则走旧路（自绘条已丢弃）。
+        val nk = nativeKRefF41?.get()
+        if (nk != null && nk.parent != null) {
+            collapseStripF41()
+            return
+        }
         try {
             overlayPending = false
             val parent = overlayParentRef?.get()
