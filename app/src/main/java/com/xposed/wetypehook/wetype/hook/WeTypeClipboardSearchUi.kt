@@ -51,7 +51,6 @@ internal object WeTypeClipboardSearchUi {
     private var nativeManager: Any? = null
     private var nativeEngine: Any? = null
     private var nativePendingInput: java.lang.reflect.Method? = null
-    private var nativeCurrentKeyboard: java.lang.reflect.Method? = null
     private var nativeCandidateView: java.lang.reflect.Method? = null
     private var searchManager: Any? = null
     private var nativeSearchRestore: (() -> Unit)? = null
@@ -82,58 +81,79 @@ internal object WeTypeClipboardSearchUi {
         return field.get(null) ?: error("Missing native singleton")
     }
 
-    /** Verified against WeType 3.5.3; unsupported versions do not enter the search shell. */
+    /**
+     * 原生提交契约（3.5.3/3.5.4，全部按签名现取）：
+     * 导航 3.5.3=N#p3 / 3.5.4=N#n3；候选 getter 按 ImeCandidateView 返回型；
+     * pending 3.5.3=i0#B2 / 3.5.4=i0#D2；emit 3.5.3=i0#W1 / 3.5.4=i0#Y1。
+     * 任一契约取不到即整链 fail-closed，禁兜底。
+     */
     private fun installNativeSubmitBridge(anchor: View): Boolean {
         if (nativeSubmitInstalled) return true
         return runCatching {
-            val version = anchor.context.packageManager.getPackageInfo("com.tencent.wetype", 0).versionName
-            check(version == "3.5.3")
             val cl = hostClassLoader ?: error("Missing host loader")
             val n = Class.forName("com.tencent.wetype.plugin.hld.model.N", false, cl)
             val panelClass = Class.forName("com.tencent.wetype.plugin.hld.keyboard.t", false, cl)
-            val navigation = n.getDeclaredMethod("p3", panelClass, android.os.Bundle::class.java)
-            check(navigation.returnType == Void.TYPE && panelClass.isEnum)
+            check(panelClass.isEnum)
             val panel = panelClass.enumConstants?.single { (it as Enum<*>).name == "CustomPhraseAndClipboard" }
                 ?: error("Missing CustomPhraseAndClipboard panel")
-            val current = n.getDeclaredMethod("o0")
-            check(View::class.java.isAssignableFrom(current.returnType))
-            val candidate = n.getDeclaredMethod("x0")
-            check(View::class.java.isAssignableFrom(candidate.returnType))
+            val navigation = n.declaredMethods.firstOrNull {
+                (it.name == "n3" || it.name == "p3") && it.parameterTypes.size == 2 &&
+                    it.parameterTypes[0] == panelClass &&
+                    it.parameterTypes[1] == android.os.Bundle::class.java &&
+                    it.returnType == Void.TYPE
+            } ?: error("Missing native scene navigation")
+            val candidateClass = Class.forName("com.tencent.wetype.plugin.hld.candidate.ImeCandidateView", false, cl)
+            val candidate = n.declaredMethods.firstOrNull {
+                it.parameterTypes.isEmpty() && candidateClass.isAssignableFrom(it.returnType)
+            } ?: error("Missing native candidate view getter")
             val engine = Class.forName("com.tencent.wetype.plugin.hld.model.i0", false, cl)
-            val pending = engine.getDeclaredMethod("B2", java.lang.Boolean.TYPE)
-            val emit = engine.getDeclaredMethod("W1", String::class.java, java.lang.Boolean.TYPE, java.lang.Boolean.TYPE)
-            check(emit.returnType == Void.TYPE)
-            check(CharSequence::class.java.isAssignableFrom(pending.returnType))
+            val pending = engine.declaredMethods.firstOrNull {
+                (it.name == "B2" || it.name == "D2") && it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0] == java.lang.Boolean.TYPE &&
+                    CharSequence::class.java.isAssignableFrom(it.returnType)
+            } ?: error("Missing native pending input getter")
+            val emit = engine.declaredMethods.firstOrNull {
+                (it.name == "W1" || it.name == "Y1") && it.parameterTypes.size == 3 &&
+                    it.parameterTypes[0] == String::class.java &&
+                    it.parameterTypes[1] == java.lang.Boolean.TYPE &&
+                    it.parameterTypes[2] == java.lang.Boolean.TYPE &&
+                    it.returnType == Void.TYPE
+            } ?: error("Missing native pending input emitter")
             val dispatcher = Class.forName("com.tencent.wetype.plugin.hld.key.d", false, cl)
                 .getDeclaredMethod("O", Integer.TYPE, Any::class.java)
+            check(dispatcher.returnType == Void.TYPE)
             val serviceClass = Class.forName("com.tencent.wetype.plugin.hld.WxHldService", false, cl)
             val service = serviceClass.getDeclaredMethod("c")
-            val companion = serviceClass.getDeclaredField("G").apply { isAccessible = true }.get(null)
-                ?: error("Missing service companion")
-            val serviceGetter = companion.javaClass.getDeclaredMethod("e").apply { isAccessible = true }
-            check(dispatcher.returnType == Void.TYPE && service.returnType == Void.TYPE)
+            check(service.returnType == Void.TYPE)
+            val companionPair = resolveServiceCompanion(serviceClass)
             val q = Class.forName(NATIVE_HEIGHT_MGR_CLASS, false, cl)
             check(q.getDeclaredMethod("T0", CharSequence::class.java).returnType == Void.TYPE)
             check(q.getDeclaredMethod("T", java.lang.Boolean.TYPE).returnType == Void.TYPE)
             nativeManager = singleton(n)
             nativeEngine = singleton(engine)
             nativeNavigation = navigation.apply { isAccessible = true }
-            nativeCurrentKeyboard = current.apply { isAccessible = true }
             nativeCandidateView = candidate.apply { isAccessible = true }
             nativePendingInput = pending.apply { isAccessible = true }
             nativePanel = panel
-            nativeServiceCompanion = companion
-            nativeServiceGetter = serviceGetter
+            nativeServiceCompanion = companionPair?.first
+            nativeServiceGetter = companionPair?.second?.apply { isAccessible = true }
             nativeActionListener = singleton(dispatcher.declaringClass)
             nativeActionDispatcher = dispatcher
+            AndroidLog.i(TAG, "native search contract ready: nav=${navigation.name} " +
+                "pending=${pending.name} emit=${emit.name} service=${companionPair != null}")
             dispatcher.isAccessible = true
             dispatcher.hookBefore { param ->
                 if (param.args.firstOrNull() != 2) return@hookBefore
                 val box = nativeKEditRefF41?.get() ?: return@hookBefore
                 if (!ownsSearchBox(box) || !box.hasFocus()) return@hookBefore
-                val liveService = nativeServiceGetter?.invoke(nativeServiceCompanion)
-                if (liveService == null) { param.result = null; return@hookBefore }
-                activeImeService = java.lang.ref.WeakReference(liveService)
+                val liveService = runCatching {
+                    nativeServiceGetter?.invoke(nativeServiceCompanion)
+                }.getOrNull()
+                if (liveService != null) {
+                    activeImeService = java.lang.ref.WeakReference(liveService)
+                } else {
+                    AndroidLog.w(TAG, "ime service identity unavailable; commit guarded by session phase")
+                }
                 if (submitSession.confirm() == null) { param.result = null; return@hookBefore }
                 submitDeadline = android.os.SystemClock.uptimeMillis() + 1000L
                 // Keep the original w(): it commits the engine's selected text asynchronously.
@@ -155,7 +175,8 @@ internal object WeTypeClipboardSearchUi {
             }
             service.isAccessible = true
             service.hookBefore { param ->
-                if (param.thisObject === activeImeService?.get() &&
+                val tracked = activeImeService?.get()
+                if ((tracked == null || param.thisObject === tracked) &&
                     submitSession.phase == ClipboardSearchSubmitSession.Phase.COMMITTING &&
                     nativeKEditRefF41?.get()?.let(::ownsSearchBox) == true) {
                     // w() may call c() after commit; c() would translate/send to the host editor.
@@ -168,6 +189,48 @@ internal object WeTypeClipboardSearchUi {
             AndroidLog.e(TAG, "native search contract unavailable: ${it.message}")
             false
         }
+    }
+
+    /**
+     * 宿主 Companion 字段名随版本漂移（3.5.3 raw=G，3.5.4 变化）：
+     * 只认“静态字段 + 零参 getter 返回 WxHldService 实现的接口”的组合，取不到返回 null。
+     */
+    private fun resolveServiceCompanion(serviceClass: Class<*>): Pair<Any, java.lang.reflect.Method>? {
+        for (field in serviceClass.declaredFields) {
+            if (!java.lang.reflect.Modifier.isStatic(field.modifiers)) continue
+            val companionType = field.type
+            if (companionType == serviceClass) continue
+            val getters = companionType.declaredMethods.filter { m ->
+                m.parameterTypes.isEmpty() && m.returnType != Void.TYPE && m.returnType.isInterface &&
+                    runCatching { m.returnType.isAssignableFrom(serviceClass) }.getOrDefault(false)
+            }
+            if (getters.isEmpty()) continue
+            val getter = getters.firstOrNull { it.name == "e" } ?: getters.first()
+            val companion = runCatching {
+                field.isAccessible = true
+                field.get(null)
+            }.getOrNull() ?: continue
+            return companion to getter
+        }
+        return null
+    }
+
+    /** 在 [root] 子树按类名 BFS 找宿主视图；找不到返回 null。 */
+    private fun findHostViewByClass(root: View, className: String): View? {
+        val queue: ArrayDeque<View> = ArrayDeque()
+        queue.add(root)
+        var hops = 0
+        while (queue.isNotEmpty() && hops < 800) {
+            val v = queue.removeFirst()
+            hops++
+            if (v.javaClass.name == className) return v
+            if (v is ViewGroup) {
+                for (i in 0 until minOf(v.childCount, 32)) {
+                    v.getChildAt(i)?.let { queue.add(it) }
+                }
+            }
+        }
+        return null
     }
 
     /** Observe native commit completion, never turn ordinary text delivery into intention. */
@@ -263,8 +326,9 @@ internal object WeTypeClipboardSearchUi {
     private fun nativeClipboardPage(root: ViewGroup): ClipboardSearchSubmitSession.Page {
         val absent = ClipboardSearchSubmitSession.Page(false, false, false, false, false)
         return runCatching {
-            val host = nativeCurrentKeyboard?.invoke(nativeManager) as? View ?: return@runCatching absent
-            if (host.javaClass.name != S15_CLASS || host.rootView !== root) return@runCatching absent
+            // 当前键盘视图随版本漂移（3.5.3=N#o0，3.5.4 无同型入口）：按类名从窗内 BFS 现取。
+            val host = findHostViewByClass(root, S15_CLASS) ?: return@runCatching absent
+            if (host.rootView !== root) return@runCatching absent
             // 3.5.3 binary fields: K=currentTabIndex, I=mTabIdClipboard, C=emptyClipboardView.
             val tab = readNativeField(host, "K") as? Int
             val clipboard = readNativeField(host, "I") as? Int
@@ -447,7 +511,11 @@ internal object WeTypeClipboardSearchUi {
     private const val STRIP_INTER_TOL_PX = 1
     // 底部面板撑开展示：翻译条高度变化→q 收集 Y()→`f.u0(f,0,0,0,true,false,false,55)`
     // 重排浮窗（q.java:483/C0664a + f.java:2090），同参同序调用。
-    private const val NATIVE_FLOAT_CLASS = "com.tencent.wetype.plugin.hld.p000float.f"
+    // jadx 把关键字包名 float 显示成 p000float；dex 实际名为 float（3.5.3/3.5.4 均实证）。
+    private val NATIVE_FLOAT_CLASSES = arrayOf(
+        "com.tencent.wetype.plugin.hld.float.f",
+        "com.tencent.wetype.plugin.hld.p000float.f"
+    )
     // 几何常量（中性布局尺寸，非视觉仿制；视觉色/底/图标/字号一律原生，零硬编码兜底）
     private val NATIVE_CLEAR_ICON_NAMES = arrayOf(
         "icon_close_black",
@@ -4084,10 +4152,18 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "N singleton (static N field) missing, cannot navigate back")
                 return false
             }
-            val m = nClass.getDeclaredMethod("O2", Boolean::class.javaPrimitiveType)
+            // 3.5.3=N#O2(boolean)，3.5.4 更名=N#Q2(boolean)（O2 变为 (boolean, W) 需非空 source）。
+            val m = nClass.declaredMethods.firstOrNull {
+                (it.name == "O2" || it.name == "Q2") && it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0] == Boolean::class.javaPrimitiveType &&
+                    it.returnType == Void.TYPE
+            } ?: run {
+                AndroidLog.e(TAG, "N.O2/Q2(boolean) missing, cannot navigate back")
+                return false
+            }
             m.isAccessible = true
             m.invoke(target, false)
-            AndroidLog.i(TAG, "N.O2(false) invoked on $singletonName for keyboard back")
+            AndroidLog.i(TAG, "N.${m.name}(false) invoked on $singletonName for keyboard back")
             return true
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "navigate back to keyboard failed: $t")
@@ -12463,7 +12539,10 @@ internal object WeTypeClipboardSearchUi {
             var fCls: Class<*>? = null
             for (cl in loaders) {
                 if (cl == null) continue
-                fCls = runCatching { Class.forName(NATIVE_FLOAT_CLASS, false, cl) }.getOrNull()
+                for (name in NATIVE_FLOAT_CLASSES) {
+                    fCls = runCatching { Class.forName(name, false, cl) }.getOrNull()
+                    if (fCls != null) break
+                }
                 if (fCls != null) break
             }
             // C50根因③（只补float缺分支诊断+直达fallback，其余N/高度/栏不动，fail-closed）：
@@ -12471,7 +12550,10 @@ internal object WeTypeClipboardSearchUi {
             // 并经loadHostClass再试一次直达（多dex loader链），仍缺则fail-closed，N+requestLayout照走不拦面板切换。
             var fClassTmp: Class<*>? = fCls
             if (fClassTmp == null) {
-                fClassTmp = runCatching { loadHostClass(anchor, NATIVE_FLOAT_CLASS) }.getOrNull()
+                for (name in NATIVE_FLOAT_CLASSES) {
+                    fClassTmp = runCatching { loadHostClass(anchor, name) }.getOrNull()
+                    if (fClassTmp != null) break
+                }
                 if (fClassTmp != null) {
                     AndroidLog.i(TAG, "float refresh: f via loadHostClass fallback reason=$reason")
                 }
