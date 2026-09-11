@@ -3,6 +3,7 @@ package com.xposed.wetypehook.wetype.hook
 import android.os.Bundle
 import android.util.Log as AndroidLog
 import android.view.View
+import com.xposed.wetypehook.xposed.hookBefore
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -39,7 +40,11 @@ internal object WeTypeClipboardImageHost {
     )
 
     private const val KEY_CLIPBOARD_ID = "key_clipboard_id"
+    private const val KEY_TARGET_TAB_INDEX = "target_tab_index"
+    private const val KEY_FROM = "key_from"
     private const val PANEL_IMAGE_PREVIEW = "ImagePreview"
+    private const val PANEL_CLIPBOARD = "CustomPhraseAndClipboard"
+    private const val CLIPBOARD_TAB_INDEX = 0
 
     @Volatile
     private var installed = false
@@ -70,6 +75,9 @@ internal object WeTypeClipboardImageHost {
 
     @Volatile
     private var navPanel: Any? = null
+
+    @Volatile
+    private var navClipboardPanel: Any? = null
 
     @Volatile
     var contentTvId: Int = 0
@@ -117,6 +125,8 @@ internal object WeTypeClipboardImageHost {
         return try {
             itemClass = Class.forName(CLIPBOARD_ITEM_CLASS, false, classLoader)
             resolveIds(classLoader)
+            runCatching { hookImagePreviewBack(classLoader) }
+                .onFailure { AndroidLog.e(TAG, "image preview back hook failed: ${it.message}") }
             installed = true
             AndroidLog.i(TAG, "image host handles installed (line1=$line1HeightRes line2=$line2HeightRes)")
             true
@@ -124,6 +134,37 @@ internal object WeTypeClipboardImageHost {
             AndroidLog.e(TAG, "image host handles unavailable: ${t.message}")
             false
         }
+    }
+
+    /**
+     * 图片预览页（S33）走宿主 `keyboard.l#B0` 作为左上角“收回”。
+     * 模块是直接用 `N.n3(ImagePreview, Bundle)` 切页的，不在宿主页面栈里，
+     * 原生收回会落到普通键盘。这里拦截 S33 的收回并手动导航回剪贴板面板，
+     * 由于剪贴板页只是被隐藏、未被销毁，返回后保留原滚动位置。
+     */
+    private fun hookImagePreviewBack(classLoader: ClassLoader) {
+        val previewClass = Class.forName(
+            "com.tencent.wetype.plugin.hld.keyboard.S33ImagePreviewKeyboard", false, classLoader
+        )
+        val baseClass = Class.forName(
+            "com.tencent.wetype.plugin.hld.keyboard.l", false, classLoader
+        )
+        val backMethod = baseClass.declaredMethods.firstOrNull {
+            it.name == "B0" && it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
+        } ?: run {
+            AndroidLog.e(TAG, "image preview back method missing (keyboard.l#B0)")
+            return
+        }
+        backMethod.isAccessible = true
+        backMethod.hookBefore { param ->
+            val self = param.thisObject ?: return@hookBefore
+            if (!previewClass.isInstance(self)) return@hookBefore
+            if (openClipboardPanel()) {
+                AndroidLog.i(TAG, "image preview back -> clipboard panel")
+                param.result = null
+            }
+        }
+        AndroidLog.i(TAG, "hooked image preview back (keyboard.l#B0)")
     }
 
     fun isReady(): Boolean = installed
@@ -207,6 +248,7 @@ internal object WeTypeClipboardImageHost {
         panelClass = Class.forName(PANEL_ENUM_CLASS, false, classLoader)
         val panel = panelClass ?: return
         navPanel = panel.enumConstants?.firstOrNull { (it as? Enum<*>)?.name == PANEL_IMAGE_PREVIEW }
+        navClipboardPanel = panel.enumConstants?.firstOrNull { (it as? Enum<*>)?.name == PANEL_CLIPBOARD }
         if (navPanel == null) {
             AndroidLog.e(TAG, "ImagePreview panel enum missing")
             return
@@ -255,6 +297,25 @@ internal object WeTypeClipboardImageHost {
         }
     }
 
+    /** 用宿主原生导航切回剪贴板面板（与搜索提交 `N.p3/n3(CustomPhraseAndClipboard, …)` 同契约）。 */
+    fun openClipboardPanel(): Boolean {
+        return try {
+            ensureRuntime()
+            val manager = navManager ?: return false
+            val method = navMethod ?: return false
+            val panel = navClipboardPanel ?: return false
+            val bundle = Bundle().apply {
+                putInt(KEY_TARGET_TAB_INDEX, CLIPBOARD_TAB_INDEX)
+                putInt(KEY_FROM, 1)
+            }
+            method.invoke(manager, panel, bundle)
+            true
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "open clipboard panel failed: ${t.message}")
+            false
+        }
+    }
+
     // ---- C 条目数据面 ----
 
     private fun bindGetter(item: Any, name: String, returnType: Class<*>?): Method? {
@@ -291,6 +352,8 @@ internal object WeTypeClipboardImageHost {
 
     fun itemCreateTime(item: Any): Long = invokeLong(item, "c", 0L)
 
+    fun itemExpireTimestamp(item: Any): Long = invokeLong(item, "d", 0L)
+
     private fun invokeLong(item: Any, name: String, fallback: Long): Long {
         val m = bindGetter(item, name, Long::class.javaPrimitiveType) ?: return fallback
         return runCatching { m.invoke(item) as? Long }.getOrNull() ?: fallback
@@ -304,6 +367,11 @@ internal object WeTypeClipboardImageHost {
     fun setItemPathType(item: Any, pathType: Int): Boolean {
         val m = bindSetter(item, "A", Int::class.javaPrimitiveType) ?: return false
         return runCatching { m.invoke(item, pathType); true }.getOrDefault(false)
+    }
+
+    fun setItemExpireTimestamp(item: Any, expireTimestamp: Long): Boolean {
+        val m = bindSetter(item, "v", Long::class.javaPrimitiveType) ?: return false
+        return runCatching { m.invoke(item, expireTimestamp); true }.getOrDefault(false)
     }
 
     private fun bindSetter(item: Any, name: String, paramType: Class<*>?): Method? {

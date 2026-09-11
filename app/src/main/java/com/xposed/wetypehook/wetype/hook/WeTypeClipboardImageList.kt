@@ -1,8 +1,10 @@
 package com.xposed.wetypehook.wetype.hook
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log as AndroidLog
+import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import java.lang.reflect.Method
@@ -27,6 +29,8 @@ internal object WeTypeClipboardImageList {
     private const val DAO_FACTORY_CLASS = "com.tencent.wetype.plugin.hld.dao.c"
     private const val CLIPBOARD_MGR_CLASS = "com.tencent.wetype.plugin.hld.clipboard.B"
     private const val ITEM_GET_CREATE_TIME = "c"
+    private const val EXPIRY_EXTEND_WINDOW_MS = 24L * 60 * 60 * 1000
+    private const val EXPIRY_EXTEND_TARGET_MS = 30L * 24 * 60 * 60 * 1000
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor { r ->
@@ -62,16 +66,26 @@ internal object WeTypeClipboardImageList {
     @Volatile
     private var injecting = false
 
+    @Volatile
+    private var appContext: Context? = null
+
+    @Volatile
+    private var daoInsertHooked = false
+
+    @Volatile
+    private var daoResolveAttempts = 0
+
     fun install(classLoader: ClassLoader): Boolean {
         if (installed) return true
         hostClassLoader = classLoader
         return try {
-            // 只做零初始化加载；DAO 单例延后到首次 primeAsync（宿主 DB 已就绪后）。
+            // 只做零初始化加载；DAO 单例延后解析（宿主 DB 就绪后才安全）。
             itemClass = Class.forName(CLIPBOARD_ITEM_CLASS, false, classLoader)
             hookSetList(classLoader)
             hookDelete(classLoader)
             installed = true
             AndroidLog.i(TAG, "clipboard image list injector installed")
+            scheduleDaoResolve(5000L)
             true
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "clipboard image list injector install failed: ${t.message}")
@@ -80,31 +94,105 @@ internal object WeTypeClipboardImageList {
     }
 
     /**
-     * 零初始化解析 DAO：Room 查询推到首次 [primeAsync]，避免 Application 早期 <clinit>。
+     * 宿主启动早期解析 Room 单例可能触发 <clinit> 风险，延后并重试；
+     * 解析成功后立即挂钩 DAO 插入点，做到「同步条目一落库就采集」。
+     */
+    private fun scheduleDaoResolve(delayMs: Long) {
+        mainHandler.postDelayed({
+            executor.execute {
+                if (daoInstance != null) return@execute
+                val cl = hostClassLoader ?: return@execute
+                resolveDao(cl)
+                if (daoInstance == null && daoResolveAttempts < 10) {
+                    daoResolveAttempts++
+                    scheduleDaoResolve(3000L)
+                }
+            }
+        }, delayMs)
+    }
+
+    /**
+     * 解析剪贴板 DAO。工厂类 `dao.c` 有多个零参 getter（反馈库/记录库等），
+     * `getDeclaredMethods()` 顺序不保证，必须选带 `d()`/`l()` 查询的那个，
+     * 否则在部分设备上会静默拿到错误 DAO、永远采不到图片。
      */
     private fun resolveDao(classLoader: ClassLoader) {
-        val factory = runCatching { Class.forName(DAO_FACTORY_CLASS, false, classLoader) }.getOrNull() ?: return
+        val factory = runCatching { Class.forName(DAO_FACTORY_CLASS, false, classLoader) }.getOrNull()
+            ?: run {
+                AndroidLog.e(TAG, "clipboard dao factory missing: $DAO_FACTORY_CLASS")
+                return
+            }
         val singleton = factory.declaredFields.firstOrNull {
             Modifier.isStatic(it.modifiers) && it.type == factory
-        } ?: return
+        } ?: run {
+            AndroidLog.e(TAG, "clipboard dao factory singleton missing")
+            return
+        }
         val factoryInstance = runCatching {
             singleton.isAccessible = true
             singleton.get(null)
-        }.getOrNull() ?: return
-        val dao = factory.declaredMethods.firstOrNull {
-            it.parameterTypes.isEmpty() && it.returnType != Void.TYPE
-        }?.apply { isAccessible = true }?.let {
-            runCatching { it.invoke(factoryInstance) }.getOrNull()
-        } ?: return
-        daoInstance = dao
-        daoImages = dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "d" && it.parameterTypes.isEmpty() &&
-                List::class.java.isAssignableFrom(it.returnType)
-        }?.apply { isAccessible = true }
-        daoUnshown = dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "l" && it.parameterTypes.isEmpty() &&
-                List::class.java.isAssignableFrom(it.returnType)
-        }?.apply { isAccessible = true }
+        }.getOrNull() ?: run {
+            AndroidLog.e(TAG, "clipboard dao factory instance missing")
+            return
+        }
+        var dao: Any? = null
+        var images: Method? = null
+        var unshown: Method? = null
+        for (getter in factory.declaredMethods) {
+            if (getter.parameterTypes.isNotEmpty() || getter.returnType == Void.TYPE) continue
+            getter.isAccessible = true
+            val candidate = runCatching { getter.invoke(factoryInstance) }.getOrNull() ?: continue
+            val candidateImages = candidate.javaClass.declaredMethods.firstOrNull {
+                it.name == "d" && it.parameterTypes.isEmpty() &&
+                    List::class.java.isAssignableFrom(it.returnType)
+            }
+            val candidateUnshown = candidate.javaClass.declaredMethods.firstOrNull {
+                it.name == "l" && it.parameterTypes.isEmpty() &&
+                    List::class.java.isAssignableFrom(it.returnType)
+            }
+            if (candidateImages != null || candidateUnshown != null) {
+                dao = candidate
+                images = candidateImages
+                unshown = candidateUnshown
+                break
+            }
+        }
+        val resolved = dao ?: run {
+            AndroidLog.e(TAG, "clipboard dao not found on factory ${factory.name}")
+            return
+        }
+        daoInstance = resolved
+        daoImages = images?.apply { isAccessible = true }
+        daoUnshown = unshown?.apply { isAccessible = true }
+        AndroidLog.i(
+            TAG,
+            "clipboard dao resolved: ${resolved.javaClass.name} " +
+                "images=${images != null} unshown=${unshown != null}"
+        )
+        hookDaoInserts(resolved)
+    }
+
+    /** Room 生成实现的单条插入（`long insert(C)`）；落库完成即刷新采集缓存。 */
+    private fun hookDaoInserts(dao: Any) {
+        if (daoInsertHooked) return
+        val itemType = itemClass ?: return
+        var count = 0
+        for (method in dao.javaClass.declaredMethods) {
+            if (Modifier.isStatic(method.modifiers)) continue
+            if (method.parameterTypes.size != 1 || method.parameterTypes[0] != itemType) continue
+            if (method.returnType != Long::class.javaPrimitiveType &&
+                method.returnType != Long::class.java
+            ) {
+                continue
+            }
+            method.isAccessible = true
+            method.hookAfter { primeAsync() }
+            count++
+        }
+        if (count > 0) {
+            daoInsertHooked = true
+            AndroidLog.i(TAG, "hooked dao insert methods: $count")
+        }
     }
 
     /** 当前缓存的图片条目（快照，供过滤快照合入）。 */
@@ -200,8 +288,76 @@ internal object WeTypeClipboardImageList {
         }
         if (changed) {
             AndroidLog.i(TAG, "clipboard image cache refreshed: ${collected.size} item(s)")
-            mainHandler.post { reapplyAll() }
+            if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) {
+                runCatching { extendExpiryForSyncedImages(collected) }
+                    .onFailure { AndroidLog.e(TAG, "extend synced image expiry failed: ${it.message}") }
+            }
+            mainHandler.post {
+                autoRequestDownloads(collected)
+                reapplyAll()
+            }
         }
+    }
+
+    /**
+     * 宿主对 `type=1 and expireTimestamp<?` 的过期图片有清理查询；同步图片的
+     * expireTimestamp 只有约 5 分钟，未及时展示就会被删除。这里在采集到图片后
+     * 直接把同步图片的过期时间延后（受“解除剪贴板留存上限”开关控制），保证
+     * 图片不会在用户打开面板前被宿主清掉。必须在非主线程调用。
+     */
+    private fun extendExpiryForSyncedImages(items: List<Any>) {
+        val dao = daoInstanceOrResolve() ?: return
+        val update = daoUpdateMethod(dao) ?: return
+        val now = System.currentTimeMillis()
+        val threshold = now + EXPIRY_EXTEND_WINDOW_MS
+        val target = now + EXPIRY_EXTEND_TARGET_MS
+        for (item in items) {
+            if (WeTypeClipboardImageHost.itemType(item) != 1L) continue
+            if (WeTypeClipboardImageHost.itemReceiveTimestamp(item) <= 0L) continue
+            if (WeTypeClipboardImageHost.itemExpireTimestamp(item) > threshold) continue
+            if (!WeTypeClipboardImageHost.setItemExpireTimestamp(item, target)) continue
+            runCatching { update.invoke(dao, item) }
+                .onFailure {
+                    AndroidLog.e(TAG, "extend image expiry failed id=${WeTypeClipboardImageHost.itemId(item)}: ${it.message}")
+                }
+        }
+    }
+
+    /** 图片到达即预下载：签名 URL 有效期很短，不能等面板打开才触发。主线程调用。 */
+    private fun autoRequestDownloads(items: List<Any>) {
+        val context = currentApplicationContext() ?: return
+        for (item in items) {
+            if (WeTypeClipboardImageHost.itemType(item) != 1L) continue
+            if (WeTypeClipboardImageHost.itemPathType(item) != 1) continue
+            WeTypeClipboardImageLoader.request(item, context) { updated ->
+                WeTypeClipboardImageEntries.refreshItem(updated)
+                mainHandler.post { reapplyAll() }
+            }
+        }
+    }
+
+    private fun daoInstanceOrResolve(): Any? {
+        daoInstance?.let { return it }
+        val cl = hostClassLoader ?: return null
+        resolveDao(cl)
+        return daoInstance
+    }
+
+    private fun daoUpdateMethod(dao: Any): Method? {
+        return dao.javaClass.declaredMethods.firstOrNull {
+            it.name == "c" && it.parameterTypes.size == 1 &&
+                itemClass?.isAssignableFrom(it.parameterTypes[0]) == true
+        }?.apply { isAccessible = true }
+    }
+
+    private fun currentApplicationContext(): Context? {
+        appContext?.let { return it }
+        val context = runCatching {
+            val activityThread = Class.forName("android.app.ActivityThread")
+            activityThread.getMethod("currentApplication").invoke(null) as? Context
+        }.getOrNull() ?: return null
+        appContext = context
+        return context
     }
 
     /**

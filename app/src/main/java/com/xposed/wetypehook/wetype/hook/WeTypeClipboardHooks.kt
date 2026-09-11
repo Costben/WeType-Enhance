@@ -3,6 +3,7 @@ package com.xposed.wetypehook.wetype.hook
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.ProceedWithOriginal
+import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.hookReplace
 import org.luckypray.dexkit.DexKitBridge
@@ -118,6 +119,8 @@ internal object WeTypeClipboardHooks {
                     Log.i("[$TAG] Stored remote clipboard item as visible (source=0)")
                 }
             }
+            // 远程条目（含图片）落库后立刻刷新图片采集缓存，不等剪贴板面板 setList。
+            target.hookAfter { WeTypeClipboardImageList.primeAsync() }
             Log.i("[$TAG] Hooked crossDevicePersist: ${target.declaringClass.name}#${target.name}")
         }.onFailure {
             Log.e("[$TAG] Failed to hook crossDevicePersist: ${it.message}")
