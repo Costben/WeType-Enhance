@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.activity.ComponentDialog
 import androidx.compose.ui.platform.ComposeView
+import androidx.core.view.WindowCompat
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
 import java.util.WeakHashMap
@@ -57,7 +58,12 @@ object WeTypeHostLauncher {
             }
         }
         activeHostDialogs[activity] = dialog
-        val windowBackgroundColor = resolveWindowBackgroundColor(dialog.context)
+        val isDarkMode = resolveWindowIsDarkMode(dialog.context)
+        val windowBackgroundColor = if (isDarkMode) {
+            Color.BLACK
+        } else {
+            Color.parseColor("#F7F7F7")
+        }
 
         val composeView = ComposeView(dialog.context).apply {
             setBackgroundColor(windowBackgroundColor)
@@ -84,6 +90,10 @@ object WeTypeHostLauncher {
             statusBarColor = windowBackgroundColor
             navigationBarColor = windowBackgroundColor
             setBackgroundDrawable(ColorDrawable(windowBackgroundColor))
+            WindowCompat.getInsetsController(this, decorView).apply {
+                isAppearanceLightStatusBars = !isDarkMode
+                isAppearanceLightNavigationBars = !isDarkMode
+            }
         }
     }
 
@@ -169,12 +179,9 @@ private fun runOnMainThreadBlocking(block: () -> Unit): Boolean {
     return finished && failure == null
 }
 
-private fun resolveWindowBackgroundColor(context: Context): Int {
-    val isDarkMode =
-        context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-            Configuration.UI_MODE_NIGHT_YES
-    return if (isDarkMode) Color.BLACK else Color.parseColor("#F7F7F7")
-}
+private fun resolveWindowIsDarkMode(context: Context): Boolean =
+    context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+        Configuration.UI_MODE_NIGHT_YES
 
 private class ModuleHostContext(
     baseContext: Context,

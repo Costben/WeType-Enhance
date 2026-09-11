@@ -3,6 +3,7 @@ package com.xposed.wetypehook
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.Configuration
@@ -14,6 +15,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -21,6 +23,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -41,8 +44,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,6 +62,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -68,23 +75,28 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.gesture.GestureAction
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
@@ -100,6 +112,10 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.DropdownArrowEndAction
+import top.yukonga.miuix.kmp.basic.DropdownDefaults
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -114,6 +130,7 @@ import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.popup.OverlayDropdownPopup
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Ok
@@ -122,6 +139,7 @@ import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 const val EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS = "com.xposed.wetypehook.extra.OPEN_WETYPE_EMBEDDED_SETTINGS"
@@ -150,6 +168,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         activationStatus = ModuleActivationTracker.resolveStatusForUi(this)
         activationStatusListener = ModuleActivationTracker.registerStatusListener(this) { status ->
             activationStatus = status
@@ -416,14 +435,23 @@ private fun SyncSystemBars(darkMode: Boolean) {
     if (view.isInEditMode) return
 
     SideEffect {
-        val window = (view.context as? Activity)?.window ?: return@SideEffect
+        ViewCompat.getWindowInsetsController(view)?.apply {
+            isAppearanceLightStatusBars = !darkMode
+            isAppearanceLightNavigationBars = !darkMode
+        }
+        val window = view.context.findHostActivity()?.window
+            ?.takeIf { it.decorView === view.rootView }
+            ?: return@SideEffect
         val systemBarColor = if (darkMode) Color.BLACK else Color.parseColor("#F7F7F7")
         window.statusBarColor = systemBarColor
         window.navigationBarColor = systemBarColor
-        val insetsController = WindowCompat.getInsetsController(window, view)
-        insetsController.isAppearanceLightStatusBars = !darkMode
-        insetsController.isAppearanceLightNavigationBars = !darkMode
     }
+}
+
+private tailrec fun Context.findHostActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findHostActivity()
+    else -> null
 }
 
 @Composable
@@ -564,7 +592,9 @@ private fun WeTypeSettingsScreen(
         )
     }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
-    var selectedCategoryTab by rememberSaveable { mutableIntStateOf(0) }
+    val categoryTabs = remember { listOf("界面美化", "按键手势", "功能增强") }
+    val categoryPagerState = rememberPagerState(pageCount = { categoryTabs.size })
+    val coroutineScope = rememberCoroutineScope()
     var colorInput by rememberSaveable {
         mutableStateOf(formatRgb(if (currentModeIsDark) darkColor else lightColor))
     }
@@ -749,11 +779,14 @@ private fun WeTypeSettingsScreen(
                     }
                 },
                 bottomContent = {
-                    val categoryTabs = listOf("界面美化", "按键手势", "功能增强")
                     TabRowWithContour(
                         tabs = categoryTabs,
-                        selectedTabIndex = selectedCategoryTab,
-                        onTabSelected = { selectedCategoryTab = it },
+                        selectedTabIndex = categoryPagerState.currentPage,
+                        onTabSelected = { index ->
+                            coroutineScope.launch {
+                                categoryPagerState.animateScrollToPage(index)
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -762,18 +795,22 @@ private fun WeTypeSettingsScreen(
             )
         }
     ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = PaddingValues(
-                top = paddingValues.calculateTopPadding(),
-                bottom = 40.dp
-            ),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            when (selectedCategoryTab) {
+        HorizontalPager(
+            state = categoryPagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .overScrollVertical()
+                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                contentPadding = PaddingValues(
+                    top = paddingValues.calculateTopPadding(),
+                    bottom = 40.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when (page) {
                 0 -> {
                     AppearanceTabContent(
                         currentModeIsDark = currentModeIsDark,
@@ -925,6 +962,7 @@ private fun WeTypeSettingsScreen(
                         activationStatus = activationStatus,
                         onRestoreDefaults = ::restoreDefaults
                     )
+                }
                 }
             }
         }
@@ -1204,7 +1242,6 @@ private fun LazyListScope.AppearanceTabContent(
                     )
                 }
 
-                HorizontalDivider()
 
                 // 预设色卡快速选择器
                 ColorPresetPalette(
@@ -1213,7 +1250,6 @@ private fun LazyListScope.AppearanceTabContent(
                     onSelectColor = onColorSelect
                 )
 
-                HorizontalDivider()
 
                 // 自定义 HEX 颜色输入与取色器入口
                 Column(
@@ -1256,7 +1292,6 @@ private fun LazyListScope.AppearanceTabContent(
                     }
                 }
 
-                HorizontalDivider()
 
                 // 透明度滑块
                 SliderPreferenceItem(
@@ -1266,7 +1301,6 @@ private fun LazyListScope.AppearanceTabContent(
                     onValueChange = onAlphaChange
                 )
 
-                HorizontalDivider()
 
                 KeyColorEditor(
                     title = if (currentModeIsDark) {
@@ -1312,7 +1346,6 @@ private fun LazyListScope.AppearanceTabContent(
                     )
                 }
 
-                HorizontalDivider()
 
                 // 模糊滑块
                 SliderPreferenceItem(
@@ -1867,48 +1900,84 @@ private fun MiuixSwitchWidget(
 private fun previewTextColor(color: Int): ComposeColor =
     if (isLightColor(color)) ComposeColor.Black else ComposeColor.White
 
-private fun logoColorModeLabel(mode: String): String = when (mode) {
-    WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
-    WeTypeSettings.LOGO_COLOR_MODE_BLACK,
-    WeTypeSettings.LOGO_COLOR_MODE_WHITE -> "跟随系统"
-    WeTypeSettings.LOGO_COLOR_MODE_CUSTOM -> "自定义"
-    else -> "跟随品牌色"
-}
-
-private fun fontModeLabel(mode: Int): String = when (mode) {
-    WeTypeSettings.FONT_MODE_OFFICIAL -> "微信官方"
-    WeTypeSettings.FONT_MODE_MODULE -> "模块内置"
-    else -> "跟随系统"
-}
-
-private fun gestureLabelPositionLabel(position: Int): String = when (position) {
-    WeTypeSettings.GESTURE_LABEL_POSITION_TOP -> "顶部"
-    else -> "底部"
-}
-
 private fun parseLogoCustomColor(input: String): Int {
     return parseRgbColor(input) ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR
 }
 
 @Composable
-private fun LogoColorModeOption(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
+private fun MiuixDropdownPreference(
+    title: String,
+    items: List<String>,
+    selectedIndex: Int,
+    onSelectedIndexChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    valueMaxWidth: Dp = 132.dp
 ) {
-    BasicComponent(
-        title = label,
-        onClick = onClick,
-        endActions = {
-            if (selected) {
-                Icon(
-                    imageVector = MiuixIcons.Ok,
-                    contentDescription = null,
-                    tint = MiuixTheme.colorScheme.primary
+    var expanded by remember { mutableStateOf(false) }
+    var holdDown by remember { mutableStateOf(false) }
+    val hapticFeedback = LocalHapticFeedback.current
+    val entry = remember(items, selectedIndex) {
+        DropdownEntry(
+            items = items.mapIndexed { index, text ->
+                DropdownItem(
+                    text = text,
+                    selected = index == selectedIndex,
+                    onClick = { onSelectedIndexChange(index) }
                 )
             }
-        }
-    )
+        )
+    }
+    val actionColor = MiuixTheme.colorScheme.onSurfaceVariantActions
+    val selectedText = entry.items.firstOrNull { it.selected }?.text.orEmpty()
+
+    BasicComponent(
+        modifier = modifier,
+        endActions = {
+            Text(
+                text = selectedText,
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .widthIn(max = valueMaxWidth)
+                    .align(Alignment.CenterVertically)
+                    .basicMarquee(),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+                fontSize = MiuixTheme.textStyles.body2.fontSize,
+                color = actionColor,
+                textAlign = TextAlign.End
+            )
+            DropdownArrowEndAction(actionColor = actionColor)
+            OverlayDropdownPopup(
+                entry = entry,
+                show = expanded,
+                onDismiss = { expanded = false },
+                onDismissFinished = { holdDown = false },
+                maxHeight = null,
+                dropdownColors = DropdownDefaults.dropdownColors(),
+                renderInRootScaffold = true,
+                collapseOnSelection = true
+            )
+        },
+        onClick = {
+            expanded = !expanded
+            if (expanded) {
+                holdDown = true
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.ContextClick)
+            }
+        },
+        role = Role.DropdownList,
+        holdDownState = holdDown
+    ) {
+        Text(
+            text = title,
+            fontSize = MiuixTheme.textStyles.headline1.fontSize,
+            fontWeight = FontWeight.Medium,
+            color = MiuixTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 private fun formatRgb(color: Int): String = String.format("#%06X", color and 0xFFFFFF)
@@ -2008,21 +2077,18 @@ private fun LazyListScope.GestureTabContent(
                     checked = qwertyGestureEnabled,
                     onCheckedChange = onQwertyGestureEnabledChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "启用九宫格 T9 下滑手势",
                     description = "支持 1~9 号键位向下滑动触发绑定动作",
                     checked = t9GestureEnabled,
                     onCheckedChange = onT9GestureEnabledChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "QWERTY 手势触觉反馈",
                     description = "26 键手势触发时调用键盘触觉振动",
                     checked = gestureVibration,
                     onCheckedChange = onGestureVibrationChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "T9 九宫格手势触觉反馈",
                     description = "九宫格手势触发时调用键盘触觉振动",
@@ -2047,7 +2113,6 @@ private fun LazyListScope.GestureTabContent(
                     max = 48,
                     onValueChange = { onGestureThresholdChange(it.coerceIn(10, 48)) }
                 )
-                HorizontalDivider()
                 SliderPreferenceItem(
                     title = "T9 触发滑动阈值: ${t9GestureThreshold} dp",
                     value = t9GestureThreshold,
@@ -2060,7 +2125,6 @@ private fun LazyListScope.GestureTabContent(
 
     // 3. 标签样式卡片
     item {
-        var gestureLabelPositionOptionsExpanded by rememberSaveable { mutableStateOf(false) }
         SmallTitle(text = "标签样式")
         Card(
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -2073,61 +2137,50 @@ private fun LazyListScope.GestureTabContent(
                     checked = showGestureKeyLabels,
                     onCheckedChange = onShowGestureKeyLabelsChange
                 )
-                HorizontalDivider()
                 SliderPreferenceItem(
                     title = "标签文字大小: ${gestureLabelTextSizeSp} sp",
                     value = gestureLabelTextSizeSp,
                     max = 16,
                     onValueChange = { onGestureLabelTextSizeSpChange(it.coerceIn(6, 16)) }
                 )
-                HorizontalDivider()
                 SliderPreferenceItem(
                     title = "标签不透明度: ${gestureLabelAlpha}",
                     value = gestureLabelAlpha,
                     max = 255,
                     onValueChange = { onGestureLabelAlphaChange(it.coerceIn(0, 255)) }
                 )
-                HorizontalDivider()
-                ArrowPreference(
+                MiuixDropdownPreference(
                     title = "标签位置",
-                    summary = gestureLabelPositionLabel(gestureLabelPosition),
-                    onClick = { gestureLabelPositionOptionsExpanded = !gestureLabelPositionOptionsExpanded }
+                    items = listOf("底部", "顶部"),
+                    selectedIndex = if (gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_TOP) 1 else 0,
+                    onSelectedIndexChange = { index ->
+                        onGestureLabelPositionChange(
+                            if (index == 1) {
+                                WeTypeSettings.GESTURE_LABEL_POSITION_TOP
+                            } else {
+                                WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM
+                            }
+                        )
+                    }
                 )
-                if (gestureLabelPositionOptionsExpanded) {
-                    HorizontalDivider()
-                    LogoColorModeOption(
-                        label = "底部",
-                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM,
-                        onClick = { onGestureLabelPositionChange(WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM) }
-                    )
-                    LogoColorModeOption(
-                        label = "顶部",
-                        selected = gestureLabelPosition == WeTypeSettings.GESTURE_LABEL_POSITION_TOP,
-                        onClick = { onGestureLabelPositionChange(WeTypeSettings.GESTURE_LABEL_POSITION_TOP) }
-                    )
-                }
-                HorizontalDivider()
                 SliderPreferenceItem(
                     title = "标签上边距: ${gestureLabelMarginTopDp} dp",
                     value = gestureLabelMarginTopDp,
                     max = 24,
                     onValueChange = { onGestureLabelMarginTopDpChange(it.coerceIn(0, 24)) }
                 )
-                HorizontalDivider()
                 SliderPreferenceItem(
                     title = "标签下边距: ${gestureLabelMarginBottomDp} dp",
                     value = gestureLabelMarginBottomDp,
                     max = 24,
                     onValueChange = { onGestureLabelMarginBottomDpChange(it.coerceIn(0, 24)) }
                 )
-                HorizontalDivider()
                 SliderPreferenceItem(
                     title = "标签左边距: ${gestureLabelMarginLeftDp} dp",
                     value = gestureLabelMarginLeftDp,
                     max = 24,
                     onValueChange = { onGestureLabelMarginLeftDpChange(it.coerceIn(0, 24)) }
                 )
-                HorizontalDivider()
                 SliderPreferenceItem(
                     title = "标签右边距: ${gestureLabelMarginRightDp} dp",
                     value = gestureLabelMarginRightDp,
@@ -2186,7 +2239,7 @@ private fun GestureKeyBindingEditor(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "26 键 (QWERTY)",
+                    text = "QWERTY",
                     style = MiuixTheme.textStyles.main,
                     color = if (selectedKeyboardTab == 0) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
                     fontWeight = if (selectedKeyboardTab == 0) FontWeight.Bold else FontWeight.Normal
@@ -2205,7 +2258,7 @@ private fun GestureKeyBindingEditor(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "九宫格 (T9)",
+                    text = "T9",
                     style = MiuixTheme.textStyles.main,
                     color = if (selectedKeyboardTab == 1) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
                     fontWeight = if (selectedKeyboardTab == 1) FontWeight.Bold else FontWeight.Normal
@@ -2391,8 +2444,6 @@ private fun GestureKeyBindingEditor(
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider()
-
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2447,7 +2498,6 @@ private fun GestureKeyBindingEditor(
                                     )
                                 }
                             }
-                            HorizontalDivider()
                         }
                     }
 
@@ -2577,7 +2627,11 @@ private fun LazyListScope.FeatureTabContent(
     // 1. 键盘 Logo 卡片
     item {
         val context = LocalContext.current
-        var logoColorOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+        val logoColorModeOptions = listOf(
+            WeTypeSettings.LOGO_COLOR_MODE_BRAND,
+            WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
+            WeTypeSettings.LOGO_COLOR_MODE_CUSTOM
+        )
         SmallTitle(text = "键盘 Logo")
         Card(
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -2590,39 +2644,25 @@ private fun LazyListScope.FeatureTabContent(
                     checked = logoEnabled,
                     onCheckedChange = onLogoEnabledChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "显示 Logo",
                     description = "关闭则隐藏键盘上的 Logo",
                     checked = logoShowEnabled,
                     onCheckedChange = onLogoShowEnabledChange
                 )
-                HorizontalDivider()
-                ArrowPreference(
+                MiuixDropdownPreference(
                     title = "Logo 主体颜色",
-                    summary = logoColorModeLabel(logoColorMode),
-                    onClick = { logoColorOptionsExpanded = !logoColorOptionsExpanded }
+                    items = listOf(
+                        "跟随品牌色 (官方彩色)",
+                        "跟随系统 (自适应黑白)",
+                        "自定义颜色"
+                    ),
+                    selectedIndex = logoColorModeOptions.indexOf(logoColorMode).coerceAtLeast(0),
+                    onSelectedIndexChange = { index ->
+                        onLogoColorModeChange(logoColorModeOptions[index])
+                    }
                 )
-                if (logoColorOptionsExpanded) {
-                    HorizontalDivider()
-                    LogoColorModeOption(
-                        label = "跟随品牌色 (官方彩色)",
-                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_BRAND,
-                        onClick = { onLogoColorModeChange(WeTypeSettings.LOGO_COLOR_MODE_BRAND) }
-                    )
-                    LogoColorModeOption(
-                        label = "跟随系统 (自适应黑白)",
-                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
-                        onClick = { onLogoColorModeChange(WeTypeSettings.LOGO_COLOR_MODE_SYSTEM) }
-                    )
-                    LogoColorModeOption(
-                        label = "自定义颜色",
-                        selected = logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM,
-                        onClick = { onLogoColorModeChange(WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) }
-                    )
-                }
                 if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
-                    HorizontalDivider()
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2655,7 +2695,6 @@ private fun LazyListScope.FeatureTabContent(
                         )
                     }
                 }
-                HorizontalDivider()
                 ArrowPreference(
                     title = "重置 Logo 设置",
                     summary = "恢复 Logo 默认开启、品牌色状态",
@@ -2671,37 +2710,29 @@ private fun LazyListScope.FeatureTabContent(
     // 2. 字体替换卡片
     item {
         val context = LocalContext.current
-        var fontModeOptionsExpanded by rememberSaveable { mutableStateOf(false) }
+        val fontModeOptions = listOf(
+            WeTypeSettings.FONT_MODE_OFFICIAL,
+            WeTypeSettings.FONT_MODE_MODULE,
+            WeTypeSettings.FONT_MODE_SYSTEM
+        )
         SmallTitle(text = "字体替换")
         Card(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                ArrowPreference(
+                MiuixDropdownPreference(
                     title = "字体来源",
-                    summary = fontModeLabel(fontMode),
-                    onClick = { fontModeOptionsExpanded = !fontModeOptionsExpanded }
+                    items = listOf(
+                        "微信官方 (放行宿主原生字体)",
+                        "模块内置 (WE-Regular 优化字体)",
+                        "跟随系统 (系统默认字体 Typeface.DEFAULT)"
+                    ),
+                    selectedIndex = fontModeOptions.indexOf(fontMode).coerceAtLeast(0),
+                    onSelectedIndexChange = { index ->
+                        onFontModeChange(fontModeOptions[index])
+                    }
                 )
-                if (fontModeOptionsExpanded) {
-                    HorizontalDivider()
-                    LogoColorModeOption(
-                        label = "微信官方 (放行宿主原生字体)",
-                        selected = fontMode == WeTypeSettings.FONT_MODE_OFFICIAL,
-                        onClick = { onFontModeChange(WeTypeSettings.FONT_MODE_OFFICIAL) }
-                    )
-                    LogoColorModeOption(
-                        label = "模块内置 (WE-Regular 优化字体)",
-                        selected = fontMode == WeTypeSettings.FONT_MODE_MODULE,
-                        onClick = { onFontModeChange(WeTypeSettings.FONT_MODE_MODULE) }
-                    )
-                    LogoColorModeOption(
-                        label = "跟随系统 (系统默认字体 Typeface.DEFAULT)",
-                        selected = fontMode == WeTypeSettings.FONT_MODE_SYSTEM,
-                        onClick = { onFontModeChange(WeTypeSettings.FONT_MODE_SYSTEM) }
-                    )
-                }
-                HorizontalDivider()
                 ArrowPreference(
                     title = "重置字体设置",
                     summary = "恢复跟随系统默认字体",
@@ -2728,42 +2759,36 @@ private fun LazyListScope.FeatureTabContent(
                     checked = showCrossDeviceClipboard,
                     onCheckedChange = onShowCrossDeviceClipboardChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "解除保留上限与时长限制",
                     description = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
                     checked = removeClipboardRetentionLimit,
                     onCheckedChange = onRemoveClipboardRetentionLimitChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "解除单条文本长度限制",
                     description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
                     checked = removeClipboardTextLimit,
                     onCheckedChange = onRemoveClipboardTextLimitChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "剪贴板搜索",
                     description = "在剪贴板页面显示搜索框，按文本拼音分词过滤",
                     checked = clipboardSearchEnabled,
                     onCheckedChange = onClipboardSearchEnabledChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "图片缩略图保持原比例",
                     description = "宽度按原图比例缩放，最长不超过行宽；关闭后缩略图统一为正方形",
                     checked = clipboardImageAdjustRatio,
                     onCheckedChange = onClipboardImageAdjustRatioChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "图片缩略图裁剪填满",
                     description = "在缩略图框内居中裁剪填满，可能裁掉图片边缘；关闭则完整显示",
                     checked = clipboardImageCrop,
                     onCheckedChange = onClipboardImageCropChange
                 )
-                HorizontalDivider()
                 MiuixSwitchWidget(
                     title = "图片缩略图统一行高",
                     description = "所有图片条目统一为两行高度；关闭后图片按单行高度显示",
@@ -2803,7 +2828,7 @@ private fun LazyListScope.FeatureTabContent(
             Column {
                 BasicComponent(
                     title = "模块版本",
-                    summary = "v1.27.1 (Code 33)",
+                    summary = "v${BuildConfig.VERSION_NAME} (Code ${BuildConfig.VERSION_CODE})",
                     endActions = {
                         val statusText = if (activationStatus.isActive) "已激活" else "未激活"
                         val statusBg = if (activationStatus.isActive) ComposeColor(0xFF4F9A71) else ComposeColor(0xFFC86F67)
@@ -2823,22 +2848,20 @@ private fun LazyListScope.FeatureTabContent(
                         }
                     }
                 )
-                HorizontalDivider()
                 BasicComponent(
                     title = stringResource(R.string.settings_visit_github_title),
-                    summary = "https://github.com/NEORUAA/MIUI_IME_Unlock",
+                    summary = "https://github.com/Costben/WeType-Enhance",
                     titleColor = BasicComponentDefaults.titleColor(
                         color = MiuixTheme.colorScheme.primary
                     ),
                     onClick = {
                         val intent = Intent(
                             Intent.ACTION_VIEW,
-                            Uri.parse("https://github.com/NEORUAA/MIUI_IME_Unlock")
+                            Uri.parse("https://github.com/Costben/WeType-Enhance")
                         )
                         context.startActivity(intent)
                     }
                 )
-                HorizontalDivider()
                 ArrowPreference(
                     title = stringResource(R.string.settings_reset_title),
                     summary = stringResource(R.string.settings_reset_desc),
