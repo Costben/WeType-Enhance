@@ -519,6 +519,12 @@ private fun WeTypeSettingsScreen(
     var clipboardImageUniformRowHeight by rememberSaveable {
         mutableStateOf(snapshot.clipboardImageUniformRowHeight)
     }
+    var clipboardImageMaxCount by rememberSaveable {
+        mutableIntStateOf(snapshot.clipboardImageMaxCount)
+    }
+    var clipboardImageMaxSizeMb by rememberSaveable {
+        mutableIntStateOf(snapshot.clipboardImageMaxSizeMb)
+    }
     var qwertyGestureEnabled by rememberSaveable {
         mutableStateOf(snapshot.qwertyGestureEnabled)
     }
@@ -659,6 +665,8 @@ private fun WeTypeSettingsScreen(
             clipboardImageAdjustRatio = clipboardImageAdjustRatio,
             clipboardImageCrop = clipboardImageCrop,
             clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
+            clipboardImageMaxCount = clipboardImageMaxCount,
+            clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -711,6 +719,8 @@ private fun WeTypeSettingsScreen(
         clipboardImageAdjustRatio = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO
         clipboardImageCrop = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_CROP
         clipboardImageUniformRowHeight = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT
+        clipboardImageMaxCount = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_MAX_COUNT
+        clipboardImageMaxSizeMb = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB
         qwertyGestureEnabled = WeTypeSettings.DEFAULT_QWERTY_GESTURE_ENABLED
         t9GestureEnabled = WeTypeSettings.DEFAULT_T9_GESTURE_ENABLED
         gestureThreshold = WeTypeSettings.DEFAULT_GESTURE_THRESHOLD
@@ -957,6 +967,10 @@ private fun WeTypeSettingsScreen(
                         onClipboardImageCropChange = { clipboardImageCrop = it },
                         clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
                         onClipboardImageUniformRowHeightChange = { clipboardImageUniformRowHeight = it },
+                        clipboardImageMaxCount = clipboardImageMaxCount,
+                        onClipboardImageMaxCountChange = { clipboardImageMaxCount = it },
+                        clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
+                        onClipboardImageMaxSizeMbChange = { clipboardImageMaxSizeMb = it },
                         disableHotUpdate = disableHotUpdate,
                         onDisableHotUpdateChange = { disableHotUpdate = it },
                         activationStatus = activationStatus,
@@ -2619,6 +2633,10 @@ private fun LazyListScope.FeatureTabContent(
     onClipboardImageCropChange: (Boolean) -> Unit,
     clipboardImageUniformRowHeight: Boolean,
     onClipboardImageUniformRowHeightChange: (Boolean) -> Unit,
+    clipboardImageMaxCount: Int,
+    onClipboardImageMaxCountChange: (Int) -> Unit,
+    clipboardImageMaxSizeMb: Int,
+    onClipboardImageMaxSizeMbChange: (Int) -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
@@ -2794,6 +2812,30 @@ private fun LazyListScope.FeatureTabContent(
                     description = "所有图片条目统一为两行高度；关闭后图片按单行高度显示",
                     checked = clipboardImageUniformRowHeight,
                     onCheckedChange = onClipboardImageUniformRowHeightChange
+                )
+                val imageCountOptions = listOf(0, 20, 50, 100, 200, 500)
+                val imageSizeOptions = listOf(0, 128, 256, 512, 1024, 2048)
+                MiuixDropdownPreference(
+                    title = "图片数量上限",
+                    items = imageCountOptions.map { if (it == 0) "无上限" else "$it 张" },
+                    selectedIndex = imageCountOptions.indexOf(clipboardImageMaxCount).coerceAtLeast(0),
+                    onSelectedIndexChange = { index ->
+                        onClipboardImageMaxCountChange(imageCountOptions[index])
+                    }
+                )
+                MiuixDropdownPreference(
+                    title = "图片容量上限",
+                    items = imageSizeOptions.map {
+                        when {
+                            it == 0 -> "无上限"
+                            it >= 1024 -> "${it / 1024} GB"
+                            else -> "$it MB"
+                        }
+                    },
+                    selectedIndex = imageSizeOptions.indexOf(clipboardImageMaxSizeMb).coerceAtLeast(0),
+                    onSelectedIndexChange = { index ->
+                        onClipboardImageMaxSizeMbChange(imageSizeOptions[index])
+                    }
                 )
             }
         }

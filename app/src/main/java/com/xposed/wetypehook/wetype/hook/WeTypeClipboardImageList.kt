@@ -7,6 +7,7 @@ import android.util.Log as AndroidLog
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
+import java.io.File
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.util.WeakHashMap
@@ -83,6 +84,7 @@ internal object WeTypeClipboardImageList {
             itemClass = Class.forName(CLIPBOARD_ITEM_CLASS, false, classLoader)
             hookSetList(classLoader)
             hookDelete(classLoader)
+            WeTypeClipboardRetentionGuard.install(classLoader)
             installed = true
             AndroidLog.i(TAG, "clipboard image list injector installed")
             scheduleDaoResolve(5000L)
@@ -170,6 +172,7 @@ internal object WeTypeClipboardImageList {
                 "images=${images != null} unshown=${unshown != null}"
         )
         hookDaoInserts(resolved)
+        WeTypeClipboardRetentionGuard.installDaoHooks(resolved)
     }
 
     /** Room 生成实现的单条插入（`long insert(C)`）；落库完成即刷新采集缓存。 */
@@ -276,6 +279,8 @@ internal object WeTypeClipboardImageList {
             }
         }
         collected.sortByDescending { WeTypeClipboardImageHost.itemCreateTime(it) }
+        runCatching { enforceImageLimits(collected, ids) }
+            .onFailure { AndroidLog.e(TAG, "enforce image limits failed: ${it.message}") }
         val changed: Boolean
         synchronized(cacheLock) {
             changed = cachedIds != ids
@@ -297,6 +302,85 @@ internal object WeTypeClipboardImageList {
                 reapplyAll()
             }
         }
+    }
+
+    /**
+     * 图片留存上限：数量/容量超限时从最旧的图片开始清理（数据库记录 + 本地文件）。
+     * 列表已按 createTime 倒序；保留最新的若干张，直到触达任一上限，之后全部删除。
+     * 受“解除剪贴板留存上限”开关控制（关闭时宿主本就会清图片，不叠加限制）。
+     * 必须在非主线程调用。
+     */
+    private fun enforceImageLimits(items: MutableList<Any>, ids: MutableSet<Long>) {
+        if (!WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) return
+        val countSetting = WeTypeSettings.getClipboardImageMaxCountXposed()
+        val sizeSetting = WeTypeSettings.getClipboardImageMaxSizeMbXposed()
+        val unlimited = WeTypeSettings.CLIPBOARD_IMAGE_LIMIT_UNLIMITED
+        if (countSetting <= unlimited && sizeSetting <= unlimited) return
+        val maxCount = if (countSetting <= unlimited) {
+            Int.MAX_VALUE
+        } else {
+            countSetting.coerceAtLeast(WeTypeSettings.CLIPBOARD_IMAGE_MIN_COUNT)
+        }
+        val maxBytes = if (sizeSetting <= unlimited) {
+            Long.MAX_VALUE
+        } else {
+            sizeSetting.coerceAtLeast(WeTypeSettings.CLIPBOARD_IMAGE_MIN_SIZE_MB)
+                .toLong() * 1024L * 1024L
+        }
+        var kept = 0
+        var totalBytes = 0L
+        var keeping = true
+        val deleted = ArrayList<Any>()
+        for (item in items) {
+            if (keeping) {
+                val size = imageFileSize(item)
+                if (kept == 0 || (kept < maxCount && totalBytes + size <= maxBytes)) {
+                    kept++
+                    totalBytes += size
+                    continue
+                }
+                keeping = false
+            }
+            deleted.add(item)
+        }
+        if (deleted.isEmpty()) return
+        val dao = daoInstanceOrResolve() ?: return
+        val delete = daoDeleteMethod(dao) ?: return
+        for (item in deleted) {
+            runCatching { delete.invoke(dao, item) }
+                .onFailure {
+                    AndroidLog.e(TAG, "trim image failed id=${WeTypeClipboardImageHost.itemId(item)}: ${it.message}")
+                }
+            deleteImageFile(item)
+            WeTypeClipboardImageHost.itemId(item)?.let { ids.remove(it) }
+        }
+        items.removeAll(deleted)
+        AndroidLog.i(
+            TAG,
+            "image retention trimmed ${deleted.size} item(s), kept=$kept, size=${totalBytes / 1024}KB"
+        )
+    }
+
+    private fun imageFileSize(item: Any): Long {
+        if (WeTypeClipboardImageHost.itemPathType(item) != 0) return 0L
+        val path = WeTypeClipboardImageHost.itemPath(item) ?: return 0L
+        return runCatching { File(path).length() }.getOrDefault(0L)
+    }
+
+    private fun deleteImageFile(item: Any) {
+        if (WeTypeClipboardImageHost.itemPathType(item) != 0) return
+        val path = WeTypeClipboardImageHost.itemPath(item) ?: return
+        runCatching {
+            val file = File(path)
+            if (file.isFile) file.delete()
+        }
+    }
+
+    private fun daoDeleteMethod(dao: Any): Method? {
+        return dao.javaClass.declaredMethods.firstOrNull {
+            it.name == "f" && it.returnType == Void.TYPE && it.parameterTypes.size == 1 &&
+                itemClass?.isAssignableFrom(it.parameterTypes[0]) == true
+        }?.apply { isAccessible = true }
     }
 
     /**
