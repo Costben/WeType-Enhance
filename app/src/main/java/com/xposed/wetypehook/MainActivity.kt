@@ -482,6 +482,15 @@ private fun WeTypeSettingsScreen(
     var clipboardSearchEnabled by rememberSaveable {
         mutableStateOf(snapshot.clipboardSearchEnabled)
     }
+    var clipboardImageAdjustRatio by rememberSaveable {
+        mutableStateOf(snapshot.clipboardImageAdjustRatio)
+    }
+    var clipboardImageCrop by rememberSaveable {
+        mutableStateOf(snapshot.clipboardImageCrop)
+    }
+    var clipboardImageUniformRowHeight by rememberSaveable {
+        mutableStateOf(snapshot.clipboardImageUniformRowHeight)
+    }
     var qwertyGestureEnabled by rememberSaveable {
         mutableStateOf(snapshot.qwertyGestureEnabled)
     }
@@ -617,6 +626,9 @@ private fun WeTypeSettingsScreen(
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
             clipboardSearchEnabled = clipboardSearchEnabled,
+            clipboardImageAdjustRatio = clipboardImageAdjustRatio,
+            clipboardImageCrop = clipboardImageCrop,
+            clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -666,6 +678,9 @@ private fun WeTypeSettingsScreen(
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
         removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT
         clipboardSearchEnabled = WeTypeSettings.DEFAULT_CLIPBOARD_SEARCH_ENABLED
+        clipboardImageAdjustRatio = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO
+        clipboardImageCrop = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_CROP
+        clipboardImageUniformRowHeight = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT
         qwertyGestureEnabled = WeTypeSettings.DEFAULT_QWERTY_GESTURE_ENABLED
         t9GestureEnabled = WeTypeSettings.DEFAULT_T9_GESTURE_ENABLED
         gestureThreshold = WeTypeSettings.DEFAULT_GESTURE_THRESHOLD
@@ -899,6 +914,12 @@ private fun WeTypeSettingsScreen(
                         onRemoveClipboardTextLimitChange = { removeClipboardTextLimit = it },
                         clipboardSearchEnabled = clipboardSearchEnabled,
                         onClipboardSearchEnabledChange = { clipboardSearchEnabled = it },
+                        clipboardImageAdjustRatio = clipboardImageAdjustRatio,
+                        onClipboardImageAdjustRatioChange = { clipboardImageAdjustRatio = it },
+                        clipboardImageCrop = clipboardImageCrop,
+                        onClipboardImageCropChange = { clipboardImageCrop = it },
+                        clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
+                        onClipboardImageUniformRowHeightChange = { clipboardImageUniformRowHeight = it },
                         disableHotUpdate = disableHotUpdate,
                         onDisableHotUpdateChange = { disableHotUpdate = it },
                         activationStatus = activationStatus,
@@ -2542,6 +2563,12 @@ private fun LazyListScope.FeatureTabContent(
     onRemoveClipboardTextLimitChange: (Boolean) -> Unit,
     clipboardSearchEnabled: Boolean,
     onClipboardSearchEnabledChange: (Boolean) -> Unit,
+    clipboardImageAdjustRatio: Boolean,
+    onClipboardImageAdjustRatioChange: (Boolean) -> Unit,
+    clipboardImageCrop: Boolean,
+    onClipboardImageCropChange: (Boolean) -> Unit,
+    clipboardImageUniformRowHeight: Boolean,
+    onClipboardImageUniformRowHeightChange: (Boolean) -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
@@ -2721,6 +2748,27 @@ private fun LazyListScope.FeatureTabContent(
                     description = "在剪贴板页面显示搜索框，按文本拼音分词过滤",
                     checked = clipboardSearchEnabled,
                     onCheckedChange = onClipboardSearchEnabledChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "图片缩略图保持原比例",
+                    description = "宽度按原图比例缩放，最长不超过行宽；关闭后缩略图统一为正方形",
+                    checked = clipboardImageAdjustRatio,
+                    onCheckedChange = onClipboardImageAdjustRatioChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "图片缩略图裁剪填满",
+                    description = "在缩略图框内居中裁剪填满，可能裁掉图片边缘；关闭则完整显示",
+                    checked = clipboardImageCrop,
+                    onCheckedChange = onClipboardImageCropChange
+                )
+                HorizontalDivider()
+                MiuixSwitchWidget(
+                    title = "图片缩略图统一行高",
+                    description = "所有图片条目统一为两行高度；关闭后图片按单行高度显示",
+                    checked = clipboardImageUniformRowHeight,
+                    onCheckedChange = onClipboardImageUniformRowHeightChange
                 )
             }
         }

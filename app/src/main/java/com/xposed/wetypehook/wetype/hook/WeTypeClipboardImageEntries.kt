@@ -14,12 +14,14 @@ import android.widget.ImageView
 import android.widget.TextView
 import com.xposed.wetypehook.wetype.clipboard.ClipboardImageEntryLogic
 import com.xposed.wetypehook.wetype.clipboard.ClipboardImageRowState
+import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookBefore
 import java.io.File
 import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 /**
  * 剪贴板图片条目渲染与交互（ADR-0002）：
@@ -47,6 +49,9 @@ internal object WeTypeClipboardImageEntries {
     private val bitmapCache = object : LruCache<Long, Bitmap>(12 * 1024 * 1024) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount
     }
+
+    /** 原图尺寸（outWidth/outHeight），用于按比例计算缩略图框。 */
+    private val sizeCache = LruCache<Long, IntArray>(64)
 
     private val thumbnailByHolder: MutableMap<Any, WeakReference<ImageView>> =
         Collections.synchronizedMap(WeakHashMap())
@@ -103,18 +108,26 @@ internal object WeTypeClipboardImageEntries {
             val receiveTs = WeTypeClipboardImageHost.itemReceiveTimestamp(item)
             val fileExists = pathType == 0 && !path.isNullOrEmpty() && File(path).exists()
             val state = ClipboardImageEntryLogic.classify(type, receiveTs, pathType, fileExists)
-            // 图片行的第二行不展示分词：本地单行缩略图、跨设备双行大图都走纯图。
+            // 图片行的第二行不展示分词：缩略图统一走纯图。
             keyInfo?.visibility = View.GONE
             val thumb = ensureThumbnail(holder, itemView, line1) ?: return
             val inset = WeTypeClipboardImageHost.rawToPx(THUMB_INSET_DP).coerceAtLeast(1)
-            val singlePx = (line1Px - 2 * inset).coerceAtLeast(1)
-            val doublePx = (line1Px + line2Px - 2 * inset).coerceAtLeast(1)
             val indent = resolveIndent(contentScroll)
+            // 统一高度 = 两行高（默认）；关闭 = 单行高。缩略图高 = 行高 - 2*inset，
+            // 宽按原比例，超过行宽则等比缩高（ADR-0002 修订）。
+            val uniform = WeTypeSettings.isClipboardImageUniformRowHeightXposed()
+            val rowHeight = if (uniform) line1Px + line2Px else line1Px
+            val targetHeight = (rowHeight - 2 * inset).coerceAtLeast(1)
+            val adjustRatio = WeTypeSettings.isClipboardImageAdjustRatioXposed()
+            val crop = WeTypeSettings.isClipboardImageCropXposed()
             when (state) {
-                ClipboardImageRowState.LOCAL_THUMBNAIL -> {
+                ClipboardImageRowState.LOCAL_THUMBNAIL,
+                ClipboardImageRowState.REMOTE_THUMBNAIL -> {
                     contentScroll?.visibility = View.GONE
-                    applyLineHeight(line1, line1Px)
-                    showThumbnail(thumb, item, path, singlePx, indent, line1Px)
+                    applyLineHeight(line1, rowHeight)
+                    showThumbnail(
+                        thumb, item, path, targetHeight, rowHeight, indent, adjustRatio, crop, line1
+                    )
                 }
                 ClipboardImageRowState.REMOTE_PENDING -> {
                     thumb.visibility = View.GONE
@@ -124,11 +137,6 @@ internal object WeTypeClipboardImageEntries {
                     WeTypeClipboardImageLoader.request(item, itemView.context) { updated ->
                         refreshItem(updated)
                     }
-                }
-                ClipboardImageRowState.REMOTE_THUMBNAIL -> {
-                    contentScroll?.visibility = View.GONE
-                    applyLineHeight(line1, line1Px + line2Px)
-                    showThumbnail(thumb, item, path, doublePx, indent, line1Px + line2Px)
                 }
                 ClipboardImageRowState.NOT_IMAGE -> Unit
             }
@@ -193,25 +201,62 @@ internal object WeTypeClipboardImageEntries {
         thumb: ImageView,
         item: Any,
         path: String?,
-        sizePx: Int,
+        targetHeight: Int,
+        rowHeight: Int,
         indent: Int,
-        lineHeightPx: Int
+        adjustRatio: Boolean,
+        crop: Boolean,
+        line1: View?
     ) {
         thumb.visibility = View.VISIBLE
+        val id = WeTypeClipboardImageHost.itemId(item) ?: return
+        val size = if (adjustRatio) loadImageSize(id, path) else null
+        val boxWidth: Int
+        val boxHeight: Int
+        if (adjustRatio && size != null && size[1] > 0) {
+            val ratio = size[0].toDouble() / size[1].toDouble()
+            var height = targetHeight
+            var width = (height * ratio).roundToInt().coerceAtLeast(1)
+            val maxWidth = rowMaxWidth(line1, indent)
+            if (width > maxWidth) {
+                width = maxWidth
+                height = (width / ratio).roundToInt().coerceAtLeast(1)
+            }
+            boxWidth = width
+            boxHeight = height
+        } else {
+            boxWidth = targetHeight
+            boxHeight = targetHeight
+        }
         val lp = thumb.layoutParams ?: return
-        if (lp.width != sizePx || lp.height != sizePx) {
-            lp.width = sizePx
-            lp.height = sizePx
+        if (lp.width != boxWidth || lp.height != boxHeight) {
+            lp.width = boxWidth
+            lp.height = boxHeight
         }
         if (lp is ViewGroup.MarginLayoutParams) {
             runCatching { lp.marginStart = 0 }
             lp.topMargin = 0
         }
         thumb.layoutParams = lp
+        // 保持比例时框=原图比例，完整显示；正方形模式下 crop 决定裁剪填满还是完整显示。
+        thumb.scaleType = if (!adjustRatio && crop) {
+            ImageView.ScaleType.CENTER_CROP
+        } else {
+            ImageView.ScaleType.FIT_CENTER
+        }
         // 部分宿主版本 ConstraintLayout 不给无约束子视图应用 margin，统一用平移定位。
         thumb.translationX = indent.toFloat()
-        thumb.translationY = ((lineHeightPx - sizePx) / 2).toFloat()
-        val id = WeTypeClipboardImageHost.itemId(item) ?: return
+        thumb.translationY = ((rowHeight - boxHeight) / 2).toFloat()
+        // bind 时行宽可能尚未测量（宽图用屏宽兜底会超行宽）：布局后用真实行宽重算一次。
+        if (adjustRatio && line1 != null && line1.width <= 0) {
+            line1.post {
+                if (line1.width > 0 && decodeTokenByView[thumb] == id && thumb.isAttachedToWindow) {
+                    showThumbnail(
+                        thumb, item, path, targetHeight, rowHeight, indent, adjustRatio, crop, line1
+                    )
+                }
+            }
+        }
         decodeTokenByView[thumb] = id
         val cached = bitmapCache.get(id)
         if (cached != null && !cached.isRecycled) {
@@ -221,7 +266,7 @@ internal object WeTypeClipboardImageEntries {
         thumb.setImageDrawable(null)
         if (path.isNullOrEmpty()) return
         decodeExecutor.execute {
-            val bitmap = decodeSampled(path, sizePx)
+            val bitmap = decodeSampled(path, boxWidth, boxHeight)
             if (bitmap != null) bitmapCache.put(id, bitmap)
             mainHandler.post {
                 if (decodeTokenByView[thumb] != id) return@post
@@ -230,7 +275,33 @@ internal object WeTypeClipboardImageEntries {
         }
     }
 
-    private fun decodeSampled(path: String, targetPx: Int): Bitmap? {
+    /** 原图尺寸（首读走 bounds，缓存后随取）。 */
+    private fun loadImageSize(id: Long, path: String?): IntArray? {
+        if (path.isNullOrEmpty()) return null
+        sizeCache.get(id)?.let { return it }
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            val size = intArrayOf(bounds.outWidth, bounds.outHeight)
+            sizeCache.put(id, size)
+            size
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "decode thumbnail bounds failed: ${t.message}")
+            null
+        }
+    }
+
+    /** 行的可用宽度：行宽（未布局时退化为屏宽）- 缩略图左缩进 - 右留白。 */
+    private fun rowMaxWidth(line1: View?, indent: Int): Int {
+        val rowWidth = line1?.width?.takeIf { it > 0 }
+            ?: line1?.resources?.displayMetrics?.widthPixels
+            ?: return Int.MAX_VALUE
+        val reserve = WeTypeClipboardImageHost.rawToPx(THUMB_INSET_DP)
+        return (rowWidth - indent - reserve).coerceAtLeast(1)
+    }
+
+    private fun decodeSampled(path: String, targetWidth: Int, targetHeight: Int): Bitmap? {
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(path, bounds)
@@ -239,8 +310,8 @@ internal object WeTypeClipboardImageEntries {
                 return null
             }
             var sample = 1
-            while (bounds.outWidth / (sample * 2) >= targetPx &&
-                bounds.outHeight / (sample * 2) >= targetPx
+            while (bounds.outWidth / (sample * 2) >= targetWidth &&
+                bounds.outHeight / (sample * 2) >= targetHeight
             ) {
                 sample *= 2
             }

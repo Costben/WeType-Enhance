@@ -47,6 +47,9 @@ object WeTypeSettings {
     const val KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT = "remove_clipboard_retention_limit"
     const val KEY_REMOVE_CLIPBOARD_TEXT_LIMIT = "remove_clipboard_text_limit"
     const val KEY_CLIPBOARD_SEARCH = "clipboard_search_enabled"
+    const val KEY_CLIPBOARD_IMAGE_ADJUST_RATIO = "clipboard_image_adjust_ratio"
+    const val KEY_CLIPBOARD_IMAGE_CROP = "clipboard_image_crop"
+    const val KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT = "clipboard_image_uniform_row_height"
 
     const val KEY_QWERTY_GESTURE_ENABLED = "qwerty_gesture_enabled"
     const val KEY_T9_GESTURE_ENABLED = "t9_gesture_enabled"
@@ -60,6 +63,12 @@ object WeTypeSettings {
     const val DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT = true
     const val DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT = true
     const val DEFAULT_CLIPBOARD_SEARCH_ENABLED = true
+
+    // 剪贴板图片缩略图：默认保持原比例、完整显示、统一两行高度。
+    // adjustRatio=false 时统一为正方形；crop=true 时在目标框内居中裁剪填满。
+    const val DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO = true
+    const val DEFAULT_CLIPBOARD_IMAGE_CROP = false
+    const val DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT = true
 
     const val DEFAULT_QWERTY_GESTURE_ENABLED = true
     const val DEFAULT_T9_GESTURE_ENABLED = false
@@ -178,6 +187,9 @@ object WeTypeSettings {
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
         val clipboardSearchEnabled: Boolean = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
+        val clipboardImageAdjustRatio: Boolean = DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO,
+        val clipboardImageCrop: Boolean = DEFAULT_CLIPBOARD_IMAGE_CROP,
+        val clipboardImageUniformRowHeight: Boolean = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         val qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         val t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         val gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -204,6 +216,10 @@ object WeTypeSettings {
     fun isRemoveClipboardRetentionLimit(context: Context): Boolean = readSnapshot(context).removeClipboardRetentionLimit
     fun isRemoveClipboardTextLimit(context: Context): Boolean = readSnapshot(context).removeClipboardTextLimit
     fun isClipboardSearchEnabled(context: Context): Boolean = readSnapshot(context).clipboardSearchEnabled
+    fun isClipboardImageAdjustRatio(context: Context): Boolean = readSnapshot(context).clipboardImageAdjustRatio
+    fun isClipboardImageCrop(context: Context): Boolean = readSnapshot(context).clipboardImageCrop
+    fun isClipboardImageUniformRowHeight(context: Context): Boolean =
+        readSnapshot(context).clipboardImageUniformRowHeight
 
     fun isQwertyGestureEnabled(context: Context): Boolean = readSnapshot(context).qwertyGestureEnabled
     fun isT9GestureEnabled(context: Context): Boolean = readSnapshot(context).t9GestureEnabled
@@ -225,6 +241,10 @@ object WeTypeSettings {
     fun isRemoveClipboardRetentionLimitXposed(): Boolean = readSnapshotXposed().removeClipboardRetentionLimit
     fun isRemoveClipboardTextLimitXposed(): Boolean = readSnapshotXposed().removeClipboardTextLimit
     fun isClipboardSearchEnabledXposed(): Boolean = readSnapshotXposed().clipboardSearchEnabled
+    fun isClipboardImageAdjustRatioXposed(): Boolean = readSnapshotXposed().clipboardImageAdjustRatio
+    fun isClipboardImageCropXposed(): Boolean = readSnapshotXposed().clipboardImageCrop
+    fun isClipboardImageUniformRowHeightXposed(): Boolean =
+        readSnapshotXposed().clipboardImageUniformRowHeight
 
     fun isQwertyGestureEnabledXposed(): Boolean = readSnapshotXposed().qwertyGestureEnabled
     fun isT9GestureEnabledXposed(): Boolean = readSnapshotXposed().t9GestureEnabled
@@ -448,6 +468,9 @@ object WeTypeSettings {
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
         clipboardSearchEnabled: Boolean = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
+        clipboardImageAdjustRatio: Boolean = DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO,
+        clipboardImageCrop: Boolean = DEFAULT_CLIPBOARD_IMAGE_CROP,
+        clipboardImageUniformRowHeight: Boolean = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -493,6 +516,9 @@ object WeTypeSettings {
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
             clipboardSearchEnabled = clipboardSearchEnabled,
+            clipboardImageAdjustRatio = clipboardImageAdjustRatio,
+            clipboardImageCrop = clipboardImageCrop,
+            clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -607,6 +633,9 @@ object WeTypeSettings {
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
         clipboardSearchEnabled: Boolean = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
+        clipboardImageAdjustRatio: Boolean = DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO,
+        clipboardImageCrop: Boolean = DEFAULT_CLIPBOARD_IMAGE_CROP,
+        clipboardImageUniformRowHeight: Boolean = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -653,6 +682,9 @@ object WeTypeSettings {
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
             clipboardSearchEnabled = clipboardSearchEnabled,
+            clipboardImageAdjustRatio = clipboardImageAdjustRatio,
+            clipboardImageCrop = clipboardImageCrop,
+            clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold.coerceIn(10, 48),
@@ -740,6 +772,9 @@ object WeTypeSettings {
             .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
             .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
             .putBoolean(KEY_CLIPBOARD_SEARCH, snapshot.clipboardSearchEnabled)
+            .putBoolean(KEY_CLIPBOARD_IMAGE_ADJUST_RATIO, snapshot.clipboardImageAdjustRatio)
+            .putBoolean(KEY_CLIPBOARD_IMAGE_CROP, snapshot.clipboardImageCrop)
+            .putBoolean(KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT, snapshot.clipboardImageUniformRowHeight)
             .putBoolean(KEY_QWERTY_GESTURE_ENABLED, snapshot.qwertyGestureEnabled)
             .putBoolean(KEY_T9_GESTURE_ENABLED, snapshot.t9GestureEnabled)
             .putInt(KEY_GESTURE_THRESHOLD, snapshot.gestureThreshold)
@@ -893,6 +928,9 @@ object WeTypeSettings {
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
         putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
         putBoolean(KEY_CLIPBOARD_SEARCH, clipboardSearchEnabled)
+        putBoolean(KEY_CLIPBOARD_IMAGE_ADJUST_RATIO, clipboardImageAdjustRatio)
+        putBoolean(KEY_CLIPBOARD_IMAGE_CROP, clipboardImageCrop)
+        putBoolean(KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT, clipboardImageUniformRowHeight)
         putBoolean(KEY_QWERTY_GESTURE_ENABLED, qwertyGestureEnabled)
         putBoolean(KEY_T9_GESTURE_ENABLED, t9GestureEnabled)
         putInt(KEY_GESTURE_THRESHOLD, gestureThreshold)
@@ -969,6 +1007,18 @@ object WeTypeSettings {
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
             clipboardSearchEnabled = getBoolean(KEY_CLIPBOARD_SEARCH, defaults.clipboardSearchEnabled),
+            clipboardImageAdjustRatio = getBoolean(
+                KEY_CLIPBOARD_IMAGE_ADJUST_RATIO,
+                defaults.clipboardImageAdjustRatio
+            ),
+            clipboardImageCrop = getBoolean(
+                KEY_CLIPBOARD_IMAGE_CROP,
+                defaults.clipboardImageCrop
+            ),
+            clipboardImageUniformRowHeight = getBoolean(
+                KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
+                defaults.clipboardImageUniformRowHeight
+            ),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, defaults.qwertyGestureEnabled),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, defaults.t9GestureEnabled),
             gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, defaults.gestureThreshold).coerceIn(10, 48),
@@ -1056,6 +1106,15 @@ object WeTypeSettings {
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
             clipboardSearchEnabled = getBoolean(KEY_CLIPBOARD_SEARCH, DEFAULT_CLIPBOARD_SEARCH_ENABLED),
+            clipboardImageAdjustRatio = getBoolean(
+                KEY_CLIPBOARD_IMAGE_ADJUST_RATIO,
+                DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO
+            ),
+            clipboardImageCrop = getBoolean(KEY_CLIPBOARD_IMAGE_CROP, DEFAULT_CLIPBOARD_IMAGE_CROP),
+            clipboardImageUniformRowHeight = getBoolean(
+                KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
+                DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT
+            ),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, DEFAULT_QWERTY_GESTURE_ENABLED),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, DEFAULT_T9_GESTURE_ENABLED),
             gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, DEFAULT_GESTURE_THRESHOLD).coerceIn(10, 48),
@@ -1122,6 +1181,9 @@ object WeTypeSettings {
         removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
         clipboardSearchEnabled = DEFAULT_CLIPBOARD_SEARCH_ENABLED,
+        clipboardImageAdjustRatio = DEFAULT_CLIPBOARD_IMAGE_ADJUST_RATIO,
+        clipboardImageCrop = DEFAULT_CLIPBOARD_IMAGE_CROP,
+        clipboardImageUniformRowHeight = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         qwertyGestureEnabled = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold = DEFAULT_GESTURE_THRESHOLD,
