@@ -30,8 +30,9 @@ class ClipboardSearchSubmitRoutingTest {
         val hookBody = source.substring(hookIdx, nextIdx)
         assertTrue("toggle must check isClipboardPanel", hookBody.contains("isClipboardPanel(targetPanel)"))
         assertTrue("toggle must check isSearchStripExpanded", hookBody.contains("isSearchStripExpanded()"))
-        assertTrue("toggle must collapse strip", hookBody.contains("collapseStripF41()"))
+        assertTrue("toggle must collapse strip synchronously", hookBody.contains("collapseStripF41()"))
         assertFalse("toggle must not cancel navigation to clipboard", hookBody.contains("param.result = null"))
+        assertFalse("toggle must not delay navigation with a replay", hookBody.contains("postDelayed"))
     }
     @Test fun bitmapFromImageViewF22PreservesDrawableBounds() {
         val methodIdx = source.indexOf("fun bitmapFromImageViewF22")

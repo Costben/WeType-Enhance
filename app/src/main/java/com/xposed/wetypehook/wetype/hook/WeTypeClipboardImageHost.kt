@@ -3,6 +3,7 @@ package com.xposed.wetypehook.wetype.hook
 import android.os.Bundle
 import android.util.Log as AndroidLog
 import android.view.View
+import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -29,6 +30,7 @@ internal object WeTypeClipboardImageHost {
     private const val PANEL_ENUM_CLASS = "com.tencent.wetype.plugin.hld.keyboard.t"
     private const val N_CLASS = "com.tencent.wetype.plugin.hld.model.N"
     private const val CLIPBOARD_ITEM_CLASS = "com.tencent.wetype.plugin.hld.clipboard.C"
+    private const val IMAGE_CARD_CLASS = "com.tencent.wetype.plugin.hld.keyboard.k"
 
     private val SCALE_INSTANCE_CLASSES = arrayOf(
         "com.tencent.wetype.plugin.hld.utils.n1",
@@ -96,6 +98,10 @@ internal object WeTypeClipboardImageHost {
         private set
 
     @Volatile
+    var moreBtnId: Int = 0
+        private set
+
+    @Volatile
     var line1HeightRes: Int = 0
         private set
 
@@ -127,6 +133,8 @@ internal object WeTypeClipboardImageHost {
             resolveIds(classLoader)
             runCatching { hookImagePreviewBack(classLoader) }
                 .onFailure { AndroidLog.e(TAG, "image preview back hook failed: ${it.message}") }
+            runCatching { hookImagePreviewSaveAction(classLoader) }
+                .onFailure { AndroidLog.e(TAG, "image preview save hook failed: ${it.message}") }
             installed = true
             AndroidLog.i(TAG, "image host handles installed (line1=$line1HeightRes line2=$line2HeightRes)")
             true
@@ -167,6 +175,46 @@ internal object WeTypeClipboardImageHost {
         AndroidLog.i(TAG, "hooked image preview back (keyboard.l#B0)")
     }
 
+    /**
+     * 恢复关联图片预览页的“保存到相册”。
+     *
+     * 宿主 `keyboard.k#c(local)` 在图片已是本地文件（pathType=0）时隐藏保存按钮；
+     * 模块为同步图片提前下载解密，导致走本地分支后保存入口消失。这里在
+     * `k#e(item, tempPath, local)` 绑定完成后，对同步来源图片（receiveTimestampFromServer>0）
+     * 重新按远端样式渲染一次卡片，恢复“保存到相册 + 发送”。
+     * 点击保存仍走宿主原生 `S33ImagePreviewKeyboard.a()` → SavePicHelper，落盘到
+     * 系统相册 `Pictures/WeType`（MediaStore），即宿主原有路径。
+     */
+    private fun hookImagePreviewSaveAction(classLoader: ClassLoader) {
+        val cardClass = Class.forName(IMAGE_CARD_CLASS, false, classLoader)
+        val bindMethod = cardClass.declaredMethods.firstOrNull {
+            it.name == "e" && it.returnType == Void.TYPE &&
+                it.parameterTypes.size == 3 &&
+                it.parameterTypes[1] == String::class.java &&
+                it.parameterTypes[2] == Boolean::class.javaPrimitiveType
+        } ?: run {
+            AndroidLog.e(TAG, "image preview card bind method missing (keyboard.k#e)")
+            return
+        }
+        val refreshMethod = cardClass.declaredMethods.firstOrNull {
+            it.name == "c" && it.returnType == Void.TYPE &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0] == Boolean::class.javaPrimitiveType
+        } ?: run {
+            AndroidLog.e(TAG, "image preview card refresh method missing (keyboard.k#c)")
+            return
+        }
+        bindMethod.isAccessible = true
+        refreshMethod.isAccessible = true
+        bindMethod.hookAfter { param ->
+            val item = param.args.getOrNull(0) ?: return@hookAfter
+            if (itemReceiveTimestamp(item) <= 0L) return@hookAfter
+            runCatching { refreshMethod.invoke(param.thisObject, false) }
+                .onFailure { AndroidLog.e(TAG, "restore image save action failed: ${it.message}") }
+        }
+        AndroidLog.i(TAG, "hooked image preview save action (keyboard.k#e)")
+    }
+
     fun isReady(): Boolean = installed
 
     /** 首次实际渲染/导航时再解析宿主单例与枚举（此时宿主已完成自身初始化）。 */
@@ -204,6 +252,7 @@ internal object WeTypeClipboardImageHost {
     private fun resolveIds(classLoader: ClassLoader) {
         val ids = Class.forName(IDS_CLASS, false, classLoader)
         contentTvId = ids.getField("clipboard_content_tv").getInt(null)
+        moreBtnId = runCatching { ids.getField("clipboard_more_btn").getInt(null) }.getOrDefault(0)
         contentScrollId = ids.getField("clipboard_content_scrollview").getInt(null)
         line1Id = ids.getField("clipboard_item_line1").getInt(null)
         keyInfoId = ids.getField("clipboard_key_information_rv").getInt(null)

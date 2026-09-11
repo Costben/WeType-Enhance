@@ -1,7 +1,10 @@
 package com.xposed.wetypehook.wetype.hook
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.PorterDuff
 import android.graphics.drawable.BitmapDrawable
 import android.os.Handler
 import android.os.Looper
@@ -10,6 +13,7 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.Log as AndroidLog
 import android.util.TypedValue
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -54,10 +58,6 @@ internal object WeTypeClipboardSearchUi {
     private var nativeCandidateView: java.lang.reflect.Method? = null
     private var searchManager: Any? = null
     private var nativeSearchRestore: (() -> Unit)? = null
-    private val searchChipRestore = WeakHashMap<View, Triple<Boolean, Boolean, Float>>()
-    private fun rememberSearchChip(view: View) {
-        if (!searchChipRestore.containsKey(view)) searchChipRestore[view] = Triple(view.isEnabled, view.isClickable, view.alpha)
-    }
     private var activeImeService: java.lang.ref.WeakReference<Any>? = null
 
     private fun ownsSearchBox(box: EditText): Boolean = translatorShellByUs &&
@@ -395,12 +395,6 @@ internal object WeTypeClipboardSearchUi {
         nativeKEditRefF41 = null
         nativeKModeTvRefF41 = null
         searchManager = null
-        for ((view, state) in searchChipRestore) {
-            view.isEnabled = state.first
-            view.isClickable = state.second
-            view.alpha = state.third
-        }
-        searchChipRestore.clear()
         runCatching { restore?.invoke() }.onFailure { AndroidLog.e(TAG, "native search restoration failed: ${it.message}") }
     }
 
@@ -534,8 +528,8 @@ internal object WeTypeClipboardSearchUi {
 
     // F41翻译卡原生复用（用户否决藏栏/少抬升路线，在此基础上改，不reset）：
     // 完全复用中英互译翻译样式（圆角矩形白卡上下两行），充分利用扩充高度，不再纠结只抬高一点。
-    // 上行左下拉文本改搜索类型（全量匹配/模糊匹配/OCR识别灰色disabled），下拉切换搜索模式
-    // （切模式即换过滤，不过滤逻辑可先stub但UI切换生效）；OCR项enabled=false+灰色，点击无效果；
+    // 上行左下拉文本改搜索类型（全量匹配/模糊匹配），下拉切换搜索模式
+    // （切模式即换过滤，不过滤逻辑可先stub但UI切换生效）；
     // 右收起复用原生收起（走原生S()/J0/V0/U0/C0/s()还账，经Q0(false)即P0(false)→J0+V0+U0+C0+S+s+N三连）。
     // 下行输入行复用原生输入框（hint改搜索剪贴板，输入即过滤剪贴板列表，复用现有过滤链keywordListener）。
     // 卡高用原生k.getCurrentHeight（q1.e0(d0+156)，k.java 1440-1442），不再钳小窗；
@@ -551,8 +545,6 @@ internal object WeTypeClipboardSearchUi {
     // 皮肤单例k$t二进制名取；圆角B方案WeTypeSettings.getCornerRadiusXposed。
     private const val SEARCH_MODE_FULL = 0
     private const val SEARCH_MODE_FUZZY = 1
-    private const val SEARCH_MODE_OCR = 2
-    private const val SEARCH_MODE_OCR_ID = 1003
     private const val SEARCH_MODE_FULL_ID = 1001
     private const val SEARCH_MODE_FUZZY_ID = 1002
     @Volatile
@@ -567,7 +559,6 @@ internal object WeTypeClipboardSearchUi {
         Collections.synchronizedMap(WeakHashMap<EditText, TextWatcher>())
     private fun searchModeNameF41(mode: Int): String = when (mode) {
         SEARCH_MODE_FUZZY -> "模糊匹配"
-        SEARCH_MODE_OCR -> "OCR识别"
         else -> "全量匹配"
     }
     // C46小缺口补记（只修C45 FAIL三项，其余双行卡/过滤/收起/零仿制/二次一致不动）：
@@ -794,8 +785,11 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
-     * 搜索面板展开态下点击剪贴板按钮：直接收起搜索面板，拦截原切页逻辑，
-     * 防止残留挂起与重复切页导致的二次拉起灰色残留条。
+     * 搜索面板展开态下点击剪贴板按钮：宿主侧同样是 `N#n3(CustomPhraseAndClipboard, bundle)`
+     * （keyboard toolbar 的 `voice.C0608t#u`）。原实现按 `k3/p3/l3` 过滤，3.5.4 上这些是
+     * int/synthetic 形参，永远匹配不到（实机日志 `switch methods not found, disabled`），
+     * 导致搜索壳未收、窗口高残留（中间空白）。现在 `hookBefore` 里同步收壳（含窗高/焦点还账），
+     * 再放行原生切页：同一次点击、同一调用栈完成，无延迟。
      */
     private fun hookClipboardPanelToggle(classLoader: ClassLoader) {
         try {
@@ -812,7 +806,7 @@ internal object WeTypeClipboardSearchUi {
                 return
             }
             val switchMethods = nClass.declaredMethods.filter {
-                it.name in setOf("k3", "p3", "l3") &&
+                it.returnType == Void.TYPE &&
                     it.parameterTypes.isNotEmpty() &&
                     it.parameterTypes[0] == panelClass
             }
@@ -826,14 +820,12 @@ internal object WeTypeClipboardSearchUi {
                     m.isAccessible = true
                     m.hookBefore { param ->
                         val targetPanel = param.args.firstOrNull()
-                        if (isClipboardPanel(targetPanel) && isSearchStripExpanded()) {
-                            AndroidLog.i(TAG, "clipboard requested via N#${m.name} while search strip expanded -> collapse search strip and navigate to clipboard")
-                            if (Looper.myLooper() == Looper.getMainLooper()) {
-                                collapseStripF41()
-                            } else {
-                                mainHandler.post { collapseStripF41() }
-                            }
+                        if (!isClipboardPanel(targetPanel) || !isSearchStripExpanded()) {
+                            return@hookBefore
                         }
+                        AndroidLog.i(TAG, "clipboard requested via N#${m.name} while search strip expanded -> collapse synchronously, native switch proceeds")
+                        runCatching { collapseStripF41() }
+                            .onFailure { AndroidLog.e(TAG, "clipboard toggle collapse failed: ${it.message}") }
                     }
                     count++
                     AndroidLog.i(TAG, "strip clipboard toggle: hooked N#${m.name}")
@@ -2753,6 +2745,7 @@ internal object WeTypeClipboardSearchUi {
                     } catch (t: Throwable) {
                         AndroidLog.e(TAG, "set search icon failed: ${t.message}")
                     }
+                    applyHostIconTint(this, page, ids.backBtnIvId)
                     scaleType = ImageView.ScaleType.CENTER_INSIDE
                     background = resolveNativeRoundBackground(backBtn, resources)
                     applyCircularShape(this)
@@ -2760,7 +2753,10 @@ internal object WeTypeClipboardSearchUi {
                     setPadding(initPad, initPad, initPad, initPad)
                     isClickable = true
                     isFocusable = true
-                    setOnClickListener { onSearchButtonClick(root) }
+                    setOnClickListener { view ->
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        onSearchButtonClick(root)
+                    }
                 }
                 val backIndex = bar.indexOfChild(backBtn)
                 bar.addView(button, if (backIndex >= 0) backIndex + 1 else 0)
@@ -2973,7 +2969,7 @@ internal object WeTypeClipboardSearchUi {
      * - 卡：translatingwhilewriting.k（NATIVE_TOPVIEW_CLASS）整卡复用，只改文案。
      * - 上行左：k内currentLanguageModeTv（TextView，初值r.b(r.c())如“中英互译”）改搜索类型；
      *   下拉容器k内languageOptionsContainer（translatingwhilewriting.d extends RecyclerView）
-     *   经b#k(List<m>)喂搜索项 + d#setOnItemClick覆盖为搜索切换（OCR无效果）。
+     *   经b#k(List<m>)喂搜索项 + d#setOnItemClick覆盖为搜索切换。
      * - 下行：k内sourceContentEditView（ImeEditText，hint“输入要翻译的内容”）改hint“搜索剪贴板”，
      *   加TextWatcher复用keywordListener过滤链（C47隔离：原生翻译watcher摘除+q/k翻译链守卫，
      *   只走过滤不调翻译请求，fail-closed）。
@@ -3109,7 +3105,7 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** F41：切搜索模式（UI切换生效+即换过滤stub：重推当前词走现有过滤链；OCR不进此函数，點擊無效果由dropdown守卫）。 */
+    /** F41：切搜索模式（UI切换生效+即换过滤stub：重推当前词走现有过滤链）。 */
     private fun setSearchModeF41(mode: Int, reason: String) {
         try {
             if (mode != SEARCH_MODE_FULL && mode != SEARCH_MODE_FUZZY) return
@@ -3209,7 +3205,7 @@ internal object WeTypeClipboardSearchUi {
             runCatching {
                 parts.modeTv.text = searchModeNameF41(searchModeF41)
             }
-            // 下拉：经b#k喂搜索项 + d#setOnItemClick覆盖为搜索切换（OCR守卫无效果）；失败fail-closed。
+            // 下拉：经b#k喂搜索项 + d#setOnItemClick覆盖为搜索切换；失败fail-closed。
             if (!wireNativeDropdownF41(parts)) {
                 AndroidLog.e(TAG, "strip F41 reuse dropped: dropdown wire failed")
                 return false
@@ -3273,7 +3269,7 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** F41：下拉接线（原生复用）：b#k喂[全量/模糊/OCR]m项 + d#setOnItemClick覆盖；OCR位灰色disabled+点击无效果。 */
+    /** F41：下拉接线（原生复用）：b#k喂[全量/模糊]m项 + d#setOnItemClick覆盖。 */
     private fun wireNativeDropdownF41(parts: NativeKPartsF41): Boolean {
         return try {
             val cl = hostClassLoader ?: parts.k.context?.classLoader ?: return false
@@ -3305,19 +3301,10 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "strip F41 dropdown: d#setOnItemClick missing (fail-closed)")
                 return false
             }
-            // C46：拦数据源（展开重绑仍是我方三项）+ 展开重喂（s0后补喂+补灰+补点击）。
+            // C46：拦数据源（展开重绑仍是我方两项）+ 展开重喂（s0后补喂+补点击）。
             runCatching { ensureDropdownSrcHookF41(adapter, kMethod, parts, mCls, ctor) }
             runCatching { ensureExpandRefeedHookF41(parts, mCls, ctor) }
-            // OCR灰色disabled：下拉展开后子项现取，OCR位enabled=false+alpha0.4（原生图标同值，非硬编码色）；
-            // 此处先记账，展开时由post补灰（dropdown为RecyclerView，子ViewHolder延迟绑定）。
-            runCatching {
-                dropdown.post {
-                    runCatching { grayOutOcrItemF41(parts) }
-                }
-                // 再下一帧补一次（首帧ViewHolder未绑定时）。
-                dropdown.postDelayed({ runCatching { grayOutOcrItemF41(parts) } }, 300)
-            }
-            AndroidLog.i(TAG, "strip F41 dropdown: wired 全量/模糊/OCR灰 (b#k直喂+d#setOnItemClick覆盖，原生复用)")
+            AndroidLog.i(TAG, "strip F41 dropdown: wired 全量/模糊 (b#k直喂+d#setOnItemClick覆盖，原生复用)")
             true
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F41 dropdown wire failed: $t")
@@ -3347,15 +3334,14 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** C46：组我方三项m对象（只改文案，id 1001/1002/1003现取常量，不写死语言）。 */
+    /** C46：组我方两项m对象（只改文案，id 1001/1002现取常量，不写死语言）。 */
     private fun buildSearchItemsF41(mCls: Class<*>, ctor: java.lang.reflect.Constructor<*>): ArrayList<Any> {
         val full = ctor.newInstance(SEARCH_MODE_FULL_ID, "全量匹配")
         val fuzzy = ctor.newInstance(SEARCH_MODE_FUZZY_ID, "模糊匹配")
-        val ocr = ctor.newInstance(SEARCH_MODE_OCR_ID, "OCR识别")
-        return arrayListOf(full, fuzzy, ocr)
+        return arrayListOf(full, fuzzy)
     }
 
-    /** C46：经b#k直喂三项（feeding守卫防hook自递归；失败false fail-closed）。 */
+    /** C46：经b#k直喂两项（feeding守卫防hook自递归；失败false fail-closed）。 */
     private fun feedSearchItemsF41(adapter: Any, kMethod: java.lang.reflect.Method, mCls: Class<*>, ctor: java.lang.reflect.Constructor<*>): Boolean {
         if (feedingDropdownF41) return true
         return try {
@@ -3370,7 +3356,7 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** C46：覆盖d#setOnItemClick为搜索切换（OCR守卫：id==1003即无效果；其余切模式+收下拉经k#s0反射）。 */
+    /** C46：覆盖d#setOnItemClick为搜索切换（切模式+收下拉经k#s0反射）。 */
     private fun applyDropdownClickHandlerF41(parts: NativeKPartsF41, cl: ClassLoader): Boolean {
         if (!ownsSearchBox(parts.edit)) return false
         return try {
@@ -3390,11 +3376,7 @@ internal object WeTypeClipboardSearchUi {
                             }
                             g?.also { it.isAccessible = true }?.invoke(info) as? Number
                         }?.getOrNull()?.toInt()
-                        if (id == SEARCH_MODE_OCR_ID) {
-                            AndroidLog.i(TAG, "strip F41 dropdown: OCR clicked no-op (灰色disabled接口)")
-                            // 无效果：不切模式、不换过滤、不收下拉（fail-closed灰色）。
-                            null
-                        } else if (id == SEARCH_MODE_FULL_ID) {
+                        if (id == SEARCH_MODE_FULL_ID) {
                             setSearchModeF41(SEARCH_MODE_FULL, "dropdown")
                             runCatching { closeNativeDropdownF41(parts.k) }
                             null
@@ -3435,7 +3417,7 @@ internal object WeTypeClipboardSearchUi {
                     if (!translatorShellByUs) return@hookBefore
                     if (nativeKRefF41?.get()?.parent == null) return@hookBefore
                     val arg = param.args.firstOrNull() as? List<*> ?: return@hookBefore
-                    // 已是我方三项（1001/1002/1003）则放行，防抖。
+                    // 已是我方两项（1001/1002）则放行，防抖。
                     val ids = arg.mapNotNull {
                         runCatching {
                             val g = it?.javaClass?.declaredMethods?.firstOrNull {
@@ -3444,7 +3426,7 @@ internal object WeTypeClipboardSearchUi {
                             g?.also { m -> m.isAccessible = true }?.invoke(it) as? Number
                         }.getOrNull()?.toInt()
                     }.toSet()
-                    if (ids == setOf(SEARCH_MODE_FULL_ID, SEARCH_MODE_FUZZY_ID, SEARCH_MODE_OCR_ID)) return@hookBefore
+                    if (ids == setOf(SEARCH_MODE_FULL_ID, SEARCH_MODE_FUZZY_ID)) return@hookBefore
                     param.args[0] = buildSearchItemsF41(mCls, ctor)
                     AndroidLog.i(TAG, "strip F41 dropdown: native rebind intercepted->search items (展开重绑已拦)")
                 } catch (t: Throwable) {
@@ -3460,7 +3442,7 @@ internal object WeTypeClipboardSearchUi {
                     val cur = nativeKRefF41?.get() ?: return@hookAfter
                     if (cur.parent == null) return@hookAfter
                     val cl = hostClassLoader ?: cur.context?.classLoader ?: return@hookAfter
-                    // 原生重绑可能连带重置点击监听，补一次；灰条后一帧补。
+                    // 原生重绑可能连带重置点击监听，补一次。
                     val p = runCatching {
                         var node: NativeKPartsF41? = null
                         runCatching {
@@ -3471,12 +3453,6 @@ internal object WeTypeClipboardSearchUi {
                     }.getOrNull()
                     if (p != null) {
                         runCatching { applyDropdownClickHandlerF41(p, cl) }
-                        p.dropdown.post { runCatching { grayOutOcrItemF41(p) } }
-                        p.dropdown.postDelayed({ runCatching { grayOutOcrItemF41(p) } }, 300)
-                    } else {
-                        runCatching {
-                            parts.dropdown.post { runCatching { grayOutOcrItemF41(parts) } }
-                        }
                     }
                 } catch (t: Throwable) {
                     AndroidLog.e(TAG, "strip F41 rebind after failed: $t")
@@ -3489,7 +3465,7 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** C46：展开重喂兜底（全局一次）：k#s0 toggle后补喂+补点击+补灰，防b#k拦漏网。 */
+    /** C46：展开重喂兜底（全局一次）：k#s0 toggle后补喂+补点击，防b#k拦漏网。 */
     private fun ensureExpandRefeedHookF41(parts: NativeKPartsF41, mCls: Class<*>, ctor: java.lang.reflect.Constructor<*>) {
         if (f41ExpandHooked) return
         f41ExpandHooked = true
@@ -3516,13 +3492,11 @@ internal object WeTypeClipboardSearchUi {
                                 it.name == "k" && it.parameterTypes.size == 1 && List::class.java.isAssignableFrom(it.parameterTypes[0])
                             } ?: return@postDelayed
                             km.isAccessible = true
-                            // 展开时重喂：直喂三项（feeding守卫内hookBefore自动放行）。
+                            // 展开时重喂：直喂两项（feeding守卫内hookBefore自动放行）。
                             runCatching { feedSearchItemsF41(ad, km, mCls, ctor) }
                             val cl = hostClassLoader ?: cur.context?.classLoader ?: return@postDelayed
                             runCatching { applyDropdownClickHandlerF41(fresh, cl) }
-                            runCatching { grayOutOcrItemF41(fresh) }
-                            fresh.dropdown.postDelayed({ runCatching { grayOutOcrItemF41(fresh) } }, 300)
-                            AndroidLog.i(TAG, "strip F41 dropdown: expand refeed done (s0后重喂+补灰)")
+                            AndroidLog.i(TAG, "strip F41 dropdown: expand refeed done (s0后重喂+补点击)")
                         } catch (t: Throwable) {
                             AndroidLog.e(TAG, "strip F41 expand refeed failed: $t")
                         }
@@ -3561,82 +3535,6 @@ internal object WeTypeClipboardSearchUi {
             }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "strip F41 dropdown close failed: $t")
-        }
-    }
-
-    /** F41：OCR位灰色disabled（只碰OCR位视图：enabled=false+alpha0.4；找不到只diag不炸）。 */
-    private fun grayOutOcrItemF41(parts: NativeKPartsF41) {
-        if (!ownsSearchBox(parts.edit)) return
-        try {
-            // 不直引RecyclerView类（模块无依赖，按ViewGroup子遍历，fail-closed）。
-            val rv = parts.dropdown as? ViewGroup ?: return
-            for (i in 0 until rv.childCount) {
-                val child = rv.getChildAt(i) ?: continue
-                val tv = runCatching {
-                    var found: android.widget.TextView? = null
-                    val qq: ArrayDeque<View> = ArrayDeque()
-                    qq.add(child)
-                    var hops = 0
-                    while (qq.isNotEmpty() && hops < 30 && found == null) {
-                        val v = qq.removeFirst()
-                        hops++
-                        if (v is android.widget.TextView) found = v
-                        if (v is ViewGroup) {
-                            for (j in 0 until minOf(v.childCount, 10)) {
-                                v.getChildAt(j)?.let { qq.add(it) }
-                            }
-                        }
-                    }
-                    found
-                }.getOrNull() ?: continue
-                val t = runCatching { tv.text?.toString() }.getOrNull().orEmpty()
-                if (t == "OCR识别") {
-                    rememberSearchChip(child)
-                    rememberSearchChip(tv)
-                    runCatching { child.isEnabled = false }
-                    runCatching { tv.isEnabled = false }
-                    runCatching { child.alpha = 0.4f }
-                    runCatching { tv.alpha = 0.4f }
-                    // 点击吞掉：子链加空消费监听（不触发adapter回调，因adapter回调走rootView的r1.C，
-                    // 此处仅保险；主守卫仍在d#setOnItemClick的OCR分支）。
-                    runCatching { child.isClickable = false }
-                    AndroidLog.i(TAG, "strip F41 dropdown: OCR grayed enabled=false alpha=0.4 (点击无效果)")
-                }
-            }
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "strip F41 OCR gray failed: $t")
-        }
-    }
-
-    private fun grayOutOcrByTextF41(root: ViewGroup) {
-        if (nativeKEditRefF41?.get()?.let(::ownsSearchBox) != true) return
-        try {
-            val q: ArrayDeque<View> = ArrayDeque()
-            q.add(root)
-            var hops = 0
-            while (q.isNotEmpty() && hops < 120) {
-                val v = q.removeFirst()
-                hops++
-                if (v is android.widget.TextView && runCatching { v.text?.toString() }.getOrNull() == "OCR识别") {
-                    rememberSearchChip(v)
-                    runCatching { v.isEnabled = false }
-                    runCatching { v.alpha = 0.4f }
-                    (v.parent as? View)?.let {
-                        rememberSearchChip(it)
-                        runCatching { it.isEnabled = false }
-                        runCatching { it.alpha = 0.4f }
-                    }
-                    AndroidLog.i(TAG, "strip F41 dropdown: OCR grayed (text fallback)")
-                    return
-                }
-                if (v is ViewGroup) {
-                    for (i in 0 until minOf(v.childCount, 25)) {
-                        v.getChildAt(i)?.let { q.add(it) }
-                    }
-                }
-            }
-        } catch (t: Throwable) {
-            AndroidLog.e(TAG, "strip F41 OCR gray fallback failed: $t")
         }
     }
 
@@ -14250,6 +14148,12 @@ internal object WeTypeClipboardSearchUi {
         row.addView(clear)
         val exit = createNativeExitButton(context) ?: return null
         row.addView(exit)
+        val exitColor = exit.currentTextColor
+        if (Color.alpha(exitColor) > 0) {
+            icon.setColorFilter(exitColor, PorterDuff.Mode.SRC_IN)
+        } else {
+            applyThemeIconTint(icon)
+        }
         AndroidLog.i(TAG, "strip native map ok: root=${root.javaClass.name} " +
             "searchIcon=$searchIcon box=${box.javaClass.name}")
         return root
@@ -15316,6 +15220,42 @@ internal object WeTypeClipboardSearchUi {
         }
         AndroidLog.e(TAG, "search icon: no host search drawable, dropped")
         return null
+    }
+
+    /**
+     * 宿主搜索图标是固定黑矢量（actionbar_icon_dark_search），暗色下必须自行上色：
+     * 优先复制同栏返回图标的原生 tint/colorFilter，取不到再按系统深浅色回退黑白。
+     */
+    private fun applyHostIconTint(icon: ImageView, page: View, backBtnIvId: Int?) {
+        try {
+            val reference = backBtnIvId?.let { page.findViewById<View>(it) } as? ImageView
+            if (reference != null) {
+                reference.imageTintList?.let { tint ->
+                    icon.imageTintList = tint
+                    AndroidLog.i(TAG, "search icon tint copied from back_btn_iv")
+                    return
+                }
+                reference.colorFilter?.let { filter ->
+                    @Suppress("DEPRECATION")
+                    icon.setColorFilter(filter)
+                    AndroidLog.i(TAG, "search icon colorFilter copied from back_btn_iv")
+                    return
+                }
+            }
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "search icon tint copy failed: ${t.message}")
+        }
+        applyThemeIconTint(icon)
+    }
+
+    private fun applyThemeIconTint(icon: ImageView) {
+        icon.setColorFilter(resolveThemeIconColor(icon), PorterDuff.Mode.SRC_IN)
+    }
+
+    private fun resolveThemeIconColor(view: View): Int {
+        val night = view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        return if (night) Color.WHITE else Color.BLACK
     }
 
     private fun dpToPx(resources: android.content.res.Resources, dp: Float): Int {

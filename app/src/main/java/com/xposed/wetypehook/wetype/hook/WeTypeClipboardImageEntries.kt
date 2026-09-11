@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log as AndroidLog
 import android.util.LruCache
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewParent
@@ -40,6 +41,7 @@ internal object WeTypeClipboardImageEntries {
     private const val THUMB_INSET_DP = 12
     private const val THUMB_CORNER_DP = 6
     private const val THUMB_BG_COLOR = 0x14000000
+    private const val TAG_ROW_CLICK = "wetype_clipboard_image_row_click"
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val decodeExecutor = Executors.newFixedThreadPool(2) { r ->
@@ -54,6 +56,8 @@ internal object WeTypeClipboardImageEntries {
     private val sizeCache = LruCache<Long, IntArray>(64)
 
     private val thumbnailByHolder: MutableMap<Any, WeakReference<ImageView>> =
+        Collections.synchronizedMap(WeakHashMap())
+    private val rowClickByHolder: MutableMap<Any, WeakReference<View>> =
         Collections.synchronizedMap(WeakHashMap())
     private val boundItemByHolder: MutableMap<Any, Any> =
         Collections.synchronizedMap(WeakHashMap())
@@ -97,6 +101,7 @@ internal object WeTypeClipboardImageEntries {
             if (type != 1L) {
                 boundItemByHolder.remove(holder)
                 thumbnailByHolder[holder]?.get()?.visibility = View.GONE
+                rowClickByHolder[holder]?.get()?.visibility = View.GONE
                 contentScroll?.visibility = View.VISIBLE
                 applyLineHeight(line1, line1Px)
                 return
@@ -125,12 +130,14 @@ internal object WeTypeClipboardImageEntries {
                 ClipboardImageRowState.REMOTE_THUMBNAIL -> {
                     contentScroll?.visibility = View.GONE
                     applyLineHeight(line1, rowHeight)
+                    ensureRowClickTarget(holder, itemView, line1)?.visibility = View.VISIBLE
                     showThumbnail(
                         thumb, item, path, targetHeight, rowHeight, indent, adjustRatio, crop, line1
                     )
                 }
                 ClipboardImageRowState.REMOTE_PENDING -> {
                     thumb.visibility = View.GONE
+                    rowClickByHolder[holder]?.get()?.visibility = View.GONE
                     contentScroll?.visibility = View.VISIBLE
                     contentTv?.text = ClipboardImageEntryLogic.REMOTE_PENDING_TEXT
                     applyLineHeight(line1, line1Px)
@@ -160,9 +167,10 @@ internal object WeTypeClipboardImageEntries {
                 cornerRadius = WeTypeClipboardImageHost.rawToPx(THUMB_CORNER_DP).toFloat()
                 setColor(THUMB_BG_COLOR)
             }
-            setOnClickListener {
+            setOnClickListener { view ->
                 val bound = boundItemByHolder[holder] ?: return@setOnClickListener
                 if (WeTypeClipboardImageHost.itemType(bound) != 1L) return@setOnClickListener
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 WeTypeClipboardImageHost.openImagePreview(bound)
             }
         }
@@ -179,7 +187,38 @@ internal object WeTypeClipboardImageEntries {
         return thumb
     }
 
-    private fun buildLayoutParams(parent: ViewGroup, thumb: ImageView): ViewGroup.LayoutParams {
+    /**
+     * 整行空白点击兜底：宿主横向 ScrollView 的 OnTouchListener 恒返回 true，
+     * 行内非缩略图区域（例如正方形图片右侧留白）不会产生点击事件。
+     * 在 line1 上铺一层透明可点视图（缩略图 brought-to-front 盖在其上），
+     * 点空白等同点缩略图：打开 S33 大图预览。
+     */
+    private fun ensureRowClickTarget(holder: Any, itemView: View, line1: View?): View? {
+        rowClickByHolder[holder]?.get()?.let { return it }
+        val parent = line1 as? ViewGroup ?: return null
+        val overlay = View(itemView.context).apply {
+            tag = TAG_ROW_CLICK
+            isClickable = true
+            isFocusable = false
+            visibility = View.GONE
+            setOnClickListener { view ->
+                val bound = boundItemByHolder[holder] ?: return@setOnClickListener
+                if (WeTypeClipboardImageHost.itemType(bound) != 1L) return@setOnClickListener
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                WeTypeClipboardImageHost.openImagePreview(bound)
+            }
+        }
+        val lp = buildLayoutParams(parent, overlay).apply {
+            width = ViewGroup.LayoutParams.MATCH_PARENT
+            height = ViewGroup.LayoutParams.MATCH_PARENT
+        }
+        parent.addView(overlay, lp)
+        rowClickByHolder[holder] = WeakReference(overlay)
+        AndroidLog.i(TAG, "image row blank click target mounted")
+        return overlay
+    }
+
+    private fun buildLayoutParams(parent: ViewGroup, view: View): ViewGroup.LayoutParams {
         val clClass = runCatching {
             Class.forName(CONSTRAINT_LAYOUT_PARAMS_CLASS, false, parent.javaClass.classLoader)
         }.getOrNull() ?: return ViewGroup.MarginLayoutParams(1, 1)
@@ -247,6 +286,13 @@ internal object WeTypeClipboardImageEntries {
         // 部分宿主版本 ConstraintLayout 不给无约束子视图应用 margin，统一用平移定位。
         thumb.translationX = indent.toFloat()
         thumb.translationY = ((rowHeight - boxHeight) / 2).toFloat()
+        // 整行空白点击层后挂，缩略图保持在最上层（点击仍有原生按压反馈）。
+        thumb.bringToFront()
+        // 更多按钮与缩略图同为 line1 子级，必须留在点击层之上保持原生菜单。
+        val moreBtnId = WeTypeClipboardImageHost.moreBtnId
+        if (moreBtnId != 0) {
+            (line1 as? ViewGroup)?.findViewById<View>(moreBtnId)?.bringToFront()
+        }
         // bind 时行宽可能尚未测量（宽图用屏宽兜底会超行宽）：布局后用真实行宽重算一次。
         if (adjustRatio && line1 != null && line1.width <= 0) {
             line1.post {
@@ -398,6 +444,9 @@ internal object WeTypeClipboardImageEntries {
                         val isContent = clicked.id == WeTypeClipboardImageHost.contentTvId
                         val isThumb = thumbnailByHolder[holder]?.get() === clicked
                         if (isContent || isThumb) {
+                            if (isContent) {
+                                clicked.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            }
                             WeTypeClipboardImageHost.openImagePreview(item)
                             param.result = null
                         }
