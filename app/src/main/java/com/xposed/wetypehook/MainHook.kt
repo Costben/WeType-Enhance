@@ -285,6 +285,11 @@ class MainHook : XposedModule() {
 
     private fun installWeTypeHooks(sourcePackage: String, sourceDir: String?, classLoader: ClassLoader) {
         if (frameworkProperties and XposedInterface.PROP_CAP_REMOTE != 0L) {
+            // 懒重绑入口：热重载被拒/服务瞬态不可用导致 unbind 后，设置读取仍可自愈，
+            // 不再回退默认色（强调色 #23C891 绿）并卡死到进程结束。
+            WeTypeSettings.bindRemotePreferencesProvider {
+                runCatching { getRemotePreferences(WeTypeSettings.PREF_GROUP) }.getOrNull()
+            }
             runCatching {
                 WeTypeSettings.bindRemotePreferences(
                     getRemotePreferences(WeTypeSettings.PREF_GROUP)

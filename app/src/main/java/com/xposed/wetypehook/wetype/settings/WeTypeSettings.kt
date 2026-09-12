@@ -12,12 +12,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log as AndroidLog
 import com.xposed.wetypehook.ModuleBridgeContract
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.UUID
 
 object WeTypeSettings {
     const val PREF_GROUP = "wetype_settings"
+    private const val TAG = "WeTypeSettings"
     private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
     private const val WETYPE_PACKAGE_NAME = "com.tencent.wetype"
     private const val EXTRA_APPEARANCE_COLORS = "appearance_colors"
@@ -187,6 +189,19 @@ object WeTypeSettings {
     @Volatile
     private var remotePreferences: SharedPreferences? = null
 
+    /**
+     * 宿主进程内重新解析远端偏好（模块 App 偏好）的入口。热重载被拒绝/服务短暂不可用时
+     * `remotePreferences` 会被解绑，若无此入口则所有颜色读取会回退默认值（强调色变绿 #23C891）。
+     */
+    @Volatile
+    private var remotePreferencesProvider: (() -> SharedPreferences?)? = null
+
+    /** 宿主进程 Application Context：远端偏好暂时不可用时用宿主本地偏好兜底，避免回退默认色。 */
+    @Volatile
+    private var hostContextRef: java.lang.ref.WeakReference<Context>? = null
+
+    private val defaultFallbackLogged = AtomicBoolean(false)
+
     @Volatile
     private var moduleBridgePendingIntent: PendingIntent? = null
 
@@ -344,6 +359,14 @@ object WeTypeSettings {
 
     fun isDisableHotUpdate(context: Context): Boolean = readSnapshot(context).disableHotUpdate
 
+    /**
+     * 注册远端偏好解析器（仅宿主进程）：`remotePreferences` 被解绑或读取失败时按需重绑，
+     * 防止强调色等设置永久回退默认值。lambda 持有 Xposed 接口实例，仅存活于当前模块代际。
+     */
+    fun bindRemotePreferencesProvider(provider: (() -> SharedPreferences?)?) {
+        remotePreferencesProvider = provider
+    }
+
     fun bindRemotePreferences(preferences: SharedPreferences) {
         synchronized(remotePrefsLock) {
             if (remotePreferences === preferences) return
@@ -386,6 +409,7 @@ object WeTypeSettings {
             synchronizeRemotePreferences(appContext)
             return
         }
+        hostContextRef = java.lang.ref.WeakReference(appContext)
         val remoteSnapshot = remotePreferences?.toSnapshotOrNull()
         val hostSyncPending = localPreferences.getBoolean(KEY_HOST_SYNC_PENDING, false)
 
@@ -467,9 +491,10 @@ object WeTypeSettings {
             return false
         }
         return synchronized(settingsSyncLock) {
-            val snapshot = settings.toSnapshot()
-            val revision = settings.getLong(ModuleBridgeContract.EXTRA_REVISION, 0L)
             val localPreferences = appPreferences(appContext)
+            val fallbackColors = localPreferences.toSnapshotOrNull()?.appearanceColors.orEmpty()
+            val snapshot = settings.toSnapshot(fallbackColors)
+            val revision = settings.getLong(ModuleBridgeContract.EXTRA_REVISION, 0L)
             val lastImportedRevision = localPreferences.getLong(KEY_LAST_IMPORTED_REVISION, 0L)
             if (revision > 0L && revision < lastImportedRevision) {
                 return@synchronized true
@@ -643,11 +668,37 @@ object WeTypeSettings {
 
         synchronized(remotePrefsLock) {
             cachedXposedSnapshot?.let { return it }
-            val resolvedSnapshot = remotePreferences?.toSnapshotOrNull()
-                ?: defaultSnapshot()
-            cachedXposedSnapshot = resolvedSnapshot
-            return resolvedSnapshot
+            // ① 远端偏好（模块 App）→ ② 按需重绑远端偏好 → ③ 宿主本地偏好 → ④ 默认值（不缓存）。
+            // 默认值（强调色 #23C891 绿）绝不能被缓存：一次瞬态读取失败曾会让整个进程
+            // 的强调色/美化设置退回默认且无法自愈（“Logo/强调色莫名回绿”）。
+            val remoteSnapshot = resolvedRemotePreferencesLocked()?.toSnapshotOrNull()
+            if (remoteSnapshot != null) {
+                cachedXposedSnapshot = remoteSnapshot
+                return remoteSnapshot
+            }
+            val localSnapshot = hostContextRef?.get()?.let { appPreferences(it).toSnapshotOrNull() }
+            if (localSnapshot != null) {
+                cachedXposedSnapshot = localSnapshot
+                AndroidLog.w(TAG, "remote prefs unavailable, falling back to host local snapshot")
+                return localSnapshot
+            }
+            if (defaultFallbackLogged.compareAndSet(false, true)) {
+                AndroidLog.w(TAG, "no persisted settings snapshot, serving defaults (uncached)")
+            }
+            return defaultSnapshot()
         }
+    }
+
+    private fun resolvedRemotePreferencesLocked(): SharedPreferences? {
+        remotePreferences?.let { return it }
+        val provider = remotePreferencesProvider ?: return null
+        val resolved = runCatching { provider() }.getOrNull() ?: return null
+        remotePreferences = resolved
+        runCatching {
+            resolved.registerOnSharedPreferenceChangeListener(remotePrefChangeListener)
+        }
+        AndroidLog.i(TAG, "remote prefs lazily rebound after unbind")
+        return resolved
     }
 
     private fun appPreferences(context: Context): SharedPreferences {
@@ -1009,7 +1060,13 @@ object WeTypeSettings {
         )
     }
 
-    private fun Bundle.toSnapshot(): Snapshot {
+    /**
+     * [fallbackAppearanceColors]：桥接 Bundle 里缺少某个颜色分组时用当前已持久化的值补齐，
+     * 避免部分更新把未携带的分组重置回默认色（强调色默认即绿色 #23C891）。
+     */
+    private fun Bundle.toSnapshot(
+        fallbackAppearanceColors: Map<String, Int> = emptyMap()
+    ): Snapshot {
         val defaults = defaultSnapshot()
         val appearanceBundle = getBundle(EXTRA_APPEARANCE_COLORS)
         return Snapshot(
@@ -1045,7 +1102,13 @@ object WeTypeSettings {
                 defaults.candidatePinyinLeftMarginDp
             ).coerceIn(0, 64),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
-                group.id to (appearanceBundle?.getInt(group.id, group.defaultColor)
+                val bundled = if (appearanceBundle?.containsKey(group.id) == true) {
+                    appearanceBundle.getInt(group.id, group.defaultColor)
+                } else {
+                    null
+                }
+                group.id to (bundled
+                    ?: fallbackAppearanceColors[group.id]
                     ?: group.defaultColor)
             },
             toolbarIconBgOpacity = getInt(
