@@ -220,12 +220,20 @@ internal object WeTypeClipboardImageLoader {
     }
 
     /**
-     * 触发一次后台下载；同一 id 去重，失败 30s 内不重试。
+     * 触发一次后台下载；同一 id 去重，失败 30s 内不重试（支持 [forceRetry] 强制重试）。
      * [onUpdated] 在主线程回调（已落盘且内存 C 已更新）。
      */
-    fun request(item: Any, context: Context, onUpdated: (Any) -> Unit) {
+    fun request(
+        item: Any,
+        context: Context,
+        forceRetry: Boolean = false,
+        onUpdated: (Any) -> Unit
+    ) {
         ensureRuntime()
         val id = WeTypeClipboardImageHost.itemId(item) ?: return
+        if (forceRetry) {
+            failedUntil.remove(id)
+        }
         val now = SystemClock.uptimeMillis()
         if ((failedUntil[id] ?: 0L) > now) return
         if (WeTypeClipboardImageHost.itemPathType(item) == 0) return

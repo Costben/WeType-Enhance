@@ -30,8 +30,6 @@ internal object WeTypeClipboardImageList {
     private const val DAO_FACTORY_CLASS = "com.tencent.wetype.plugin.hld.dao.c"
     private const val CLIPBOARD_MGR_CLASS = "com.tencent.wetype.plugin.hld.clipboard.B"
     private const val ITEM_GET_CREATE_TIME = "c"
-    private const val EXPIRY_EXTEND_WINDOW_MS = 24L * 60 * 60 * 1000
-    private const val EXPIRY_EXTEND_TARGET_MS = 30L * 24 * 60 * 60 * 1000
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor { r ->
@@ -87,7 +85,7 @@ internal object WeTypeClipboardImageList {
             WeTypeClipboardRetentionGuard.install(classLoader)
             installed = true
             AndroidLog.i(TAG, "clipboard image list injector installed")
-            scheduleDaoResolve(5000L)
+            scheduleDaoResolve(1000L)
             true
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "clipboard image list injector install failed: ${t.message}")
@@ -99,6 +97,31 @@ internal object WeTypeClipboardImageList {
      * 宿主启动早期解析 Room 单例可能触发 <clinit> 风险，延后并重试；
      * 解析成功后立即挂钩 DAO 插入点，做到「同步条目一落库就采集」。
      */
+    fun onDaoResolved(dao: Any) {
+        if (daoInstance != null) return
+        val images = dao.javaClass.declaredMethods.firstOrNull {
+            it.name == "d" && it.parameterTypes.isEmpty() &&
+                List::class.java.isAssignableFrom(it.returnType)
+        }?.apply { isAccessible = true }
+        val unshown = dao.javaClass.declaredMethods.firstOrNull {
+            it.name == "l" && it.parameterTypes.isEmpty() &&
+                List::class.java.isAssignableFrom(it.returnType)
+        }?.apply { isAccessible = true }
+        if (images != null || unshown != null) {
+            daoInstance = dao
+            daoImages = images
+            daoUnshown = unshown
+            AndroidLog.i(
+                TAG,
+                "clipboard dao bound eagerly via factory hook: ${dao.javaClass.name} " +
+                    "images=${images != null} unshown=${unshown != null}"
+            )
+            hookDaoInserts(dao)
+            WeTypeClipboardRetentionGuard.installDaoHooks(dao)
+            primeAsync()
+        }
+    }
+
     private fun scheduleDaoResolve(delayMs: Long) {
         mainHandler.postDelayed({
             executor.execute {
@@ -294,13 +317,16 @@ internal object WeTypeClipboardImageList {
         if (changed) {
             AndroidLog.i(TAG, "clipboard image cache refreshed: ${collected.size} item(s)")
             if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) {
-                runCatching { extendExpiryForSyncedImages(collected) }
-                    .onFailure { AndroidLog.e(TAG, "extend synced image expiry failed: ${it.message}") }
+                runCatching { extendExpiryForImages(collected) }
+                    .onFailure { AndroidLog.e(TAG, "extend image expiry failed: ${it.message}") }
             }
             mainHandler.post {
                 autoRequestDownloads(collected)
                 reapplyAll()
             }
+        } else if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed() && collected.isNotEmpty()) {
+            runCatching { extendExpiryForImages(collected) }
+                .onFailure { AndroidLog.e(TAG, "extend image expiry failed: ${it.message}") }
         }
     }
 
@@ -384,20 +410,19 @@ internal object WeTypeClipboardImageList {
     }
 
     /**
-     * 宿主对 `type=1 and expireTimestamp<?` 的过期图片有清理查询；同步图片的
-     * expireTimestamp 只有约 5 分钟，未及时展示就会被删除。这里在采集到图片后
-     * 直接把同步图片的过期时间延后（受“解除剪贴板留存上限”开关控制），保证
-     * 图片不会在用户打开面板前被宿主清掉。必须在非主线程调用。
+     * 宿主对 `type=1 and expireTimestamp<?` 的过期图片有清理查询；
+     * 本地图片 expireTimestamp 仅 3 分钟，同步图片约 5 分钟，未及时展示就会被删除。
+     * 这里在采集到图片后直接把全部图片的过期时间延后（受“解除剪贴板留存上限”开关控制），
+     * 保证图片不会在用户打开面板前被宿主清掉。必须在非主线程调用。
      */
-    private fun extendExpiryForSyncedImages(items: List<Any>) {
+    private fun extendExpiryForImages(items: List<Any>) {
         val dao = daoInstanceOrResolve() ?: return
         val update = daoUpdateMethod(dao) ?: return
         val now = System.currentTimeMillis()
-        val threshold = now + EXPIRY_EXTEND_WINDOW_MS
-        val target = now + EXPIRY_EXTEND_TARGET_MS
+        val threshold = now + WeTypeClipboardImageHost.EXPIRY_EXTEND_WINDOW_MS
+        val target = now + WeTypeClipboardImageHost.EXPIRY_EXTEND_TARGET_MS
         for (item in items) {
             if (WeTypeClipboardImageHost.itemType(item) != 1L) continue
-            if (WeTypeClipboardImageHost.itemReceiveTimestamp(item) <= 0L) continue
             if (WeTypeClipboardImageHost.itemExpireTimestamp(item) > threshold) continue
             if (!WeTypeClipboardImageHost.setItemExpireTimestamp(item, target)) continue
             runCatching { update.invoke(dao, item) }
@@ -466,7 +491,24 @@ internal object WeTypeClipboardImageList {
             val record = load.invoke(dao, id) ?: return false
             WeTypeClipboardImageHost.setItemPath(record, path)
             WeTypeClipboardImageHost.setItemPathType(record, 0)
+            if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) {
+                val target = System.currentTimeMillis() + WeTypeClipboardImageHost.EXPIRY_EXTEND_TARGET_MS
+                WeTypeClipboardImageHost.setItemExpireTimestamp(record, target)
+            }
             update.invoke(dao, record)
+            synchronized(cacheLock) {
+                for (item in cachedImages) {
+                    if (WeTypeClipboardImageHost.itemId(item) == id) {
+                        WeTypeClipboardImageHost.setItemPath(item, path)
+                        WeTypeClipboardImageHost.setItemPathType(item, 0)
+                        if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) {
+                            val target = System.currentTimeMillis() + WeTypeClipboardImageHost.EXPIRY_EXTEND_TARGET_MS
+                            WeTypeClipboardImageHost.setItemExpireTimestamp(item, target)
+                        }
+                        break
+                    }
+                }
+            }
             true
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "persist image path via dao failed id=$id: ${t.message}")

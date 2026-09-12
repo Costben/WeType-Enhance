@@ -2,8 +2,10 @@ package com.xposed.wetypehook.wetype.hook
 
 import android.util.Log as AndroidLog
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
+import com.xposed.wetypehook.xposed.ProceedWithOriginal
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
+import com.xposed.wetypehook.xposed.hookReplace
 import java.lang.reflect.Modifier
 import java.util.concurrent.ConcurrentHashMap
 
@@ -22,6 +24,7 @@ internal object WeTypeClipboardRetentionGuard {
 
     private const val TAG = "WeTypeClipboardRetention"
     private const val CLIPBOARD_MGR_CLASS = "com.tencent.wetype.plugin.hld.clipboard.B"
+    private const val DAO_FACTORY_CLASS = "com.tencent.wetype.plugin.hld.dao.c"
     private const val USER_DELETE_MEMORY_MS = 10_000L
 
     @Volatile
@@ -42,17 +45,106 @@ internal object WeTypeClipboardRetentionGuard {
             return
         }
         hookResourceCleanup(manager)
+        hookDaoFactory(classLoader)
         installed = true
         AndroidLog.i(TAG, "clipboard retention guard installed")
     }
 
-    /** DAO 解析成功后调用：`h(List)`/`f(C)` 都在 DAO 实现类上。 */
+    /**
+     * 挂钩 `dao.c#a()` 工厂方法：
+     * 宿主任意业务首次访问 DAO 单例时立即安装 DAO hooks，做到零延迟拦截。
+     */
+    private fun hookDaoFactory(classLoader: ClassLoader) {
+        val factoryClass = runCatching {
+            Class.forName(DAO_FACTORY_CLASS, false, classLoader)
+        }.getOrNull() ?: run {
+            AndroidLog.e(TAG, "dao factory class missing: $DAO_FACTORY_CLASS")
+            return
+        }
+        val aMethod = factoryClass.declaredMethods.firstOrNull {
+            it.name == "a" && it.parameterTypes.isEmpty() && !Modifier.isStatic(it.modifiers)
+        } ?: run {
+            AndroidLog.e(TAG, "dao factory method a() missing")
+            return
+        }
+        aMethod.isAccessible = true
+        aMethod.hookAfter { param ->
+            val dao = param.result ?: return@hookAfter
+            installDaoHooks(dao)
+            WeTypeClipboardImageList.onDaoResolved(dao)
+        }
+        AndroidLog.i(TAG, "hooked dao factory method c#a()")
+    }
+
+    /** DAO 解析成功后调用：`h(List)`/`f(C)`/`o(long)`/`j(long)`/`d()` 都在 DAO 实现类上。 */
     fun installDaoHooks(dao: Any) {
         if (daoHooksInstalled) return
         hookBatchDelete(dao)
         hookUserDelete(dao)
+        hookExpiredQueries(dao)
         daoHooksInstalled = true
         AndroidLog.i(TAG, "clipboard retention dao hooks installed on ${dao.javaClass.name}")
+    }
+
+    /**
+     * 拦截宿主清理过期/已展示图片的 DAO 查询：
+     * - `dao.o(long)`: 查询 `type=1 and expireTimestamp < ?`。宿主在 `B.u` 中据此删图片记录和文件；
+     * - `dao.j(long)`: 查询 `source=1 and expireTimestamp < ?`。宿主在 `B.u` 中据此删远程同步记录；
+     * - `dao.d()`: 查询 `type=1 and state=1`。宿主在 `B.u(fromHideWindow=true)` 隐藏键盘时据此删所有已展示图片。
+     * 在解除留存上限开启时直接替换返回空列表，从根源切断宿主清理链路，且不影响图片面板自身的展示查询。
+     */
+    private fun hookExpiredQueries(dao: Any) {
+        val daoClass = dao.javaClass
+
+        // 1. dao.o(long)
+        daoClass.declaredMethods.firstOrNull {
+            it.name == "o" && it.parameterTypes.size == 1 &&
+                (it.parameterTypes[0] == Long::class.javaPrimitiveType || it.parameterTypes[0] == Long::class.java) &&
+                List::class.java.isAssignableFrom(it.returnType)
+        }?.let { m ->
+            m.isAccessible = true
+            m.hookReplace {
+                if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) {
+                    AndroidLog.i(TAG, "intercepted dao.o() expired images query, returning empty list")
+                    emptyList<Any>()
+                } else {
+                    ProceedWithOriginal
+                }
+            }
+        } ?: AndroidLog.e(TAG, "dao.o(long) method missing")
+
+        // 2. dao.j(long)
+        daoClass.declaredMethods.firstOrNull {
+            it.name == "j" && it.parameterTypes.size == 1 &&
+                (it.parameterTypes[0] == Long::class.javaPrimitiveType || it.parameterTypes[0] == Long::class.java) &&
+                List::class.java.isAssignableFrom(it.returnType)
+        }?.let { m ->
+            m.isAccessible = true
+            m.hookReplace {
+                if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) {
+                    AndroidLog.i(TAG, "intercepted dao.j() expired sync items query, returning empty list")
+                    emptyList<Any>()
+                } else {
+                    ProceedWithOriginal
+                }
+            }
+        } ?: AndroidLog.e(TAG, "dao.j(long) method missing")
+
+        // 3. dao.d()
+        daoClass.declaredMethods.firstOrNull {
+            it.name == "d" && it.parameterTypes.isEmpty() &&
+                List::class.java.isAssignableFrom(it.returnType)
+        }?.let { m ->
+            m.isAccessible = true
+            m.hookReplace {
+                if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed() && stackHasFrame(CLIPBOARD_MGR_CLASS, "u")) {
+                    AndroidLog.i(TAG, "intercepted dao.d() clear-shown-images query in B.u, returning empty list")
+                    emptyList<Any>()
+                } else {
+                    ProceedWithOriginal
+                }
+            }
+        } ?: AndroidLog.e(TAG, "dao.d() method missing")
     }
 
     /** `void h(List<C>)`：宿主批量删除。窗口隐藏清理时剔除图片条目。 */

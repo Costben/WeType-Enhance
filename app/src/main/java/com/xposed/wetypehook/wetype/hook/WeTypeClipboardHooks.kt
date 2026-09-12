@@ -111,8 +111,16 @@ internal object WeTypeClipboardHooks {
             }
 
             target.hookBefore { param ->
-                if (!WeTypeSettings.isShowCrossDeviceClipboardXposed()) return@hookBefore
                 val args = param.args
+                if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed() && args.isNotEmpty()) {
+                    val item = args[0]
+                    if (item != null && isItemImage(item) && args.size > 1 && args[1] is Long) {
+                        val targetExpiry = System.currentTimeMillis() + WeTypeClipboardImageHost.EXPIRY_EXTEND_TARGET_MS
+                        args[1] = targetExpiry
+                        Log.i("[$TAG] Extended image expireTimestamp on persist: $targetExpiry")
+                    }
+                }
+                if (!WeTypeSettings.isShowCrossDeviceClipboardXposed()) return@hookBefore
                 // 当 source == 1 (远程条目) 时，强制重写为 0 (本地可见条目)
                 if (args.size > 2 && args[2] == 1) {
                     args[2] = 0
@@ -317,5 +325,25 @@ internal object WeTypeClipboardHooks {
         }.onFailure {
             Log.e("[$TAG] Failed to hook exceedTip: ${it.message}")
         }
+    }
+
+    private fun isItemImage(item: Any): Boolean {
+        return runCatching {
+            val typeM = item.javaClass.declaredMethods.firstOrNull {
+                (it.name == "i" || it.name == "getType") &&
+                    it.parameterTypes.isEmpty() &&
+                    (it.returnType == Int::class.javaPrimitiveType || it.returnType == Long::class.javaPrimitiveType)
+            }
+            if (typeM != null) {
+                typeM.isAccessible = true
+                (typeM.invoke(item) as? Number)?.toLong() == 1L
+            } else {
+                val typeF = item.javaClass.declaredFields.firstOrNull { it.name == "type" }
+                if (typeF != null) {
+                    typeF.isAccessible = true
+                    (typeF.get(item) as? Number)?.toLong() == 1L
+                } else false
+            }
+        }.getOrDefault(false)
     }
 }

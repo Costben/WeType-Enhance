@@ -446,6 +446,12 @@ internal object WeTypeClipboardImageEntries {
                         if (isContent || isThumb) {
                             if (isContent) {
                                 clicked.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                if (WeTypeClipboardImageHost.itemPathType(item) != 0) {
+                                    WeTypeClipboardImageLoader.request(item, clicked.context, forceRetry = true) { updated ->
+                                        refreshItem(updated)
+                                        WeTypeClipboardImageList.reapplyAll()
+                                    }
+                                }
                             }
                             WeTypeClipboardImageHost.openImagePreview(item)
                             param.result = null

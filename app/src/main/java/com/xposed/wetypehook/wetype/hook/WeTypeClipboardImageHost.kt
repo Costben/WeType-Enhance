@@ -24,6 +24,8 @@ import java.util.concurrent.ConcurrentHashMap
 internal object WeTypeClipboardImageHost {
 
     const val TAG = "WeTypeClipboardImage"
+    const val EXPIRY_EXTEND_WINDOW_MS = 24L * 60 * 60 * 1000L
+    const val EXPIRY_EXTEND_TARGET_MS = 30L * 24 * 60 * 60 * 1000L
 
     private const val IDS_CLASS = "com.tencent.wetype.plugin.hld.s"
     private const val DIMEN_CLASS = "com.tencent.wetype.plugin.hld.q"

@@ -100,6 +100,20 @@ class ClipboardImageEntryLogicTest {
     }
 
     @Test
+    fun classifyLocalImageIndependentOfPathType() {
+        // 本地图片即便在不同 pathType 下，只要是本地 (receiveTimestampFromServer <= 0) 均决策为 LOCAL_THUMBNAIL
+        assertEquals(
+            ClipboardImageRowState.LOCAL_THUMBNAIL,
+            ClipboardImageEntryLogic.classify(
+                itemType = 1L,
+                receiveTimestampFromServer = 0L,
+                pathType = 0,
+                localFileExists = true
+            )
+        )
+    }
+
+    @Test
     fun remotePendingTextMatchesSpec() {
         assertEquals("来自关联设备的图片", ClipboardImageEntryLogic.REMOTE_PENDING_TEXT)
     }
