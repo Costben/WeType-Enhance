@@ -2,6 +2,7 @@ package com.xposed.wetypehook
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.Resources
@@ -317,6 +318,7 @@ class MainHook : XposedModule() {
         HookEnvironment.withHookScope("wetype.window-corner") { hookWeTypeWindowCorner() }
         HookEnvironment.withHookScope("wetype.disable-update") { hookWeTypeDisableHotUpdate() }
         HookEnvironment.withHookScope("wetype.intent-entry") { hookWeTypeIntentEntry() }
+        HookEnvironment.withHookScope("wetype.activity-result") { hookHostActivityResult() }
         HookEnvironment.withHookScope("wetype.about-entry") { hookWeTypeAboutLogoEntry() }
         HookEnvironment.withHookScope("wetype.keyboard-logo") { WeTypeResourceHooks.hookKeyboardLogo() }
         HookEnvironment.withHookScope("wetype.toolbar-icon") { WeTypeResourceHooks.hookToolbarIconBackground() }
@@ -713,6 +715,32 @@ class MainHook : XposedModule() {
             }
         }.onFailure {
             Log.e("Failed:Hook WeType intent entry")
+            Log.i(it)
+        }
+    }
+
+    /**
+     * 嵌入设置内无法使用 Compose ActivityResult API（ComponentDialog 不提供 registry），
+     * 统一转发宿主 Activity 的结果给 [WeTypeHostActivityResultBridge]。
+     */
+    private fun hookHostActivityResult() {
+        runCatching {
+            findMethod("android.app.Activity") {
+                name == "onActivityResult" &&
+                    parameterTypes.size == 3 &&
+                    parameterTypes[0] == Int::class.javaPrimitiveType &&
+                    parameterTypes[1] == Int::class.javaPrimitiveType &&
+                    parameterTypes[2] == Intent::class.java
+            }.hookBefore { param ->
+                val requestCode = param.args[0] as? Int ?: return@hookBefore
+                val resultCode = param.args[1] as? Int ?: 0
+                val data = param.args[2] as? Intent
+                if (WeTypeHostActivityResultBridge.dispatch(requestCode, resultCode, data)) {
+                    param.result = null
+                }
+            }
+        }.onFailure {
+            Log.e("Failed:Hook host activity result bridge")
             Log.i(it)
         }
     }

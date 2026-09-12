@@ -525,6 +525,7 @@ private fun WeTypeSettingsScreen(
     var clipboardImageMaxSizeMb by rememberSaveable {
         mutableIntStateOf(snapshot.clipboardImageMaxSizeMb)
     }
+    var showClipboardBackupDialog by rememberSaveable { mutableStateOf(false) }
     var qwertyGestureEnabled by rememberSaveable {
         mutableStateOf(snapshot.qwertyGestureEnabled)
     }
@@ -971,6 +972,7 @@ private fun WeTypeSettingsScreen(
                         onClipboardImageMaxCountChange = { clipboardImageMaxCount = it },
                         clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
                         onClipboardImageMaxSizeMbChange = { clipboardImageMaxSizeMb = it },
+                        onOpenClipboardBackup = { showClipboardBackupDialog = true },
                         disableHotUpdate = disableHotUpdate,
                         onDisableHotUpdateChange = { disableHotUpdate = it },
                         activationStatus = activationStatus,
@@ -978,6 +980,13 @@ private fun WeTypeSettingsScreen(
                     )
                 }
                 }
+            }
+            if (showClipboardBackupDialog) {
+                ClipboardBackupDialog(
+                    settingsContext = preferencesContext,
+                    isEmbeddedHost = isEmbeddedHost,
+                    onDismiss = { showClipboardBackupDialog = false }
+                )
             }
         }
     }
@@ -2637,6 +2646,7 @@ private fun LazyListScope.FeatureTabContent(
     onClipboardImageMaxCountChange: (Int) -> Unit,
     clipboardImageMaxSizeMb: Int,
     onClipboardImageMaxSizeMbChange: (Int) -> Unit,
+    onOpenClipboardBackup: () -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
@@ -2836,6 +2846,11 @@ private fun LazyListScope.FeatureTabContent(
                     onSelectedIndexChange = { index ->
                         onClipboardImageMaxSizeMbChange(imageSizeOptions[index])
                     }
+                )
+                BasicComponent(
+                    title = "剪贴板备份与恢复",
+                    summary = "导出 zip / WebDAV 备份 / 导入还原",
+                    onClick = onOpenClipboardBackup
                 )
             }
         }

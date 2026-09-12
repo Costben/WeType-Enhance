@@ -221,6 +221,12 @@ internal object WeTypeClipboardImageList {
         }
     }
 
+    /** 备份/恢复用：宿主类加载器快照。 */
+    fun hostClassLoaderSnapshot(): ClassLoader? = hostClassLoader
+
+    /** 备份/恢复用：解析并返回宿主剪贴板 DAO（独立于图片缓存）。 */
+    fun daoOrResolve(): Any? = daoInstanceOrResolve()
+
     /** 当前缓存的图片条目（快照，供过滤快照合入）。 */
     fun cachedImagesSnapshot(): List<Any> = synchronized(cacheLock) { ArrayList(cachedImages) }
 

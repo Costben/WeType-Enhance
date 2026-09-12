@@ -55,6 +55,16 @@ object WeTypeSettings {
     const val KEY_CLIPBOARD_IMAGE_MAX_COUNT = "clipboard_image_max_count"
     const val KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB = "clipboard_image_max_size_mb"
 
+    // 剪贴板备份与恢复（独立读写，不进入 Snapshot）。
+    const val KEY_BACKUP_LOCAL_FOLDER_URI = "clipboard_backup_local_folder_uri"
+    const val KEY_BACKUP_WEBDAV_URL = "clipboard_backup_webdav_url"
+    const val KEY_BACKUP_WEBDAV_USERNAME = "clipboard_backup_webdav_username"
+    const val KEY_BACKUP_WEBDAV_PASSWORD = "clipboard_backup_webdav_password"
+    const val KEY_BACKUP_WEBDAV_REMOTE_DIR = "clipboard_backup_webdav_remote_dir"
+    const val KEY_BACKUP_WEBDAV_KEEP_COUNT = "clipboard_backup_webdav_keep_count"
+    const val KEY_BACKUP_WEBDAV_ALLOW_SELF_SIGNED = "clipboard_backup_webdav_allow_self_signed"
+    const val KEY_BACKUP_PRE_EXPORT_DOWNLOAD = "clipboard_backup_pre_export_download"
+
     const val KEY_QWERTY_GESTURE_ENABLED = "qwerty_gesture_enabled"
     const val KEY_T9_GESTURE_ENABLED = "t9_gesture_enabled"
     const val KEY_GESTURE_THRESHOLD = "gesture_threshold"
@@ -269,6 +279,85 @@ object WeTypeSettings {
 
     fun getClipboardImageMaxSizeMb(context: Context): Int =
         readSnapshot(context).clipboardImageMaxSizeMb
+
+    private val backupSettingKeys = arrayOf(
+        KEY_BACKUP_LOCAL_FOLDER_URI,
+        KEY_BACKUP_WEBDAV_URL,
+        KEY_BACKUP_WEBDAV_USERNAME,
+        KEY_BACKUP_WEBDAV_PASSWORD,
+        KEY_BACKUP_WEBDAV_REMOTE_DIR,
+        KEY_BACKUP_WEBDAV_KEEP_COUNT,
+        KEY_BACKUP_WEBDAV_ALLOW_SELF_SIGNED,
+        KEY_BACKUP_PRE_EXPORT_DOWNLOAD
+    )
+
+    fun readClipboardBackupSettings(context: Context): ClipboardBackupSettings {
+        val local = appPreferences(context)
+        // 备份设置由嵌入设置（宿主进程）写入宿主本地偏好；remote prefs 仅作兼容兜底读取。
+        val preferences = if (backupSettingKeys.any { local.contains(it) }) {
+            local
+        } else {
+            synchronized(remotePrefsLock) { resolvedRemotePreferencesLocked() } ?: local
+        }
+        return ClipboardBackupSettings(
+            localFolderUri = preferences.getString(KEY_BACKUP_LOCAL_FOLDER_URI, "").orEmpty(),
+            webDavUrl = preferences.getString(KEY_BACKUP_WEBDAV_URL, "").orEmpty(),
+            webDavUsername = preferences.getString(KEY_BACKUP_WEBDAV_USERNAME, "").orEmpty(),
+            webDavPassword = preferences.getString(KEY_BACKUP_WEBDAV_PASSWORD, "").orEmpty(),
+            webDavRemoteDir = preferences.getString(
+                KEY_BACKUP_WEBDAV_REMOTE_DIR,
+                ClipboardBackupSettings.DEFAULT_REMOTE_DIR
+            ).orEmpty(),
+            webDavKeepCount = ClipboardBackupSettings.sanitizeKeepCount(
+                preferences.getInt(
+                    KEY_BACKUP_WEBDAV_KEEP_COUNT,
+                    ClipboardBackupSettings.DEFAULT_KEEP_COUNT
+                )
+            ),
+            webDavAllowSelfSigned = preferences.getBoolean(
+                KEY_BACKUP_WEBDAV_ALLOW_SELF_SIGNED,
+                false
+            ),
+            preExportDownload = preferences.getBoolean(KEY_BACKUP_PRE_EXPORT_DOWNLOAD, false)
+        )
+    }
+
+    fun saveClipboardBackupSettings(
+        context: Context,
+        settings: ClipboardBackupSettings
+    ): Boolean {
+        val appContext = context.applicationContext ?: context
+        val localPreferences = appPreferences(appContext)
+        val localSaved = writeBackupPreferences(localPreferences, settings)
+        // 宿主进程直接写 remote prefs 不可靠（现有架构由宿主→模块广播桥同步），
+        // 这里只做 best-effort，读取始终以宿主本地为准。
+        synchronized(remotePrefsLock) {
+            resolvedRemotePreferencesLocked()
+        }?.takeIf { it !== localPreferences }?.let { remote ->
+            runCatching { writeBackupPreferences(remote, settings) }
+        }
+        return localSaved
+    }
+
+    private fun writeBackupPreferences(
+        preferences: SharedPreferences,
+        settings: ClipboardBackupSettings
+    ): Boolean = preferences.edit()
+        .putString(KEY_BACKUP_LOCAL_FOLDER_URI, settings.localFolderUri)
+        .putString(KEY_BACKUP_WEBDAV_URL, settings.webDavUrl)
+        .putString(KEY_BACKUP_WEBDAV_USERNAME, settings.webDavUsername)
+        .putString(KEY_BACKUP_WEBDAV_PASSWORD, settings.webDavPassword)
+        .putString(
+            KEY_BACKUP_WEBDAV_REMOTE_DIR,
+            settings.webDavRemoteDir.ifBlank { ClipboardBackupSettings.DEFAULT_REMOTE_DIR }
+        )
+        .putInt(
+            KEY_BACKUP_WEBDAV_KEEP_COUNT,
+            ClipboardBackupSettings.sanitizeKeepCount(settings.webDavKeepCount)
+        )
+        .putBoolean(KEY_BACKUP_WEBDAV_ALLOW_SELF_SIGNED, settings.webDavAllowSelfSigned)
+        .putBoolean(KEY_BACKUP_PRE_EXPORT_DOWNLOAD, settings.preExportDownload)
+        .commit()
 
     fun isQwertyGestureEnabled(context: Context): Boolean = readSnapshot(context).qwertyGestureEnabled
     fun isT9GestureEnabled(context: Context): Boolean = readSnapshot(context).t9GestureEnabled
