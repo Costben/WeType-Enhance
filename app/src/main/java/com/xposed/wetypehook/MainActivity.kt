@@ -2560,17 +2560,20 @@ private fun LazyListScope.GestureTabContent(
                     max = 24,
                     onValueChange = { onGestureLabelMarginBottomDpChange(it.coerceIn(0, 24)) }
                 )
+                val horizontalOffsetDp = gestureLabelMarginLeftDp - gestureLabelMarginRightDp
                 SliderPreferenceItem(
-                    title = "标签左边距: ${gestureLabelMarginLeftDp} dp",
-                    value = gestureLabelMarginLeftDp,
-                    max = 24,
-                    onValueChange = { onGestureLabelMarginLeftDpChange(it.coerceIn(0, 24)) }
-                )
-                SliderPreferenceItem(
-                    title = "标签右边距: ${gestureLabelMarginRightDp} dp",
-                    value = gestureLabelMarginRightDp,
-                    max = 24,
-                    onValueChange = { onGestureLabelMarginRightDpChange(it.coerceIn(0, 24)) }
+                    title = "标签水平偏移",
+                    value = horizontalOffsetDp.toFloat(),
+                    range = -24f..24f,
+                    step = 1f,
+                    format = { "${it.roundToInt()} dp" },
+                    onValueChange = { rawOffset ->
+                        val offset = rawOffset.roundToInt().coerceIn(-24, 24)
+                        // Keep the persisted left/right keys for backward compatibility while
+                        // exposing the single signed offset used by the reference implementation.
+                        onGestureLabelMarginLeftDpChange(offset.coerceAtLeast(0))
+                        onGestureLabelMarginRightDpChange((-offset).coerceAtLeast(0))
+                    }
                 )
             }
         }

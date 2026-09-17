@@ -36,15 +36,32 @@ internal object WeTypeKeyLabelHooks {
 
     private const val TAG = "WeTypeKeyLabel"
     private const val DRAW_METHOD_PACKAGE = "com.tencent.wetype.plugin.hld.keyboard.selfdraw.drawmethod"
-    private const val DRAW_CONTEXT_PACKAGE = "com.tencent.wetype.plugin.hld.keyboard.selfdraw."
+    private const val DRAW_CONTEXT_CLASS = "com.tencent.wetype.plugin.hld.keyboard.selfdraw.j"
     private const val CANVAS_CLASS = "android.graphics.Canvas"
 
-    private data class KeyDrawAccess(val viewField: Field, val rectField: Field)
+    private data class KeyDrawAccess(val viewField: Field, val drawRectGetter: Method)
 
     private data class LabelPaintStyle(
         val textSizePx: Float,
         val color: Int
     )
+
+    private data class DrawToken(
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int,
+        val key: Char,
+        val isT9: Boolean
+    )
+
+    private class DrawFrame(
+        val view: View,
+        val canvas: Canvas,
+        val drawingTime: Long
+    ) {
+        val tokens = HashSet<DrawToken>()
+    }
 
     private val accessCache = ConcurrentHashMap<Class<*>, KeyDrawAccess?>()
     private val t9ClassCache = ConcurrentHashMap<Class<*>, Boolean>()
@@ -53,6 +70,8 @@ internal object WeTypeKeyLabelHooks {
         typeface = Typeface.DEFAULT
     }
     private var cachedPaintStyle: LabelPaintStyle? = null
+    private val currentDrawFrame = ThreadLocal<DrawFrame>()
+    private val loggedGeometry = ConcurrentHashMap.newKeySet<Char>()
 
     @Volatile
     private var cachedBindingsJson: String? = null
@@ -81,7 +100,10 @@ internal object WeTypeKeyLabelHooks {
                 }.mapNotNull { data ->
                     if (data.paramTypes.size != 2) return@mapNotNull null
                     if (data.paramTypes[0].name != CANVAS_CLASS) return@mapNotNull null
-                    if (!data.paramTypes[1].name.startsWith(DRAW_CONTEXT_PACKAGE)) return@mapNotNull null
+                    // WeType Tool hooks the final per-key renderer whose context is exactly
+                    // selfdraw.j. Matching the whole selfdraw package also catches wrapper
+                    // renderers and can paint the same label several times in one frame.
+                    if (data.paramTypes[1].name != DRAW_CONTEXT_CLASS) return@mapNotNull null
                     val method = runCatching { data.getMethodInstance(classLoader) }.getOrNull()
                         ?: return@mapNotNull null
                     if (Modifier.isAbstract(method.modifiers)) return@mapNotNull null
@@ -121,7 +143,7 @@ internal object WeTypeKeyLabelHooks {
         if (drawCtx == null) return
         val access = accessFor(drawCtx) ?: return
         val keyView = runCatching { access.viewField.get(drawCtx) as? View }.getOrNull() ?: return
-        val rect = runCatching { access.rectField.get(drawCtx) as? Rect }.getOrNull() ?: return
+        val rect = runCatching { access.drawRectGetter.invoke(drawCtx) as? Rect }.getOrNull() ?: return
         if (rect.isEmpty) return
         if (!WeTypeSettings.isShowGestureKeyLabelsXposed()) return
 
@@ -141,30 +163,59 @@ internal object WeTypeKeyLabelHooks {
         val text = action.shortTitle
         if (text.isEmpty()) return
 
+        if (!markFirstDrawInFrame(keyView, canvas, rect, keyChar, isT9)) return
+
         val snapshot = LabelStyleSnapshot.capture(keyView) ?: return
         ensurePaint(snapshot)
         // 原版按字数缩放：≥4 字 0.78×，3 字 0.88×，画完恢复。
         val baseTextSize = paint.textSize
+        val baseMetrics = paint.fontMetrics
         paint.textSize = when {
             text.length >= 4 -> baseTextSize * 0.78f
             text.length == 3 -> baseTextSize * 0.88f
             else -> baseTextSize
         }
         val metrics = paint.fontMetrics
-        val zoneLeft = rect.left + snapshot.marginLeftPx
-        val zoneTop = rect.top + snapshot.marginTopPx
-        val zoneRight = rect.right - snapshot.marginRightPx
-        val zoneBottom = rect.bottom - snapshot.marginBottomPx
-        if (zoneRight > zoneLeft && zoneBottom > zoneTop) {
-            val x = (zoneLeft + zoneRight) / 2f
-            val y = if (snapshot.anchorTop) {
-                zoneTop - metrics.ascent
-            } else {
-                zoneBottom - metrics.descent
+        val position = resolveKeyLabelPosition(
+            keyLeft = rect.left.toFloat(),
+            keyTop = rect.top.toFloat(),
+            keyRight = rect.right.toFloat(),
+            keyBottom = rect.bottom.toFloat(),
+            fontAscent = metrics.ascent,
+            fontDescent = baseMetrics.descent,
+            anchorTop = snapshot.anchorTop,
+            marginLeft = snapshot.marginLeftPx,
+            marginTop = snapshot.marginTopPx,
+            marginRight = snapshot.marginRightPx,
+            marginBottom = snapshot.marginBottomPx
+        )
+        if (position != null) {
+            if ((keyChar == 'z' || keyChar == 'm') && loggedGeometry.add(keyChar)) {
+                Log.i("[$TAG] key=$keyChar drawRect=$rect x=${position.first} offset=${snapshot.marginLeftPx - snapshot.marginRightPx}")
             }
-            canvas.drawText(text, x, y, paint)
+            // Reference Tool uses advance-centred text and computes the bottom
+            // baseline before applying its three/four-character size reduction.
+            canvas.drawText(text, position.first, maxOf(-metrics.ascent + 1f, position.second), paint)
         }
         paint.textSize = baseTextSize
+    }
+
+    /** Mirrors the reference implementation's per-frame/per-key draw suppression. */
+    private fun markFirstDrawInFrame(
+        keyView: View,
+        canvas: Canvas,
+        rect: Rect,
+        keyChar: Char,
+        isT9: Boolean
+    ): Boolean {
+        val drawingTime = keyView.drawingTime.takeIf { it > 0L } ?: android.os.SystemClock.uptimeMillis()
+        var frame = currentDrawFrame.get()
+        if (frame == null || frame.view !== keyView || frame.canvas !== canvas || frame.drawingTime != drawingTime) {
+            frame = DrawFrame(keyView, canvas, drawingTime)
+            currentDrawFrame.set(frame)
+        }
+        // Match Tool's per-rectangle/per-key suppression, including split layouts.
+        return frame.tokens.add(DrawToken(rect.left, rect.top, rect.right, rect.bottom, keyChar, isT9))
     }
 
     private data class LabelStyleSnapshot(
@@ -268,30 +319,37 @@ internal object WeTypeKeyLabelHooks {
         val clazz = drawCtx.javaClass
         accessCache[clazz]?.let { return it }
         var viewField: Field? = null
-        var rectField: Field? = null
+        // Verified against the installed host: j.k is hitRect, j.l is drawRect,
+        // and j.t() returns drawRect. Never select the first Rect by type: touch
+        // bounds may be wider/asymmetric around Z and M.
+        val drawRectGetter = listOf("getDrawRect", "t").firstNotNullOfOrNull { name ->
+            runCatching { clazz.getMethod(name) }.getOrNull()?.takeIf {
+                it.returnType == Rect::class.java && !Modifier.isStatic(it.modifiers)
+            }
+        } ?: run {
+            Log.e("[$TAG] Cannot resolve drawRect getter in ${clazz.name}; skipping labels")
+            return null
+        }
         var search: Class<*>? = clazz
-        while (search != null && search != Any::class.java && (viewField == null || rectField == null)) {
+        while (search != null && search != Any::class.java && viewField == null) {
             for (field in search.declaredFields) {
                 if (viewField == null && View::class.java.isAssignableFrom(field.type)) {
                     field.isAccessible = true
                     viewField = field
-                } else if (rectField == null && field.type == Rect::class.java) {
-                    field.isAccessible = true
-                    rectField = field
                 }
             }
             search = search.superclass
         }
-        val access = if (viewField != null && rectField != null) {
-            KeyDrawAccess(viewField, rectField)
+        val access = if (viewField != null) {
+            KeyDrawAccess(viewField, drawRectGetter)
         } else {
             null
         }
-        accessCache[clazz] = access
+        if (access != null) accessCache[clazz] = access
         if (access != null) {
             Log.i(
                 "[$TAG] Resolved draw context ${clazz.name}: " +
-                    "view=${viewField?.name} rect=${rectField?.name}"
+                    "view=${viewField?.name} drawRect=${drawRectGetter.name}()"
             )
         } else {
             Log.e("[$TAG] Failed to resolve View/Rect fields in ${clazz.name}")
