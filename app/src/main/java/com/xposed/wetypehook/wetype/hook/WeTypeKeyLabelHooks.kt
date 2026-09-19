@@ -16,8 +16,8 @@ import com.xposed.wetypehook.wetype.gesture.KeyGestureResolver
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
-import com.xposed.wetypehook.xposed.hookAfter
-import com.xposed.wetypehook.xposed.hookBefore
+import com.xposed.wetypehook.xposed.MethodHookParam
+import com.xposed.wetypehook.xposed.hookAround
 import org.luckypray.dexkit.DexKitBridge
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -29,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 按键底部标签（移植自 WeType-Tool 显示底部标签）。
  *
  * 定位：宿主 `com.tencent.wetype.plugin.hld.keyboard.selfdraw.drawmethod` 包下
- * `void (Canvas, selfdraw.*)` 单键绘制方法，hookAfter 用同一 Canvas 把绑定动作短名
+ * `void (Canvas, selfdraw.*)` 单键绘制方法，绘制返回后用同一 Canvas 把绑定动作短名
  * 画在按键上。View 字段按类型发现，键帽矩形优先按名取 getter、退回几何推导（抗宿主混淆更名）。
  * 取键/密码抑制/手写抑制/按字数缩放等语义与原版一致；定位与颜色走本模块设置。
  */
@@ -79,7 +79,7 @@ internal object WeTypeKeyLabelHooks {
     private var keyDataMethod: Method? = null
 
     /**
-     * 当前线程上嵌套的单键绘制层数，由 hookBefore/hookAfter 配对维护。
+     * 当前线程上嵌套的单键绘制层数，由同一个 around 拦截器的 before/after 配对维护。
      *
      * 宿主画一个键会嵌套调用多个 drawmethod 方法（实测 3.5.3/3.5.4：最外层
      * `c#a` 内部再调 `c#e`/`e#b`/`c#f`/`c#g`），而 hookAfter 是**方法返回后**触发，
@@ -95,11 +95,45 @@ internal object WeTypeKeyLabelHooks {
     /**
      * 嵌套层数的自愈上限。实测深 5 层，留出余量。
      *
-     * 宿主方法抛异常时配对的 hookAfter 不会触发（compat 层的 after 里 `chain.proceed()`
+     * 宿主方法抛异常时配对的退出逻辑曾会漏掉（旧 compat 层的 after 里 `chain.proceed()`
      * 先于回调，抛了就跳过），计数器会永久泄漏在本线程上，之后所有 `remaining != 0`，
      * 标签在本线程再也画不出来 —— 而且完全静默。超过这个上限必然是泄漏，就地复位。
      */
     private const val MAX_PLAUSIBLE_DRAW_NESTING = 16
+
+    /**
+     * 自愈日志的配额。
+     *
+     * 线程局部变量一旦泄漏，这条复位日志会按"每次按键绘制"的频率爆发：实测一次点击
+     * 触发 456 条，而 LSPatch 内嵌模式下 `Log.e` 走 `module.log()` —— 每一次都是
+     * 跨进程 IPC。四五百次 IPC 压在键盘动画帧里，把视图线程堵到中位帧 150ms。
+     *
+     * 复位是一个"已经坏了"的状态位，报一次就足够在 logcat 里看见；之后只静默自愈。
+     * 配额按进程生命周期给，热重载时重置。
+     */
+    private const val NESTING_LEAK_LOG_BUDGET = 3
+
+    private val nestingLeakLogsRemaining = java.util.concurrent.atomic.AtomicInteger(
+        NESTING_LEAK_LOG_BUDGET
+    )
+
+    /**
+     * 宿主绘制方法抛异常的日志配额。与泄漏日志同额定，避免同样的 IPC 洪水。
+     */
+    private const val HOST_DRAW_FAILURE_LOG_BUDGET = 3
+
+    private val hostDrawFailuresRemaining = java.util.concurrent.atomic.AtomicInteger(
+        HOST_DRAW_FAILURE_LOG_BUDGET
+    )
+
+    private fun resetNestingLeakLogBudget() {
+        nestingLeakLogsRemaining.set(NESTING_LEAK_LOG_BUDGET)
+        hostDrawFailuresRemaining.set(HOST_DRAW_FAILURE_LOG_BUDGET)
+    }
+
+    fun prepareForHotReload() {
+        resetNestingLeakLogBudget()
+    }
 
     fun install(sourceDir: String?, classLoader: ClassLoader) {
         if (sourceDir.isNullOrEmpty()) {
@@ -131,23 +165,40 @@ internal object WeTypeKeyLabelHooks {
                     return
                 }
                 targets.forEach { method ->
-                    method.hookBefore {
-                        val depth = drawNesting.get() + 1
-                        if (depth > MAX_PLAUSIBLE_DRAW_NESTING) {
-                            // 只可能是上一轮泄漏，复位而不是继续累加。
-                            Log.e("[$TAG] draw nesting leaked to $depth; resetting")
-                            drawNesting.set(1)
-                        } else {
-                            drawNesting.set(depth)
+                    method.hookAround(
+                        before = {
+                            val depth = drawNesting.get() + 1
+                            if (depth > MAX_PLAUSIBLE_DRAW_NESTING) {
+                                // hookAround 保证 before/after 成对，走到这里说明
+                                // 还有别的调用路径绕开了配对，只能就地自愈。
+                                if (nestingLeakLogsRemaining.getAndUpdate { current ->
+                                        if (current > 0) current - 1 else 0
+                                    } > 0
+                                ) {
+                                    Log.e("[$TAG] draw nesting hit $depth; resetting" +
+                                        " (thread=${Thread.currentThread().name})")
+                                }
+                                drawNesting.set(1)
+                            } else {
+                                drawNesting.set(depth)
+                            }
+                        },
+                        after = { param: MethodHookParam, failure: Throwable? ->
+                            val remaining = (drawNesting.get() - 1).coerceAtLeast(0)
+                            drawNesting.set(remaining)
+                            // 宿主绘制抛异常时这里依然执行（try/finally 保证），
+                            // 但那一帧的键帽已经画残，落笔没有意义。
+                            if (failure != null && hostDrawFailuresRemaining.getAndUpdate { current ->
+                                    if (current > 0) current - 1 else 0
+                                } > 0
+                            ) {
+                                Log.e("[$TAG] host draw threw: ${failure.javaClass.name}: ${failure.message}")
+                            }
+                            if (remaining == 0 && failure == null) {
+                                drawKeyLabel(param.args.getOrNull(0), param.args.getOrNull(1))
+                            }
                         }
-                    }
-                    method.hookAfter { param ->
-                        val remaining = (drawNesting.get() - 1).coerceAtLeast(0)
-                        drawNesting.set(remaining)
-                        if (remaining == 0) {
-                            drawKeyLabel(param.args.getOrNull(0), param.args.getOrNull(1))
-                        }
-                    }
+                    )
                 }
                 Log.i("[$TAG] Hooked ${targets.size} single-key draw methods")
             }

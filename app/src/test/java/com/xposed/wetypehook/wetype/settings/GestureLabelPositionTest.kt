@@ -135,16 +135,41 @@ class GestureLabelPositionTest {
      */
     @Test fun nestedKeyDrawOnlyPaintsOncePerFrame() {
         assertTrue(
-            "嵌套计数必须走 hookBefore/hookAfter 配对",
-            hooks.contains("method.hookBefore {") && hooks.contains("drawNesting.set(")
+            "嵌套计数必须挂在同一个 around 拦截器里，before/after 靠 try/finally 保证配对",
+            hooks.contains("method.hookAround(")
         )
         assertTrue(
-            "只有退回到最外层才画",
-            hooks.contains("if (remaining == 0) {")
+            "计数仍要逐层增减",
+            hooks.contains("drawNesting.set(")
+        )
+        assertTrue(
+            "只有退回到最外层、且宿主没抛异常时才画",
+            hooks.contains("if (remaining == 0 && failure == null) {")
         )
         assertTrue(
             "计数器必须是每线程独立的，绘制可能发生在不同线程",
             hooks.contains("ThreadLocal.withInitial { 0 }")
+        )
+        assertFalse(
+            "不能再把 before/after 拆成两个独立钩子：宿主一抛异常 after 就被跳过，计数器永久泄漏",
+            hooks.contains("method.hookBefore {") && hooks.contains("method.hookAfter { param ->")
+        )
+    }
+
+    /**
+     * 泄漏自愈的日志必须限额。
+     *
+     * 这条日志走 `module.log()`，在 LSPatch 内嵌模式下是一次跨进程 IPC；而泄漏一旦
+     * 发生就会在每次按键绘制时命中，足以把键盘帧拖垮。
+     */
+    @Test fun nestingLeakLogIsRateLimited() {
+        assertTrue(
+            "自愈日志要有配额常量",
+            hooks.contains("NESTING_LEAK_LOG_BUDGET")
+        )
+        assertTrue(
+            "配额必须是递减的原子计数，不能每次都打",
+            hooks.contains("nestingLeakLogsRemaining.getAndUpdate")
         )
     }
 

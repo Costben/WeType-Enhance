@@ -362,6 +362,47 @@ fun Method.hookAfter(callback: (MethodHookParam) -> Unit) {
     }
 }
 
+/**
+ * before / after 配对挂在**同一个**拦截器里，用 try/finally 保证一定成对。
+ *
+ * 与分别调用 [hookBefore] + [hookAfter] 的区别只在异常路径：后者的 after 写在
+ * `chain.proceed()` 之后却不在 finally 里，宿主方法一抛，after 就被整个跳过 ——
+ * 任何用它维护的"进入/退出"计数器都会永久泄漏在线程上。这个版本无论宿主正常
+ * 返回、抛异常、还是回调自己抛，after 都执行一次，并通过 [failure] 告知宿主
+ * 是否抛过异常。
+ *
+ * 宿主异常在 after 执行完之后原样继续抛出，保持 [hookAfter] 的传播语义。
+ *
+ * @param before 原方法执行前调用，其异常只记录、不中断原方法。
+ * @param after 原方法返回或抛出后**必定**调用；[failure] 为宿主抛出的异常，
+ *              正常返回时为 null。
+ */
+fun Method.hookAround(
+    before: (MethodHookParam) -> Unit,
+    after: (MethodHookParam, Throwable?) -> Unit
+) {
+    val method = this
+    HookEnvironment.registerHook(method, "around") { chain ->
+        val param = MethodHookParam(
+            method = method,
+            thisObject = chain.thisObject,
+            args = chain.args.toTypedArray()
+        )
+        runCatching { before(param) }.exceptionOrNull()?.let { Log.e(it) }
+        val result: Any?
+        try {
+            result = chain.proceed(param.args)
+        } catch (throwable: Throwable) {
+            runCatching { after(param, throwable) }.exceptionOrNull()?.let { Log.e(it) }
+            throw throwable
+        }
+        // result 可能为 null（void 方法）；赋值同时标记 resultWasSet，与既有语义一致。
+        param.result = result
+        runCatching { after(param, null) }.exceptionOrNull()?.let { Log.e(it) }
+        param.result
+    }
+}
+
 fun Method.hookReplace(callback: (MethodHookParam) -> Any?) {
     val method = this
     HookEnvironment.registerHook(method, "replace") { chain ->
