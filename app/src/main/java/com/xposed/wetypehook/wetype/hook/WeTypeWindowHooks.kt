@@ -103,7 +103,8 @@ internal object WeTypeWindowHooks {
         val nightMode: Int,
         val density: Float,
         val hyperMaterialEnabled: Boolean,
-        val hyperMaterialAvailable: Boolean
+        val hyperMaterialAvailable: Boolean,
+        val nativeStrokeEnabled: Boolean
     )
 
     private class ContinuousCornerOutline(val cornerRadii: WeTypeCornerRadii) : ViewOutlineProvider() {
@@ -1239,7 +1240,8 @@ internal object WeTypeWindowHooks {
             nightMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
             density = context.resources.displayMetrics.density,
             hyperMaterialEnabled = materialEnabled,
-            hyperMaterialAvailable = WeTypeSystemMaterials.isAvailable(context)
+            hyperMaterialAvailable = WeTypeSystemMaterials.isAvailable(context),
+            nativeStrokeEnabled = WeTypeSystemMaterials.isNativeStrokeEnabled(context)
         )
         val viewRoot = if (state.backgroundStyleDirty || carrier.background == null) {
             runCatching { carrier.invokeMethodAs<Any>("getViewRootImpl") }.getOrNull()
@@ -1258,8 +1260,12 @@ internal object WeTypeWindowHooks {
                     carrier.foreground = null
                 } else {
                     // ColorOS 的原生模糊只画背景，不像 HyperOS 材质自带面板光影；
-                    // 这里把模块既有的边缘高光叠到模糊之上，还原小布面板的描边观感。
-                    carrier.foreground = if (style.edgeHighlightEnabled && WeTypeSystemMaterials.isColorOsBackend()) {
+                    // 这里把模块自绘的「流光轮廓」叠到模糊之上，跟随系统同名开关。
+                    carrier.foreground = if (
+                        style.edgeHighlightEnabled &&
+                        style.nativeStrokeEnabled &&
+                        WeTypeSystemMaterials.isColorOsBackend()
+                    ) {
                         WeTypeBloomStrokeDrawable(
                             context = context,
                             cornerRadii = cornerRadii,

@@ -40,6 +40,12 @@ internal object WeTypeSystemMaterials {
     /** 当前是否为 ColorOS 后端；其原生模糊不自带面板边缘高光，需要额外叠加。 */
     fun isColorOsBackend(): Boolean = useColorOs
 
+    /**
+     * 「流光轮廓」系统开关；ColorOS 之外的平台恒为 true（模块自绘高光不受该开关约束）。
+     */
+    fun isNativeStrokeEnabled(context: Context): Boolean =
+        if (useColorOs) WeTypeColorOsMaterial.isNativeStrokeEnabled(context) else true
+
     fun fallbackColor(isDark: Boolean): Int =
         if (useColorOs) WeTypeColorOsMaterial.fallbackColor(isDark) else WeTypeHyperMaterial.fallbackColor(isDark)
 

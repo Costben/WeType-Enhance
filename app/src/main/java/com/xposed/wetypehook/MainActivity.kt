@@ -111,7 +111,8 @@ import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
 import com.xposed.wetypehook.wetype.settings.GlassSliderParameter
-import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
+import com.xposed.wetypehook.wetype.graphics.WeTypeSmoothRoundedShape
+import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
@@ -509,6 +510,9 @@ private fun WeTypeSettingsScreen(
     var toolbarIconBgOpacity by rememberSaveable {
         mutableIntStateOf(snapshot.toolbarIconBgOpacity)
     }
+    var iconEdgeLightEnabled by rememberSaveable {
+        mutableStateOf(snapshot.iconEdgeLightEnabled)
+    }
     var disableHotUpdate by rememberSaveable {
         mutableStateOf(snapshot.disableHotUpdate)
     }
@@ -744,6 +748,7 @@ private fun WeTypeSettingsScreen(
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.toIntOrNull()
                 ?: WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
+            iconEdgeLightEnabled = iconEdgeLightEnabled,
             appearanceColors = currentAppearanceColors(),
             disableHotUpdate = disableHotUpdate,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
@@ -812,6 +817,7 @@ private fun WeTypeSettingsScreen(
             WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP.toString()
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
+        iconEdgeLightEnabled = WeTypeSettings.DEFAULT_ICON_EDGE_LIGHT_ENABLED
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
@@ -1000,6 +1006,8 @@ private fun WeTypeSettingsScreen(
                         },
                         toolbarIconBgOpacity = toolbarIconBgOpacity,
                         onToolbarIconBgOpacityChange = { toolbarIconBgOpacity = it },
+                        iconEdgeLightEnabled = iconEdgeLightEnabled,
+                        onIconEdgeLightEnabledChange = { iconEdgeLightEnabled = it },
                         appearanceSectionGroups = appearanceSectionGroups,
                         appearanceGroupColors = appearanceGroupColors,
                         groupIndex = ::groupIndex,
@@ -1301,6 +1309,8 @@ private fun LazyListScope.AppearanceTabContent(
     onGlassReset: () -> Unit,
     toolbarIconBgOpacity: Int,
     onToolbarIconBgOpacityChange: (Int) -> Unit,
+    iconEdgeLightEnabled: Boolean,
+    onIconEdgeLightEnabledChange: (Boolean) -> Unit,
     appearanceSectionGroups: List<WeTypeAppearanceColorGroup>,
     appearanceGroupColors: MutableList<Int>,
     groupIndex: (String) -> Int,
@@ -1556,6 +1566,13 @@ private fun LazyListScope.AppearanceTabContent(
                     onValueChange = onToolbarIconBgOpacityChange
                 )
 
+                MiuixSwitchWidget(
+                    title = stringResource(R.string.settings_icon_edge_light_title),
+                    description = stringResource(R.string.settings_icon_edge_light_desc),
+                    checked = iconEdgeLightEnabled,
+                    onCheckedChange = onIconEdgeLightEnabledChange
+                )
+
                 appearanceSectionGroups.forEach { group ->
                     val index = groupIndex(group.id)
                     AppearanceColorGroupEditor(
@@ -1684,11 +1701,14 @@ private fun PreviewCard(
     val previewCornerValue = cornerRadius.coerceIn(0, WeTypeSettings.MAX_CORNER_RADIUS)
     val previewCorner = previewCornerValue.dp
     val previewMinHeight = maxOf(88.dp, (previewCornerValue * 2).dp)
-    val previewShape = ContinuousRoundedRectangle(
-        topStart = CornerSize(previewCorner),
-        topEnd = CornerSize(previewCorner),
-        bottomEnd = CornerSize(0.dp),
-        bottomStart = CornerSize(0.dp)
+    val previewRadiusPx = with(LocalDensity.current) { previewCorner.toPx() }
+    val previewShape = WeTypeSmoothRoundedShape(
+        WeTypeCornerRadii(
+            topLeft = previewRadiusPx,
+            topRight = previewRadiusPx,
+            bottomRight = 0f,
+            bottomLeft = 0f
+        )
     )
     val previewKeyColor = if (isDark) darkKeyColor else lightKeyColor
     val previewKeyShape = ContinuousRoundedRectangle(keyCornerRadius.dp)
@@ -1708,7 +1728,8 @@ private fun PreviewCard(
                     .weTypePreviewBloom(
                         color = displayColor,
                         cornerRadius = previewCorner,
-                        edgeHighlightEnabled = edgeHighlightEnabled && !hyperMaterialEnabled,
+                        edgeHighlightEnabled = edgeHighlightEnabled &&
+                            (!hyperMaterialEnabled || WeTypeSystemMaterials.isColorOsBackend()),
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         isDark = isDark
                     )
@@ -1835,7 +1856,7 @@ private fun Modifier.weTypePreviewBloom(
                     intensityScale = edgeHighlightIntensity / 100f
                 )
                 bloomDrawable.setBounds(0, 0, widthPx, heightPx)
-                val clipPath = createWeTypeContinuousRoundedPath(
+                val clipPath = createWeTypeSmoothRoundedPath(
                     width = widthPx.toFloat(),
                     height = heightPx.toFloat(),
                     cornerRadii = previewCornerRadii

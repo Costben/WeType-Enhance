@@ -21,7 +21,7 @@ import com.xposed.wetypehook.xposed.Log
  *
  * 这些类位于 `oplus-framework.jar`，是可被第三方进程反射调用的平台类（已在 ColorOS V17
  * 的 PLK110 上用独立 APK 实测落像素）。参数锁定小布输入法的实测预设：blur 150px、
- * Kawase 模糊、mix 染色、smoothCornerType=1、weight=3；仅四角半径跟随模块几何。
+ * Kawase 模糊、mix 染色；圆角使用标准圆弧，与模块描边和裁剪共用四角半径。
  */
 internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMaterial {
 
@@ -144,6 +144,7 @@ internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMater
         private const val DEFAULT_CORNER_DP = 28
 
         private const val MATERIAL_BLUR_SETTING = "system_material_blur_enable"
+        private const val MATERIAL_STROKE_SETTING = "system_material_stroke_enable"
 
         /** 小布输入法实测染色：暗色纯黑、亮色浅灰，alpha 分别约 0.6 / 0.8。 */
         private val DARK_MIX = floatArrayOf(0f, 0f, 0f, 0.6f)
@@ -164,6 +165,15 @@ internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMater
                 Settings.System.getInt(context.contentResolver, MATERIAL_BLUR_SETTING, 1) == 1
         }.getOrDefault(false)
 
+        /**
+         * 「流光轮廓」总开关。系统设置里它与 `MATERIAL_CAUSTIC_SHADOW_ENABLE` 绑定，控制
+         * 面板描边与外侧焦散光晕；模块自绘的复刻层必须跟随它，否则会和系统面板观感割裂。
+         */
+        fun isNativeStrokeEnabled(context: Context): Boolean = runCatching {
+            isPlatform() &&
+                Settings.System.getInt(context.contentResolver, MATERIAL_STROKE_SETTING, 1) == 1
+        }.getOrDefault(false)
+
         fun fallbackColor(isDark: Boolean): Int =
             if (isDark) 0xFF18191B.toInt() else 0xFFE5E6E7.toInt()
 
@@ -174,6 +184,11 @@ internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMater
             }
             resolver.registerContentObserver(
                 Settings.System.getUriFor(MATERIAL_BLUR_SETTING),
+                false,
+                observer
+            )
+            resolver.registerContentObserver(
+                Settings.System.getUriFor(MATERIAL_STROKE_SETTING),
                 false,
                 observer
             )

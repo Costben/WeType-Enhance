@@ -6,11 +6,13 @@ import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.util.TypedValue
 import kotlin.math.abs
@@ -110,15 +112,63 @@ internal class WeTypeBloomStrokeDrawable(
             if (isDarkMode()) DARK_MODE_ALPHA_SCALE else 1f
         if (alphaScale <= 0f) return
 
-        val contentRect = RectF(bounds).apply { inset(0.5f, 0.5f) }
+        // ColorOS blur and its highlight share the full drawable bounds.
+        val followSurfaceContour = WeTypeSystemMaterials.isColorOsBackend()
+        val contentRect = RectF(bounds).apply {
+            if (!followSurfaceContour) inset(0.5f, 0.5f)
+        }
         if (contentRect.width() <= 0f || contentRect.height() <= 0f) return
         contentPath.set(createOffsetRoundedPath(contentRect, cornerRadii))
+
+        if (followSurfaceContour) {
+            buildSurfaceContourShadows(alphaScale)
+            return
+        }
 
         // CSS paints the first listed shadow on top, so build the list reversed: earlier list
         // entries are appended last and therefore drawn last (on top).
         BOX_SHADOWS.asReversed().forEach { shadow ->
             buildShadow(shadow, contentRect, alphaScale)?.let(renderedShadows::add)
         }
+    }
+
+    /**
+     * 「流光轮廓」复刻：沿背景同一路径做内描边，一半在路径外被裁掉，因此不会改变圆角几何。
+     *
+     * 分两层还原系统观感：
+     * 1. 柔和的均匀内辉光，保证轮廓在任意底色上都可辨识；
+     * 2. 带方向的亮边——光来自左上，沿对角线衰减到右下，形成「流光」的流动感。
+     * 宽度只决定光向内渗透的深度，圆角仍由设置里的唯一半径决定。
+     */
+    private fun buildSurfaceContourShadows(alphaScale: Float) {
+        val width = bounds.width().toFloat()
+        val height = bounds.height().toFloat()
+        if (width <= 0f || height <= 0f) return
+
+        val softGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = dp(3f) * 2f
+            color = scaleColorAlpha(0x38FFFFFF, alphaScale)
+            colorFilter = activeColorFilter
+            maskFilter = BlurMaskFilter(dp(2f) * CSS_BLUR_TO_MASK_RADIUS, BlurMaskFilter.Blur.NORMAL)
+        }
+        renderedShadows.add(RenderedShadow(true, Path(contentPath), softGlow))
+
+        val directional = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = dp(1f) * 2f
+            colorFilter = activeColorFilter
+            shader = LinearGradient(
+                0f, 0f, width, height,
+                intArrayOf(
+                    scaleColorAlpha(0xE6FFFFFF.toInt(), alphaScale),
+                    scaleColorAlpha(0x1FFFFFFF, alphaScale)
+                ),
+                floatArrayOf(0f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        }
+        renderedShadows.add(RenderedShadow(true, Path(contentPath), directional))
     }
 
     private fun buildShadow(

@@ -46,6 +46,7 @@ object WeTypeSettings {
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
+    private const val KEY_ICON_EDGE_LIGHT_ENABLED = "icon_edge_light_enabled"
     const val KEY_SHOW_CROSS_DEVICE_CLIPBOARD = "show_cross_device_clipboard"
     const val KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT = "remove_clipboard_retention_limit"
     const val KEY_REMOVE_CLIPBOARD_TEXT_LIMIT = "remove_clipboard_text_limit"
@@ -230,6 +231,7 @@ object WeTypeSettings {
     const val DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP = 6
     const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
     const val DEFAULT_TOOLBAR_ICON_BG_OPACITY = 150
+    const val DEFAULT_ICON_EDGE_LIGHT_ENABLED = true
     const val DEFAULT_DISABLE_HOT_UPDATE = true
     const val DEFAULT_HYPER_MATERIAL_ENABLED = false
 
@@ -303,6 +305,7 @@ object WeTypeSettings {
         val candidatePinyinLeftMarginDp: Int,
         val appearanceColors: Map<String, Int>,
         val toolbarIconBgOpacity: Int,
+        val iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
         val disableHotUpdate: Boolean,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
@@ -718,6 +721,7 @@ object WeTypeSettings {
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
+        iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -778,6 +782,7 @@ object WeTypeSettings {
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
+            iconEdgeLightEnabled = iconEdgeLightEnabled,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
@@ -854,6 +859,7 @@ object WeTypeSettings {
             candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
+            iconEdgeLightEnabled = current.iconEdgeLightEnabled,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
@@ -930,6 +936,9 @@ object WeTypeSettings {
 
     fun getToolbarIconBgOpacityXposed(): Int =
         readSnapshotXposed().toolbarIconBgOpacity
+
+    fun isIconEdgeLightEnabledXposed(): Boolean =
+        readSnapshotXposed().iconEdgeLightEnabled
 
     fun getCandidatePinyinLeftMarginDpXposed(): Int =
         readSnapshotXposed().candidatePinyinLeftMarginDp
@@ -1075,6 +1084,7 @@ object WeTypeSettings {
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
+        iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -1134,6 +1144,7 @@ object WeTypeSettings {
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.coerceIn(0, 64),
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.coerceIn(0, 64),
             toolbarIconBgOpacity = toolbarIconBgOpacity.coerceIn(0, 255),
+            iconEdgeLightEnabled = iconEdgeLightEnabled,
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 group.id to (appearanceColors[group.id] ?: group.defaultColor)
             },
@@ -1263,6 +1274,7 @@ object WeTypeSettings {
                 snapshot.candidatePinyinLeftMarginDp
             )
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, snapshot.toolbarIconBgOpacity)
+            .putBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, snapshot.iconEdgeLightEnabled)
             .putBoolean(KEY_HYPER_MATERIAL_ENABLED, snapshot.hyperMaterialEnabled)
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
@@ -1398,6 +1410,7 @@ object WeTypeSettings {
         putInt(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP, candidateBackgroundLeftMarginDp)
         putInt(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP, candidatePinyinLeftMarginDp)
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
+        putBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, iconEdgeLightEnabled)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
@@ -1508,6 +1521,10 @@ object WeTypeSettings {
                 KEY_TOOLBAR_ICON_BG_OPACITY,
                 defaults.toolbarIconBgOpacity
             ).coerceIn(0, 255),
+            iconEdgeLightEnabled = getBoolean(
+                KEY_ICON_EDGE_LIGHT_ENABLED,
+                defaults.iconEdgeLightEnabled
+            ),
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
@@ -1654,6 +1671,10 @@ object WeTypeSettings {
                 DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
             ).coerceIn(0, 64),
             toolbarIconBgOpacity = getInt(KEY_TOOLBAR_ICON_BG_OPACITY, DEFAULT_TOOLBAR_ICON_BG_OPACITY).coerceIn(0, 255),
+            iconEdgeLightEnabled = getBoolean(
+                KEY_ICON_EDGE_LIGHT_ENABLED,
+                DEFAULT_ICON_EDGE_LIGHT_ENABLED
+            ),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 val key = "$KEY_APPEARANCE_COLOR_PREFIX${group.id}"
                 val fallbackColor = if (legacyKeyOpacity != null) {
@@ -1764,6 +1785,7 @@ object WeTypeSettings {
         candidateBackgroundLeftMarginDp = DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         toolbarIconBgOpacity = DEFAULT_TOOLBAR_ICON_BG_OPACITY,
+        iconEdgeLightEnabled = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -1819,6 +1841,7 @@ object WeTypeSettings {
             contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) ||
             contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) ||
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
+            contains(KEY_ICON_EDGE_LIGHT_ENABLED) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||

@@ -5,7 +5,9 @@ import android.graphics.RectF
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline as ComposeOutline
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.kyant.capsule.ContinuousRoundedRectangle
@@ -62,61 +64,48 @@ private val weTypeSmoothContinuity = G2Continuity(
 )
 
 /**
- * ColorOS 原生平滑圆角权重，与 [WeTypeColorOsMaterial] 下发给 `OplusBlurParam`
+ * ColorOS 标准圆角权重（2 表示关闭平滑曲线），与 [WeTypeColorOsMaterial] 下发给 `OplusBlurParam`
  * 的 `smoothCornerWeight` 必须一致，否则背景与边缘高光的圆角曲线对不上。
  */
-internal const val WETYPE_COLOROS_SMOOTH_WEIGHT = 3f
-
-private val colorOsPathAdapterClass: Class<*>? by lazy {
-    runCatching { Class.forName("com.oplus.graphics.OplusPathAdapter") }.getOrNull()
-}
+internal const val WETYPE_COLOROS_SMOOTH_WEIGHT = 2f
 
 /**
- * 与键盘背景取同一套圆角几何。
- *
- * ColorOS 的背景模糊由系统按 `smoothCornerType=1` + `smoothCornerWeight` 生成平滑圆角，
- * 模块自绘的边缘高光若继续走 [createWeTypeContinuousRoundedPath]（G2 连续圆角），两套曲线
- * 会有肉眼可见的偏差——高光边缘的圆角看起来比背景更大。这里在 ColorOS 上改用与背景完全
- * 相同的原生路径算法（`OplusPathAdapter` NEW_PATH_SMOOTH + 同权重），非 ColorOS 平台
- * 自动退回 G2 路径。
+ * Use the same standard rounded rectangle as the ColorOS compositor with weight=2.
+ * Its weight=3 blur silhouette differs from the framework Path, even with identical radii.
+ * Keeping background, clipping and highlight on circular arcs avoids a second visible contour.
  */
 internal fun createWeTypeSmoothRoundedPath(
     width: Float,
     height: Float,
     cornerRadii: WeTypeCornerRadii
-): Path = createColorOsSmoothRoundedPath(width, height, cornerRadii)
-    ?: createWeTypeContinuousRoundedPath(width, height, cornerRadii)
-
-private fun createColorOsSmoothRoundedPath(
-    width: Float,
-    height: Float,
-    cornerRadii: WeTypeCornerRadii
-): Path? {
-    val adapterClass = colorOsPathAdapterClass ?: return null
-    if (width <= 0f || height <= 0f) return null
-    return runCatching {
-        val path = Path()
-        val adapter = adapterClass
-            .getConstructor(Path::class.java, Int::class.javaPrimitiveType)
-            .newInstance(path, COLOROS_NEW_PATH_SMOOTH)
-        adapterClass.getMethod(
-            "addSmoothRoundRect",
-            RectF::class.java,
-            FloatArray::class.java,
-            Path.Direction::class.java,
-            Float::class.javaPrimitiveType
-        ).invoke(
-            adapter,
-            RectF(0f, 0f, width, height),
-            cornerRadii.toArray(),
-            Path.Direction.CW,
-            WETYPE_COLOROS_SMOOTH_WEIGHT
-        )
-        path.takeIf { !it.isEmpty }
-    }.getOrNull()
+): Path {
+    if (!WeTypeSystemMaterials.isColorOsBackend()) {
+        return createWeTypeContinuousRoundedPath(width, height, cornerRadii)
+    }
+    return Path().apply {
+        if (width > 0f && height > 0f) {
+            addRoundRect(RectF(0f, 0f, width, height), cornerRadii.toArray(), Path.Direction.CW)
+        }
+    }
 }
 
-private const val COLOROS_NEW_PATH_SMOOTH = 1
+/**
+ * Compose 侧的 [Shape]，几何与 [createWeTypeSmoothRoundedPath] 完全一致。
+ *
+ * 设置预览此前用 kyant G2 圆角裁剪背景、却用原生平滑路径绘制内高光，两者在 ColorOS 上
+ * 曲率不同；换成同一个 [Shape] 后预览与真机保持同一套几何。
+ */
+internal data class WeTypeSmoothRoundedShape(
+    val cornerRadii: WeTypeCornerRadii
+) : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density
+    ): ComposeOutline = ComposeOutline.Generic(
+        createWeTypeSmoothRoundedPath(size.width, size.height, cornerRadii).asComposePath()
+    )
+}
 
 internal fun createWeTypeContinuousRoundedPath(
     width: Float,

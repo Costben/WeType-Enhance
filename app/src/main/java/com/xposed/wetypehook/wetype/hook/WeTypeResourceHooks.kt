@@ -25,6 +25,8 @@ import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.hookReturnConstant
 import com.xposed.wetypehook.xposed.loadClassOrNull
+import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLight
+import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLightLayer
 import com.xposed.wetypehook.wetype.logo.LogoImageRenderer
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorMode
@@ -801,7 +803,10 @@ internal object WeTypeResourceHooks {
                 if (!WeTypeSettings.isLogoEnabledXposed()) return@hookBefore
 
                 val drawableArg = param.args.getOrNull(0)
-                if (drawableArg is WeTypeIconDrawable) return@hookBefore
+                if (drawableArg is WeTypeIconDrawable) {
+                    param.args[0] = WeTypeIconEdgeLight.wrapDrawable(imageView, drawableArg) ?: drawableArg
+                    return@hookBefore
+                }
                 synchronized(replacedLogoStates) {
                     replacedLogoStates[imageView] = LogoHostState(drawable = drawableArg as? Drawable)
                 }
@@ -813,7 +818,7 @@ internal object WeTypeResourceHooks {
                 if (WeTypeSettings.isLogoImageEnabledXposed()) {
                     val night = isNightMode(imageView.resources)
                     runCatching { resolveCustomLogoDrawable(night) }.getOrNull()?.let { custom ->
-                        param.args[0] = custom
+                        param.args[0] = WeTypeIconEdgeLight.wrapDrawable(imageView, custom) ?: custom
                         return@hookBefore
                     }
                     // 未上传/解码失败则继续走下面的矢量回退路径。
@@ -825,7 +830,8 @@ internal object WeTypeResourceHooks {
                 if (isDark) {
                     alpha = LOGO_DARK_BG_ALPHA_FRACTION
                 }
-                param.args[0] = WeTypeIconDrawable(alpha, isDark)
+                val base = WeTypeIconDrawable(alpha, isDark)
+                param.args[0] = WeTypeIconEdgeLight.wrapDrawable(imageView, base) ?: base
             }
             Log.i("Success: Hook WeType keyboard logo")
         }.onFailure {
@@ -851,7 +857,11 @@ internal object WeTypeResourceHooks {
                     ensureCandidatePinyinMarginSync(view)
                 }
                 val imageView = view as? ImageView ?: return@forEachView
-                if (imageView.id != logoIvId || imageView.drawable is WeTypeIconDrawable) {
+                if (imageView.id != logoIvId) return@forEachView
+                val existingDrawable = imageView.drawable
+                if (existingDrawable is WeTypeIconDrawable ||
+                    existingDrawable is WeTypeIconEdgeLightLayer
+                ) {
                     return@forEachView
                 }
                 val resourceId = imageView.getTag(LOGO_RESOURCE_TAG_KEY) as? Int
@@ -996,6 +1006,7 @@ internal object WeTypeResourceHooks {
                 if (view.id != containerId) return@hookBefore
                 val drawable = param.args[0] as? Drawable ?: return@hookBefore
                 drawable.alpha = WeTypeSettings.getToolbarIconBgOpacityXposed()
+                WeTypeIconEdgeLight.wrapBackground(view, drawable)?.let { param.args[0] = it }
             }
             View::class.java.getMethod(
                 "setBackgroundDrawable",
@@ -1005,6 +1016,7 @@ internal object WeTypeResourceHooks {
                 if (view.id != containerId) return@hookBefore
                 val drawable = param.args[0] as? Drawable ?: return@hookBefore
                 drawable.alpha = WeTypeSettings.getToolbarIconBgOpacityXposed()
+                WeTypeIconEdgeLight.wrapBackground(view, drawable)?.let { param.args[0] = it }
             }
             Log.i("Success: Hook WeType toolbar icon background")
         }.onFailure {
@@ -1217,6 +1229,7 @@ internal object WeTypeResourceHooks {
         } finally {
             restoringLogoDrawable.remove()
         }
+        WeTypeIconEdgeLight.reset()
 
         synchronized(customLogoCacheLock) {
             runCatching { customLogoCacheBitmap?.recycle() }

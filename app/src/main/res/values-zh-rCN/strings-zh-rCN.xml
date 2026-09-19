@@ -62,6 +62,8 @@
     <string name="settings_alpha_title">背景不透明度</string>
     <string name="settings_key_opacity_title">按键不透明度</string>
     <string name="settings_toolbar_icon_bg_opacity_title">工具栏图标背景不透明度</string>
+    <string name="settings_icon_edge_light_title">图标边缘光感</string>
+    <string name="settings_icon_edge_light_desc">让工具栏图标与 Logo 获得与按键一致的边缘光感。</string>
     <string name="settings_key_color_hook_alpha_title">候选词背景不透明度</string>
     <string name="settings_custom_color">自定义背景颜色</string>
     <string name="settings_appearance_color_group_summary">%1$d 个映射项 · 默认 %2$s</string>
