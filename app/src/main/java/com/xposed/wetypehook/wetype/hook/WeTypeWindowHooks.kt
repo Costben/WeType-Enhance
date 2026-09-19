@@ -31,6 +31,7 @@ import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.invokeMethodAs
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeNativeMaterialProbe
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
@@ -153,7 +154,8 @@ internal object WeTypeWindowHooks {
         var originalWindowBackground: Drawable? = null,
         var originalWindowBlurRadius: Int? = null,
         var navBarAppearanceCaptured: Boolean = false,
-        var originalNavBarAppearance: Int = 0
+        var originalNavBarAppearance: Int = 0,
+        var nativeMaterialProbeKey: String? = null
     )
 
     private val weTypeWindowStates = WeakHashMap<Any, WeTypeWindowState>()
@@ -1285,16 +1287,51 @@ internal object WeTypeWindowHooks {
         state.backgroundStyleDirty = false
         // This decorative child keeps a zero-height layout spec. Its rendered bounds must
         // not feed back into the IME's measurement or the app-facing inset calculation.
-        if (carrier.width != decorView.width || carrier.height != backgroundHeight || carrier.top != bounds.top) {
+        // S4 探针几何解锁：开启时把 carrier 从屏幕边缘内缩，给外侧焦散留出可绘制区域。
+        val probeInset = WeTypeNativeMaterialProbe.geometryInsetPx(carrier, context)
+        if (carrier.width != decorView.width - probeInset * 2 ||
+            carrier.height != backgroundHeight ||
+            carrier.top != bounds.top ||
+            carrier.left != probeInset
+        ) {
             carrier.measure(
                 View.MeasureSpec.makeMeasureSpec(decorView.width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(backgroundHeight, View.MeasureSpec.EXACTLY)
             )
-            carrier.layout(0, bounds.top, decorView.width, bounds.top + backgroundHeight)
+            carrier.layout(probeInset, bounds.top, decorView.width - probeInset, bounds.top + backgroundHeight)
             carrier.invalidateOutline()
         }
+        applyNativeMaterialProbe(carrier, context, state, style.nightMode)
         if (style.hyperMaterialEnabled) state.hyperMaterial?.updateGeometry(cornerRadii)
         applyNavigationBarAppearance(window, state, style)
+    }
+
+    /**
+     * S4 探针：仅当显式开关打开时在 carrier 上写入 native 描边/阴影/焦散参数；
+     * 关闭时清理一次并恢复默认，模块其余行为不变。
+     */
+    private fun applyNativeMaterialProbe(
+        carrier: View,
+        context: Context,
+        state: WeTypeWindowState,
+        nightMode: Int
+    ) {
+        if (WeTypeNativeMaterialProbe.isEnabled(context)) {
+            // 参数是 px 且挂在 RenderNode 上，几何/夜间态变化才需要重写；失败时不记录 key 以便下帧重试。
+            val key = "${System.identityHashCode(carrier)}:${carrier.width}x${carrier.height}:" +
+                "${carrier.left}:$nightMode"
+            if (state.nativeMaterialProbeKey != key) {
+                val applied = WeTypeNativeMaterialProbe.applyIfEnabled(
+                    carrier,
+                    context,
+                    nightMode == Configuration.UI_MODE_NIGHT_YES
+                )
+                if (applied) state.nativeMaterialProbeKey = key
+            }
+        } else if (state.nativeMaterialProbeKey != null) {
+            WeTypeNativeMaterialProbe.clear(carrier)
+            state.nativeMaterialProbeKey = null
+        }
     }
 
     /**
@@ -1441,6 +1478,8 @@ internal object WeTypeWindowHooks {
         val carrier = state.backgroundCarrier ?: return
         carrier.visibility = View.INVISIBLE
         state.hyperMaterial?.clear()
+        WeTypeNativeMaterialProbe.clear(carrier)
+        state.nativeMaterialProbeKey = null
         state.backgroundStyle = null
     }
 
