@@ -11,26 +11,22 @@ import android.util.Log
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.util.UUID
 
-/**
- * 宿主 → 模块 App 的单向镜像通道。
- *
- * 只有一个方向：宿主设置页保存后把快照广播给模块 App 写进远端偏好。**没有回执** ——
- * 保存的成败由宿主本地那次写盘决定，镜像送不到只是留个待补发的标记，不影响结论。
- *
- * 曾经这里是双向的（模块 App 回一个 ACK 广播，宿主等满 5 秒判成败）。那条回执被删掉
- * 有两个原因：它会把"镜像没送到"谎报成"保存失败"，而宿主是常年后台的输入法进程，
- * 系统经常直接把唤醒它的 ACK 广播丢掉；发送端也从不依赖它了。
- */
 object ModuleBridgeContract {
     private const val TAG = "MIUIIME.ModuleBridge"
     const val ACTION_BRIDGE = "com.xposed.wetypehook.action.BRIDGE"
+    const val ACTION_ACK_PREFIX = "com.xposed.wetypehook.action.BRIDGE_ACK"
     const val MESSAGE_SAVE_SETTINGS = 1
     const val MESSAGE_RECORD_ACTIVATION = 2
+    const val RESULT_ACCEPTED = 1
     const val EXTRA_MESSAGE_TYPE = "message_type"
     const val EXTRA_SETTINGS = "settings"
     const val EXTRA_REVISION = "revision"
+    const val EXTRA_ACK_ACTION = "ack_action"
+    const val EXTRA_ACK_TOKEN = "ack_token"
+    const val EXTRA_RESULT = "result"
     const val EXTRA_BRIDGE_PENDING_INTENT = "bridge_pending_intent"
     const val EXTRA_BRIDGE_SESSION_TOKEN = "bridge_session_token"
+    const val ACK_TIMEOUT_MILLIS = 5_000L
 
     private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
     private const val BRIDGE_SESSION_PREFERENCES = "module_bridge_session"
@@ -117,6 +113,7 @@ class ModuleBridgeReceiver : BroadcastReceiver() {
             !isTrustedSender(context, WETYPE_PACKAGE_NAME)
         ) {
             Log.w(TAG, "Rejected settings from an untrusted sender")
+            sendAcknowledgement(context, intent, false)
             return
         }
         val settings = intent.getBundleExtra(ModuleBridgeContract.EXTRA_SETTINGS)
@@ -134,6 +131,7 @@ class ModuleBridgeReceiver : BroadcastReceiver() {
         } else {
             Log.w(TAG, "WeType settings import was not persisted")
         }
+        sendAcknowledgement(context, intent, imported)
     }
 
     private fun recordActivation(context: Context, intent: Intent) {
@@ -148,6 +146,23 @@ class ModuleBridgeReceiver : BroadcastReceiver() {
             sourcePackage = sourcePackage,
             sourceProcess = intent.getStringExtra(ModuleActivationTracker.EXTRA_SOURCE_PROCESS)
         )
+    }
+
+    private fun sendAcknowledgement(context: Context, request: Intent, accepted: Boolean) {
+        val action = request.getStringExtra(ModuleBridgeContract.EXTRA_ACK_ACTION) ?: return
+        val token = request.getStringExtra(ModuleBridgeContract.EXTRA_ACK_TOKEN) ?: return
+        val acknowledgement = Intent(action)
+            .setPackage(WETYPE_PACKAGE_NAME)
+            .putExtra(ModuleBridgeContract.EXTRA_ACK_TOKEN, token)
+            .putExtra(
+                ModuleBridgeContract.EXTRA_REVISION,
+                request.getLongExtra(ModuleBridgeContract.EXTRA_REVISION, 0L)
+            )
+            .putExtra(
+                ModuleBridgeContract.EXTRA_RESULT,
+                if (accepted) ModuleBridgeContract.RESULT_ACCEPTED else 0
+            )
+        ModuleBridgeContract.sendWithIdentity(context, acknowledgement)
     }
 
     private fun isTrustedSender(context: Context, expectedPackage: String): Boolean {

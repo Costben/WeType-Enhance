@@ -117,7 +117,6 @@ import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
-import com.xposed.wetypehook.wetype.settings.WeTypeProcessRestarter
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
@@ -721,8 +720,7 @@ private fun WeTypeSettingsScreen(
 
     fun saveSettings(
         successMessage: Int = R.string.settings_saved,
-        glassOverridesToSave: GlassMaterialOverrides? = parsedGlassOverrides,
-        restartIme: Boolean = false
+        glassOverridesToSave: GlassMaterialOverrides? = parsedGlassOverrides
     ): Boolean {
         if (glassOverridesToSave == null) {
             Toast.makeText(context, R.string.settings_glass_invalid, Toast.LENGTH_SHORT).show()
@@ -786,14 +784,11 @@ private fun WeTypeSettingsScreen(
             hyperMaterialEnabled = hyperMaterialEnabled,
             glassOverrides = glassOverridesToSave,
             onPersisted = { saved ->
-                val restarted = saved && restartIme &&
-                    WeTypeProcessRestarter.restartImeProcess(preferencesContext)
-                val message = when {
-                    restarted -> R.string.settings_saved_restarted
-                    saved -> successMessage
-                    else -> R.string.settings_save_failed
-                }
-                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    if (saved) successMessage else R.string.settings_save_failed,
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         )
     }
@@ -892,11 +887,11 @@ private fun WeTypeSettingsScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = { saveSettings(restartIme = true) }
+                        onClick = { saveSettings() }
                     ) {
                         Icon(
                             imageVector = MiuixIcons.Ok,
-                            contentDescription = stringResource(R.string.settings_save_restart_title)
+                            contentDescription = stringResource(R.string.settings_save_title)
                         )
                     }
                 },

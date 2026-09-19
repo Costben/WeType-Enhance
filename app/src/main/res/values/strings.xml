@@ -16,7 +16,6 @@
     <string name="settings_reset">Restore defaults</string>
     <string name="settings_restart">Restart WeType</string>
     <string name="settings_saved">Settings saved</string>
-    <string name="settings_saved_restarted">Settings saved · input method restarted</string>
     <string name="settings_save_failed">Could not save settings</string>
     <string name="settings_invalid_color">Invalid color format. Please use #RRGGBB.</string>
     <string name="settings_root_required">Root permission is required</string>
@@ -78,7 +77,6 @@
     <string name="settings_candidate_pinyin_margin_desc">Edit the left padding of the pinyin area.</string>
 
     <string name="settings_save_title">Save settings</string>
-    <string name="settings_save_restart_title">Save and restart the input method</string>
     <string name="settings_save_desc">Write the current configuration to the module</string>
     <string name="settings_reset_title">Restore defaults</string>
     <string name="settings_reset_desc">Reset all options to their default values</string>
