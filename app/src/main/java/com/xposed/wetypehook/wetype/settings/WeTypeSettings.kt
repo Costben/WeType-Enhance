@@ -24,12 +24,6 @@ object WeTypeSettings {
     private const val KEY_LIGHT_COLOR = "light_color"
     private const val KEY_DARK_COLOR = "dark_color"
     private const val KEY_HYPER_MATERIAL_ENABLED = "hyper_material_enabled"
-    // S4 实验探针：默认关闭。仅在显式打开时于 carrier 上调用 ColorOS native 材质 API。
-    // 不进入 Snapshot/设置 UI；由 hook 侧直接读本进程偏好，另支持系统属性覆盖（见下）。
-    const val KEY_NATIVE_MATERIAL_PROBE = "native_material_probe_enabled"
-    const val KEY_NATIVE_MATERIAL_PROBE_GEOMETRY = "native_material_probe_geometry_unlock"
-    private const val PROP_NATIVE_MATERIAL_PROBE = "debug.wetype.native_material_probe"
-    private const val PROP_NATIVE_MATERIAL_PROBE_GEOMETRY = "debug.wetype.native_material_probe_geometry"
     private const val KEY_GLASS_PARAMS = "glass_params"
     private const val KEY_GLASS_BLOOM = "glass_bloom"
     private const val KEY_GLASS_BLUR_SMALL = "glass_blur_small"
@@ -954,22 +948,6 @@ object WeTypeSettings {
     fun isHyperMaterialEnabled(context: Context): Boolean = readSnapshot(context).hyperMaterialEnabled
 
     fun isHyperMaterialEnabledXposed(): Boolean = readSnapshotXposed().hyperMaterialEnabled
-
-    /**
-     * S4 探针总开关。默认 false；系统属性 `debug.wetype.native_material_probe=1` 可覆盖，
-     * 便于实机 ADB 切换而无需改设置 UI。
-     */
-    fun isNativeMaterialProbeEnabledXposed(context: Context): Boolean =
-        readProbeFlag(context, KEY_NATIVE_MATERIAL_PROBE, PROP_NATIVE_MATERIAL_PROBE)
-
-    /** S4 探针几何解锁子开关（给外侧焦散留空间）。默认 false。 */
-    fun isNativeMaterialProbeGeometryXposed(context: Context): Boolean =
-        readProbeFlag(context, KEY_NATIVE_MATERIAL_PROBE_GEOMETRY, PROP_NATIVE_MATERIAL_PROBE_GEOMETRY)
-
-    private fun readProbeFlag(context: Context, key: String, prop: String): Boolean {
-        if (com.xposed.wetypehook.PropertyUtils[prop, "0"] == "1") return true
-        return runCatching { appPreferences(context).getBoolean(key, false) }.getOrDefault(false)
-    }
 
     fun getGlassOverrides(context: Context): GlassMaterialOverrides =
         readSnapshot(context).glassOverrides
