@@ -30,10 +30,11 @@ import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.invokeMethodAs
 import com.xposed.wetypehook.xposed.loadClassOrNull
-import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
-import com.xposed.wetypehook.wetype.graphics.createWeTypeContinuousRoundedPath
+import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.lang.ref.WeakReference
@@ -115,7 +116,7 @@ internal object WeTypeWindowHooks {
             val height = target.height
             if (width <= 0 || height <= 0) return
             if (cachedPath == null || width != cachedWidth || height != cachedHeight) {
-                cachedPath = createWeTypeContinuousRoundedPath(width.toFloat(), height.toFloat(), cornerRadii)
+                cachedPath = createWeTypeSmoothRoundedPath(width.toFloat(), height.toFloat(), cornerRadii)
                 cachedWidth = width
                 cachedHeight = height
             }
@@ -129,7 +130,7 @@ internal object WeTypeWindowHooks {
         var windowVisible: Boolean = false,
         var backgroundCarrier: View? = null,
         var carrierOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
-        var hyperMaterial: WeTypeHyperMaterial? = null,
+        var hyperMaterial: WeTypeSystemMaterial? = null,
         var stopMaterialObserver: (() -> Unit)? = null,
         var window: WeakReference<Window>? = null,
         var resourceReconcilePending: Boolean = false,
@@ -1042,7 +1043,7 @@ internal object WeTypeWindowHooks {
         state.window = WeakReference(window)
         if (state.stopMaterialObserver == null) {
             val serviceReference = WeakReference(inputMethodService)
-            state.stopMaterialObserver = WeTypeHyperMaterial.observeAvailability(decorView.context) {
+            state.stopMaterialObserver = WeTypeSystemMaterials.observeAvailability(decorView.context) {
                 serviceReference.get()?.let { scheduleWindowBlur(it) }
             }
         }
@@ -1222,9 +1223,10 @@ internal object WeTypeWindowHooks {
             }
         }
 
-        val overrides = if (settings.hyperMaterialEnabled && WeTypeHyperMaterial.areGlassOverridesAvailable()) {
+        val overrides = if (settings.hyperMaterialEnabled && WeTypeSystemMaterials.areGlassOverridesAvailable()) {
             settings.glassOverrides
         } else GlassMaterialOverrides()
+        val materialEnabled = settings.hyperMaterialEnabled
         val carrier = ensureBackgroundCarrier(context, decorGroup, state, overrides)
         carrier.visibility = View.VISIBLE
         val style = BackgroundStyle(
@@ -1236,8 +1238,8 @@ internal object WeTypeWindowHooks {
             cornerRadii = cornerRadii,
             nightMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
             density = context.resources.displayMetrics.density,
-            hyperMaterialEnabled = settings.hyperMaterialEnabled,
-            hyperMaterialAvailable = WeTypeHyperMaterial.isAvailable(context)
+            hyperMaterialEnabled = materialEnabled,
+            hyperMaterialAvailable = WeTypeSystemMaterials.isAvailable(context)
         )
         val viewRoot = if (state.backgroundStyleDirty || carrier.background == null) {
             runCatching { carrier.invokeMethodAs<Any>("getViewRootImpl") }.getOrNull()
@@ -1252,10 +1254,23 @@ internal object WeTypeWindowHooks {
                 carrier.background = Color.TRANSPARENT.toDrawable()
                 if (!material.apply(style.nightMode == Configuration.UI_MODE_NIGHT_YES, style.color)) {
                     // An invocation failure keeps the keyboard legible without custom effects.
-                    carrier.background = createTintDrawable(WeTypeHyperMaterial.fallbackColor(style.nightMode == Configuration.UI_MODE_NIGHT_YES), cornerRadii)
+                    carrier.background = createTintDrawable(WeTypeSystemMaterials.fallbackColor(style.nightMode == Configuration.UI_MODE_NIGHT_YES), cornerRadii)
+                    carrier.foreground = null
+                } else {
+                    // ColorOS 的原生模糊只画背景，不像 HyperOS 材质自带面板光影；
+                    // 这里把模块既有的边缘高光叠到模糊之上，还原小布面板的描边观感。
+                    carrier.foreground = if (style.edgeHighlightEnabled && WeTypeSystemMaterials.isColorOsBackend()) {
+                        WeTypeBloomStrokeDrawable(
+                            context = context,
+                            cornerRadii = cornerRadii,
+                            surfaceColor = style.color,
+                            intensityScale = style.edgeHighlightIntensity / 100f
+                        )
+                    } else null
                 }
             } else {
                 material.clear()
+                carrier.foreground = null
                 carrier.background = createBackgroundDrawable(carrier, context, style)
             }
             state.backgroundStyle = style
@@ -1375,7 +1390,7 @@ internal object WeTypeWindowHooks {
         state.backgroundCarrier = carrier
         // A fresh RenderNode restores actual ROM defaults when an override is cleared.
         state.carrierOverrides = overrides
-        state.hyperMaterial = WeTypeHyperMaterial(carrier, overrides)
+        state.hyperMaterial = WeTypeSystemMaterials.create(carrier, overrides)
         return carrier
     }
 

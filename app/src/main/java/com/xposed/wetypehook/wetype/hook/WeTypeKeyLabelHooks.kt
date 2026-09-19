@@ -13,6 +13,7 @@ import android.widget.TextView
 import com.xposed.wetypehook.wetype.gesture.GestureAction
 import com.xposed.wetypehook.wetype.gesture.GestureActionExecutor
 import com.xposed.wetypehook.wetype.gesture.KeyGestureResolver
+import com.xposed.wetypehook.wetype.graphics.WeTypeColorOsKeyLight
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
@@ -64,6 +65,23 @@ internal object WeTypeKeyLabelHooks {
 
     private val accessCache = ConcurrentHashMap<Class<*>, KeyDrawAccess?>()
     private val t9ClassCache = ConcurrentHashMap<Class<*>, Boolean>()
+
+    /** ColorOS 逐键光感后端；加载失败后不再重试。 */
+    @Volatile
+    private var keyLight: WeTypeColorOsKeyLight? = null
+
+    @Volatile
+    private var keyLightResolved = false
+
+    /**
+     * 宿主按键真实的像素圆角 getter（混淆名，运行时解析）。
+     *
+     * 由 [resolveBgCornerGetter] 在 DexKit 打开时按调用关系定位一次，`drawCtx` 就是
+     * 该 getter 的声明类实例，直接反射调用即得宿主本帧下发的键帽半径。
+     */
+    @Volatile
+    private var bgCornerGetter: Method? = null
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         typeface = Typeface.DEFAULT
@@ -133,6 +151,9 @@ internal object WeTypeKeyLabelHooks {
 
     fun prepareForHotReload() {
         resetNestingLeakLogBudget()
+        keyLight = null
+        keyLightResolved = false
+        bgCornerGetter = null
     }
 
     fun install(sourceDir: String?, classLoader: ClassLoader) {
@@ -145,6 +166,9 @@ internal object WeTypeKeyLabelHooks {
             System.loadLibrary("dexkit")
             DexKitBridge.create(sourceDir).use { bridge ->
                 keyDataMethod = resolveKeyDataMethod(bridge, classLoader)
+                resolveBgCornerGetter(bridge, classLoader)?.let {
+                    bgCornerGetter = it
+                }
                 val targets = bridge.findMethod {
                     searchPackages(DRAW_METHOD_PACKAGE)
                     matcher {
@@ -227,6 +251,11 @@ internal object WeTypeKeyLabelHooks {
         val keyView = runCatching { access.viewField.get(drawCtx) as? View }.getOrNull() ?: return
         val rect = resolveKeyCapRect(access, drawCtx) ?: return
         if (rect.isEmpty) return
+
+        // 系统材质开启时给每个按键叠 ColorOS 官方边缘光。它与手势标签互相独立：
+        // 即使标签功能关闭也要画，因此放在标签开关判断之前。
+        drawSystemKeyLight(canvas, keyView, rect, resolveKeyCornerPx(drawCtx, keyView))
+
         if (!WeTypeSettings.isShowGestureKeyLabelsXposed()) return
 
         val isT9 = isT9Key(keyView, drawCtx)
@@ -269,6 +298,54 @@ internal object WeTypeKeyLabelHooks {
         }
         canvas.drawText(text, x, y, paint)
         paint.textSize = baseTextSize
+    }
+
+    /**
+     * 取宿主**本帧真正下发的键帽像素圆角半径**。
+     *
+     * 首选读 `j.getBgCorner()`：宿主就是用这个 int 直接调
+     * `canvas.drawRoundRect(rect, radius, radius, paint)` 画键帽的（drawmethod 包），
+     * 所以它天然就是像素、天然与键帽一致，不需要任何 `dp * density` 换算。
+     * 这也解释了此前"设置 15dp 下发 58px、看着比键帽大一倍"的根因：那条路径把
+     * 用户设置值当半径，而宿主真实半径是它的一半出头。
+     *
+     * 兜底才退回设置值换算，供 getter 改名/缺失的宿主版本使用。
+     */
+    private fun resolveKeyCornerPx(drawCtx: Any, keyView: View): Float {
+        bgCornerGetter?.let { getter ->
+            if (getter.declaringClass.isInstance(drawCtx)) {
+                val hostRadius = runCatching { getter.invoke(drawCtx) as? Int }.getOrNull()
+                if (hostRadius != null && hostRadius >= 0) {
+                    return hostRadius.toFloat()
+                }
+            }
+        }
+        val density = keyView.resources.displayMetrics.density
+        return WeTypeSettings.getKeyCornerRadiusXposed()
+            .coerceIn(0, WeTypeSettings.MAX_KEY_CORNER_RADIUS) * density
+    }
+
+    /**
+     * 系统材质开启时，给单个按键叠 ColorOS 官方边缘光。
+     *
+     * 只在 ColorOS 且系统材质开关打开时生效；后端懒加载一次，
+     * 加载失败即静默关闭，不影响宿主绘制。
+     */
+    private fun drawSystemKeyLight(
+        canvas: Canvas,
+        keyView: View,
+        rect: Rect,
+        keyRadiusPx: Float
+    ) {
+        if (!WeTypeSettings.isHyperMaterialEnabledXposed()) return
+        val light = keyLight ?: run {
+            if (keyLightResolved) return
+            keyLightResolved = true
+            WeTypeColorOsKeyLight.create(keyView.context).also { keyLight = it }
+        } ?: return
+        val isDark = (keyView.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        light.draw(canvas, rect, keyRadiusPx, isDark)
     }
 
     private data class LabelStyleSnapshot(
@@ -443,6 +520,75 @@ internal object WeTypeKeyLabelHooks {
             search = search.superclass
         }
         return null
+    }
+
+    /**
+     * 挑出宿主绘制键帽时真正下发的像素圆角半径 getter。
+     *
+     * 宿主 `drawmethod` 包用 `canvas.drawRoundRect(rect, button.<radius>(), ...)` 画键帽，
+     * 这个返回值**就是**像素半径，与 Canvas 同一坐标空间，不需要任何 density 换算。
+     * 光感直接用同一个值即可与键帽圆角完全一致。
+     *
+     * 难点：类名、字段名、方法名全都是混淆的（实测 3.5.4 上 getter 是 `j.j()`）。
+     * 整套定位只依赖宿主自己的调用关系，抗混淆改名：
+     *
+     *  1. 找 `KeyData.getBgCorner():Float` 的调用者，它在同一个方法里把键帽半径灌进按钮；
+     *  2. 该方法的 `invokes` 里那个 `(I)V`、声明类落在 `keyboard.selfdraw` 下的方法
+     *     就是写入像素半径的 setter（实测 `j.x0(I)V`），按钮类即取自它的声明类；
+     *  3. setter 写入哪个 int 字段，就回读该字段的无参 `()I` getter（实测 `j.j()`）。
+     *
+     * 其中 `KeyData.getBgCorner` 未混淆（序列化 bean），是最稳的锚点。
+     */
+    private fun resolveBgCornerGetter(
+        bridge: DexKitBridge,
+        classLoader: ClassLoader
+    ): Method? = runCatching {
+        val callers = bridge.findMethod {
+            searchPackages("com.tencent.wetype.plugin.hld.keyboard")
+            matcher {
+                name = "getBgCorner"
+                returnType = "java.lang.Float"
+            }
+        }.flatMap { it.callers }
+        if (callers.isEmpty()) return null
+
+        // 按钮类的像素半径 setter：在某个调用者里，紧随 getBgCorner 调用之后、
+        // 形如 `(I)V` 且声明在 selfdraw 下的方法（实测 `j.x0(I)V`，中间只隔一个 n1.A1）。
+        // 按钮类上有很多同签名的 (I)V setter，所以按“相对 getBgCorner 的先后顺序”取，
+        // 而不是按声明类名盲取第一个。
+        val setter = callers.asSequence()
+            .mapNotNull { caller ->
+                val invokes = caller.invokes
+                val anchor = invokes.indexOfFirst {
+                    it.name == "getBgCorner" && it.returnTypeName == "java.lang.Float"
+                }
+                if (anchor < 0) return@mapNotNull null
+                invokes.drop(anchor + 1).firstOrNull { invoke ->
+                    invoke.paramTypeNames.size == 1 &&
+                        invoke.paramTypeNames[0] == "int" &&
+                        invoke.returnTypeName == "void" &&
+                        invoke.declaredClassName.startsWith(DRAW_CONTEXT_PACKAGE)
+                }
+            }
+            .firstOrNull() ?: return null
+        val buttonName = setter.declaredClassName
+        // setter 写入的 int 字段名。
+        val fieldName = setter.usingFields
+            .firstOrNull { it.usingType.isWrite() && it.field.declaredClassName == buttonName }
+            ?.field?.name
+            ?: return null
+        // 同一按钮类里读该字段的无参 int getter。
+        val getter = bridge.getClassData(buttonName)?.methods?.firstOrNull { m ->
+            m.paramTypeNames.isEmpty() &&
+                m.returnTypeName == "int" &&
+                m.usingFields.any { it.usingType.isRead() && it.field.name == fieldName }
+        } ?: return null
+        Log.i("[$TAG] Resolved host key radius getter $buttonName.${getter.name} (field=$fieldName)")
+        getter.getMethodInstance(classLoader)
+    }.getOrElse {
+        Log.e("[$TAG] Failed to resolve host key radius getter")
+        Log.e(it)
+        null
     }
 
     /**

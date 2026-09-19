@@ -201,7 +201,7 @@ internal class WeTypeBloomStrokeDrawable(
     }
 
     private fun createOffsetRoundedPath(rect: RectF, cornerRadii: WeTypeCornerRadii): Path =
-        createWeTypeContinuousRoundedPath(rect.width(), rect.height(), cornerRadii).apply {
+        createWeTypeSmoothRoundedPath(rect.width(), rect.height(), cornerRadii).apply {
             offset(rect.left, rect.top)
         }
 

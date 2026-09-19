@@ -107,7 +107,7 @@ import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.gesture.GestureAction
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
-import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
 import com.xposed.wetypehook.wetype.settings.GlassSliderParameter
@@ -645,7 +645,7 @@ private fun WeTypeSettingsScreen(
             *GlassOverrideField.entries.map { snapshot.glassOverrides.text(it) }.toTypedArray()
         )
     }
-    val glassSupported = remember { WeTypeHyperMaterial.areGlassOverridesAvailable() }
+    val glassSupported = remember { WeTypeSystemMaterials.areGlassOverridesAvailable() }
     val parsedGlassOverrides = runCatching {
         GlassMaterialOverrides.parse(GlassOverrideField.entries.associateWith { glassInput[it.ordinal] })
     }.getOrNull()
@@ -657,11 +657,11 @@ private fun WeTypeSettingsScreen(
     }
     var hyperMaterialEnabled by rememberSaveable { mutableStateOf(snapshot.hyperMaterialEnabled) }
     var hyperMaterialAvailable by remember(preferencesContext) {
-        mutableStateOf(WeTypeHyperMaterial.isAvailable(preferencesContext))
+        mutableStateOf(WeTypeSystemMaterials.isAvailable(preferencesContext))
     }
     DisposableEffect(preferencesContext) {
-        val stopObserving = WeTypeHyperMaterial.observeAvailability(preferencesContext) {
-            hyperMaterialAvailable = WeTypeHyperMaterial.isAvailable(preferencesContext)
+        val stopObserving = WeTypeSystemMaterials.observeAvailability(preferencesContext) {
+            hyperMaterialAvailable = WeTypeSystemMaterials.isAvailable(preferencesContext)
         }
         onDispose { stopObserving() }
     }
@@ -1671,8 +1671,8 @@ private fun PreviewCard(
     hyperMaterialEnabled: Boolean = false
 ) {
     val context = LocalContext.current
-    // 系统材质开时预览显示 fallback 底色（真机材质只在 HyperOS 上生效）。
-    val displayColor = if (hyperMaterialEnabled) WeTypeHyperMaterial.fallbackColor(isDark) else color
+    // 系统材质开时预览显示 fallback 底色（真机材质在受支持的 ROM 上生效）。
+    val displayColor = if (hyperMaterialEnabled) WeTypeSystemMaterials.fallbackColor(isDark) else color
     val weTypeFontFamily = remember(context) {
         FontFamily(
             Font(
