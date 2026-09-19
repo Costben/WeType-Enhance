@@ -16,6 +16,7 @@
     <string name="settings_reset">恢复默认</string>
     <string name="settings_restart">重启 WeType</string>
     <string name="settings_saved">设置已保存, 重启输入法进程以生效</string>
+    <string name="settings_saved_restarted">设置已保存, 输入法进程已重启</string>
     <string name="settings_save_failed">设置保存失败</string>
     <string name="settings_invalid_color">颜色格式不正确，请使用 #RRGGBB。</string>
     <string name="settings_root_required">请先授予 root 权限</string>
@@ -77,6 +78,7 @@
     <string name="settings_candidate_pinyin_margin_desc">编辑候选栏内显拼音的左边距</string>
 
     <string name="settings_save_title">保存设置</string>
+    <string name="settings_save_restart_title">保存并重启输入法进程</string>
     <string name="settings_save_desc">将当前配置写入模块</string>
     <string name="settings_reset_title">恢复默认</string>
     <string name="settings_reset_desc">重置所有选项为默认值</string>

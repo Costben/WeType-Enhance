@@ -17,6 +17,7 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.ViewTreeObserver
 import android.view.Window
+import android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -41,6 +42,20 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 private const val WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX = 2
+/**
+ * 导航栏图标反色的亮度判据。
+ *
+ * 微信输入法自己不声明导航栏 appearance，而 `DisplayPolicy.chooseNavigationColorWindowLw`
+ * 会让铺满全屏的 IME 窗口成为导航栏外观的权威来源，于是它的沉默（appearance=0）被当成
+ * "要深色图标"——浅色键盘上那两个系统底栏图标就此消失。这里由模块替它把话说清楚。
+ */
+private const val NAV_BAR_LUMINANCE_THRESHOLD = 0.5
+/**
+ * `BackgroundStyle.color` 带透明度时无法直接算亮度：用户给的是叠加色，"实际看起来多亮"
+ * 取决于底下透出什么。透明度低于此值就改用系统深浅模式兜底，而不是拿半透明色硬算。
+ */
+private const val NAV_BAR_OPAQUE_ALPHA_THRESHOLD = 200
+
 private const val WETYPE_HARDWARE_VIEW_CLASS_PREFIX = "com.tencent.wetype.plugin.hld.hardware."
 private const val WETYPE_CANDIDATE_VIEW_CLASS_NAME =
     "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView"
@@ -134,7 +149,9 @@ internal object WeTypeWindowHooks {
         var hardwareViewIds: IntArray? = null,
         var originalWindowStateCaptured: Boolean = false,
         var originalWindowBackground: Drawable? = null,
-        var originalWindowBlurRadius: Int? = null
+        var originalWindowBlurRadius: Int? = null,
+        var navBarAppearanceCaptured: Boolean = false,
+        var originalNavBarAppearance: Int = 0
     )
 
     private val weTypeWindowStates = WeakHashMap<Any, WeTypeWindowState>()
@@ -1256,7 +1273,77 @@ internal object WeTypeWindowHooks {
             carrier.invalidateOutline()
         }
         if (style.hyperMaterialEnabled) state.hyperMaterial?.updateGeometry(cornerRadii)
+        applyNavigationBarAppearance(window, state, style)
     }
+
+    /**
+     * 让系统底栏那两个图标（收起 / 地球）跟着输入法背景反色。
+     *
+     * ## 为什么必须由模块来声明
+     *
+     * IME 窗口铺满全屏、带 `FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS`，在
+     * `DisplayPolicy.chooseNavigationColorWindowLw` 里压过底下的宿主 App，成为导航栏外观的
+     * 权威来源。微信输入法从不写 `insetsFlags.appearance`，于是框架读到 0、把
+     * `APPEARANCE_LIGHT_NAVIGATION_BARS` 清掉，浅色键盘上图标仍是白色——看起来就是"没做
+     * 反色"。模块替它把这个位写对，不改宿主 APK，也不碰系统侧。
+     *
+     * ## 判据
+     *
+     * 优先按真实生效的背景色算亮度；系统材质（hyper material）的观感来自合成器采样，推不出
+     * 亮度，半透明色同理，这两种情况退回系统深浅模式。
+     */
+    private fun applyNavigationBarAppearance(
+        window: Window,
+        state: WeTypeWindowState,
+        style: BackgroundStyle
+    ) {
+        // 带透明度的色值是"叠加色"，实际观感取决于底下透出什么；系统材质的观感来自合成器
+        // 采样。两者都推不出亮度，退回系统深浅模式，而不是拿半透明色硬算。
+        val colorIsUsable = !style.hyperMaterialEnabled &&
+            Color.alpha(style.color) >= NAV_BAR_OPAQUE_ALPHA_THRESHOLD
+        // 该位表达的是"底栏是浅色的，请画深色图标"，不是一个"图标要浅色"的开关。
+        val lightNavBar = if (colorIsUsable) {
+            relativeLuminance(style.color) >= NAV_BAR_LUMINANCE_THRESHOLD
+        } else {
+            style.nightMode != Configuration.UI_MODE_NIGHT_YES
+        }
+        val controller = runCatching { window.insetsController }.getOrNull() ?: return
+        val appearance = if (lightNavBar) APPEARANCE_LIGHT_NAVIGATION_BARS else 0
+        if (!state.navBarAppearanceCaptured) {
+            val current = runCatching { controller.systemBarsAppearance }.getOrDefault(0)
+            // 已经是目标值就没什么可记账的：契约要求恢复原值，而原值本来就是对的。
+            if (current and APPEARANCE_LIGHT_NAVIGATION_BARS == appearance) return
+            state.originalNavBarAppearance = current
+            state.navBarAppearanceCaptured = true
+        } else if (controller.systemBarsAppearance and APPEARANCE_LIGHT_NAVIGATION_BARS == appearance) {
+            return
+        }
+        runCatching {
+            controller.setSystemBarsAppearance(appearance, APPEARANCE_LIGHT_NAVIGATION_BARS)
+        }
+    }
+
+    /**
+     * 把导航栏外观位交还宿主。
+     *
+     * 与 [restoreWindowState] 同一套纪律：自清标记，可重复调用。
+     */
+    private fun restoreNavigationBarAppearance(state: WeTypeWindowState) {
+        if (!state.navBarAppearanceCaptured) return
+        val window = state.window?.get() ?: return
+        val controller = runCatching { window.insetsController }.getOrNull() ?: return
+        runCatching {
+            controller.setSystemBarsAppearance(
+                state.originalNavBarAppearance and APPEARANCE_LIGHT_NAVIGATION_BARS,
+                APPEARANCE_LIGHT_NAVIGATION_BARS
+            )
+        }
+        state.navBarAppearanceCaptured = false
+        state.originalNavBarAppearance = 0
+    }
+
+    private fun relativeLuminance(color: Int): Float =
+        (Color.red(color) * 0.299f + Color.green(color) * 0.587f + Color.blue(color) * 0.114f) / 255f
 
     private fun ensureBackgroundCarrier(
         context: Context,
@@ -1327,6 +1414,9 @@ internal object WeTypeWindowHooks {
         }.toIntArray()
 
     private fun hideBackgroundCarrier(state: WeTypeWindowState) {
+        // 键盘收起时 IME 窗口在 WM 眼里仍然 visible，依旧是导航栏外观的权威来源。不在这里
+        // 交还，桌面和宿主 App 的底栏图标会被输入法的残留值继续按着。
+        restoreNavigationBarAppearance(state)
         val carrier = state.backgroundCarrier ?: return
         carrier.visibility = View.INVISIBLE
         state.hyperMaterial?.clear()
@@ -1338,6 +1428,8 @@ internal object WeTypeWindowHooks {
         state.stopMaterialObserver = null
         state.hyperMaterial?.clear()
         state.hyperMaterial = null
+        // 必须在置空 state.window 之前交还：restoreNavigationBarAppearance 依赖它取窗口。
+        restoreNavigationBarAppearance(state)
         val carrier = state.backgroundCarrier ?: return
         (carrier.parent as? ViewGroup)?.removeView(carrier)
         state.backgroundCarrier = null
@@ -1347,6 +1439,7 @@ internal object WeTypeWindowHooks {
     }
 
     private fun restoreWindowState(state: WeTypeWindowState) {
+        restoreNavigationBarAppearance(state)
         if (!state.originalWindowStateCaptured) return
         val window = state.window?.get() ?: return
         runCatching {

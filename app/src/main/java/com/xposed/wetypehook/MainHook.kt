@@ -289,20 +289,26 @@ class MainHook : XposedModule() {
     private fun installWeTypeHooks(sourcePackage: String, sourceDir: String?, classLoader: ClassLoader) {
         if (frameworkProperties and XposedInterface.PROP_CAP_REMOTE != 0L) {
             // 懒重绑入口：热重载被拒/服务瞬态不可用导致 unbind 后，设置读取仍可自愈，
-            // 不再回退默认色（强调色 #23C891 绿）并卡死到进程结束。
+            // 不再回退默认色（#23C891 绿）并卡死到进程结束。
             WeTypeSettings.bindRemotePreferencesProvider {
                 runCatching { getRemotePreferences(WeTypeSettings.PREF_GROUP) }.getOrNull()
             }
-            runCatching {
+            val bound = runCatching {
                 WeTypeSettings.bindRemotePreferences(
                     getRemotePreferences(WeTypeSettings.PREF_GROUP)
                 )
+                true
             }.onFailure { error ->
-                Log.e("Remote preferences are unavailable; WeType hooks use defaults")
+                Log.e("Failed: bind remote preferences")
                 Log.i(error)
+            }.getOrDefault(false)
+            if (!bound) {
+                // LSPatch 内嵌模式下没有可读的远端偏好，这是常态而非故障：设置会从
+                // 宿主自己的 shared_prefs 读（WeTypeSettings.ensureHostSnapshot 写入）。
+                Log.i("Remote preferences are unavailable; settings fall back to the host snapshot")
             }
         } else {
-            Log.i("Remote preferences are unavailable; WeType hooks use defaults")
+            Log.i("Framework exposes no remote preferences; settings fall back to the host snapshot")
         }
 
         HookEnvironment.withHookScope("wetype.activation") { hookActivationHeartbeat(sourcePackage) }

@@ -1,21 +1,15 @@
 package com.xposed.wetypehook.wetype.settings
 
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
-import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Log as AndroidLog
 import com.xposed.wetypehook.ModuleBridgeContract
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.UUID
 
 object WeTypeSettings {
     const val PREF_GROUP = "wetype_settings"
@@ -252,6 +246,28 @@ object WeTypeSettings {
 
     @Volatile
     private var remotePreferences: SharedPreferences? = null
+
+    /**
+     * 模块 App 是否真的作为一个包存在。
+     *
+     * ## 为什么要问这个
+     *
+     * 保存后会走 [sendSnapshotToModule]，把快照镜像给 `com.xposed.wetypehook` 的
+     * [ModuleBridgeContract] 接收器。这条路径成立的前提是**模块 App 被安装成了独立包**
+     * （LSPosed 作用域模式）。
+     *
+     * 而 **LSPatch 内嵌模式**下模块是被塞进微信输入法内部加载的，
+     * `com.xposed.wetypehook` 这个包根本不存在。广播发给一个不存在的组件只会白发一趟，
+     * 白白唤醒一次系统广播调度。
+     *
+     * 保存结果不受这里影响：判据始终是宿主本地那份文件写成功没有，镜像无论如何都只是
+     * 尽力而为。此处探包只为省掉一次注定送不到的广播，并把待同步标记正确地留在
+     * false，免得每次 [ensureHostSnapshot] 都重试一遍。
+     */
+    private fun isModulePackagePresent(context: Context): Boolean = runCatching {
+        context.packageManager.getPackageInfo(MODULE_PACKAGE_NAME, 0)
+        true
+    }.getOrDefault(false)
 
     /**
      * 宿主进程内重新解析远端偏好（模块 App 偏好）的入口。热重载被拒绝/服务短暂不可用时
@@ -571,6 +587,22 @@ object WeTypeSettings {
         moduleBridgePendingIntent = pendingIntent
     }
 
+    /**
+     * `:hld` 进程启动时决定"认哪份设置"的唯一入口。
+     *
+     * ## 判据：宿主本地那份文件是唯一事实来源
+     *
+     * `:hld` 是输入法本体所在进程，它自己就是保存动作的落笔处 —— [save] 直接写宿主
+     * `shared_prefs`。所以这里**必须**先认本地那份，远端（模块 App）只作为本地从未
+     * 落过盘时的初始化种子。
+     *
+     * 早前这里是反的：`remoteSnapshot != null ->` 排在 `localSnapshot != null` 前面，
+     * 于是宿主每次拉起都会拿模块 App 里那份**旧副本**回写覆盖本地。用户在设置页刚存好
+     * 的手势绑定，输入法重启一次就被抹回上一次桥接成功时的样子 —— 这正是「q/r 上的
+     * 模块设置绑定保存不了」的真凶：保存其实成功了，是被随后的启动流程自己覆盖掉的。
+     *
+     * 远端副本的作用仅剩一个：首次安装、本地还没有任何快照时提供初始值。
+     */
     fun ensureHostSnapshot(context: Context) {
         val appContext = context.applicationContext ?: context
         val localPreferences = appPreferences(appContext)
@@ -580,36 +612,27 @@ object WeTypeSettings {
             return
         }
         hostContextRef = java.lang.ref.WeakReference(appContext)
-        val remoteSnapshot = remotePreferences?.toSnapshotOrNull()
         val hostSyncPending = localPreferences.getBoolean(KEY_HOST_SYNC_PENDING, false)
 
-        when {
-            hostSyncPending && localSnapshot != null -> {
-                cachedXposedSnapshot = localSnapshot
+        // 宿主本地已有快照：它就是权威值。待同步标记可能来自上一次镜像没送达，
+        // 这里补发一次即可 —— 补发成功就清掉标记，失败就留着下次再试，本地并不会
+        // 因此变旧。
+        if (localSnapshot != null) {
+            cachedXposedSnapshot = localSnapshot
+            if (hostSyncPending) {
                 val revision = localPreferences.getLong(KEY_HOST_SYNC_REVISION, 0L)
-                sendSnapshotToModule(appContext, localSnapshot, revision) { accepted ->
-                    acknowledgeHostSnapshot(appContext, revision, accepted)
-                }
+                val delivered = sendSnapshotToModule(appContext, localSnapshot, revision)
+                localPreferences.edit().putBoolean(KEY_HOST_SYNC_PENDING, !delivered).commit()
             }
+            return
+        }
 
-            remoteSnapshot != null -> {
-                writeSnapshot(localPreferences, remoteSnapshot)
-                cachedXposedSnapshot = remoteSnapshot
-            }
-
-            localSnapshot != null -> {
-                cachedXposedSnapshot = localSnapshot
-                val revision = nextHostRevision(localPreferences)
-                val staged = localPreferences.edit()
-                    .putBoolean(KEY_HOST_SYNC_PENDING, true)
-                    .putLong(KEY_HOST_SYNC_REVISION, revision)
-                    .commit()
-                if (staged) {
-                    sendSnapshotToModule(appContext, localSnapshot, revision) { accepted ->
-                        acknowledgeHostSnapshot(appContext, revision, accepted)
-                    }
-                }
-            }
+        // 本地还没有快照（首次安装 / 数据被清）：这时才轮到用模块 App 那份当初始值。
+        val remoteSnapshot = synchronized(remotePrefsLock) { resolvedRemotePreferencesLocked() }
+            ?.toSnapshotOrNull()
+        if (remoteSnapshot != null) {
+            writeSnapshot(localPreferences, remoteSnapshot)
+            cachedXposedSnapshot = remoteSnapshot
         }
     }
 
@@ -929,9 +952,16 @@ object WeTypeSettings {
 
     fun getAppearanceColorsXposed(): Map<String, Int> = readSnapshotXposed().appearanceColors
 
+    /**
+     * 本进程可见的最新快照。**本进程落盘的那份优先**。
+     *
+     * 宿主进程里 `appPreferences` 就是 `:hld` 保存时写的那份文件，天然最新；
+     * `remotePreferences`（模块 App 的副本）只是镜像，可能落后一整个桥接周期。
+     * 顺序反过来会让刚保存的设置立刻读回旧值。
+     */
     fun readSnapshot(context: Context): Snapshot {
-        return remotePreferences?.toSnapshotOrNull()
-            ?: appPreferences(context).toSnapshotOrNull()
+        return appPreferences(context).toSnapshotOrNull()
+            ?: remotePreferences?.toSnapshotOrNull()
             ?: defaultSnapshot()
     }
 
@@ -949,19 +979,31 @@ object WeTypeSettings {
 
         synchronized(remotePrefsLock) {
             cachedXposedSnapshot?.let { return it }
-            // ① 远端偏好（模块 App）→ ② 按需重绑远端偏好 → ③ 宿主本地偏好 → ④ 默认值（不缓存）。
+            // ① 本进程偏好 → ② 远端偏好（模块 App 镜像）→ ③ 默认值（不缓存）。
+            //
+            // 顺序不能反。宿主进程里 `appPreferences` 就是 [saveDirect] 落笔的那个文件，
+            // 天然最新；远端那份是镜像，后台同步失败时会长期停在旧值上，把它排在前面
+            // 等于让刚保存的设置立刻回滚。
+            //
+            // 这条顺序对三个进程都成立：
+            // - `:hld`：`hostContextRef` 已注入，读到保存时写的那份文件。
+            // - WeType 主进程（设置页）：`hostContextRef` 同样已注入，读到的就是设置页
+            //   自己写的 WeType 偏好 —— 比原来读模块 App 的旧镜像正确得多。
+            // - 模块 App 进程：`hostContextRef` 为空（`ensureHostSnapshot` 对模块包提前
+            //   返回，不注入），直接落到远端，行为与改动前一致。
+            //
             // 默认值（强调色 #23C891 绿）绝不能被缓存：一次瞬态读取失败曾会让整个进程
             // 的强调色/美化设置退回默认且无法自愈（“Logo/强调色莫名回绿”）。
-            val remoteSnapshot = resolvedRemotePreferencesLocked()?.toSnapshotOrNull()
-            if (remoteSnapshot != null) {
-                cachedXposedSnapshot = remoteSnapshot
-                return remoteSnapshot
-            }
             val localSnapshot = hostContextRef?.get()?.let { appPreferences(it).toSnapshotOrNull() }
             if (localSnapshot != null) {
                 cachedXposedSnapshot = localSnapshot
-                AndroidLog.w(TAG, "remote prefs unavailable, falling back to host local snapshot")
                 return localSnapshot
+            }
+            val remoteSnapshot = resolvedRemotePreferencesLocked()?.toSnapshotOrNull()
+            if (remoteSnapshot != null) {
+                cachedXposedSnapshot = remoteSnapshot
+                AndroidLog.w(TAG, "host prefs unavailable, falling back to remote module snapshot")
+                return remoteSnapshot
             }
             if (defaultFallbackLogged.compareAndSet(false, true)) {
                 AndroidLog.w(TAG, "no persisted settings snapshot, serving defaults (uncached)")
@@ -1163,10 +1205,37 @@ object WeTypeSettings {
                 return false
             }
             cachedXposedSnapshot = snapshot
-            sendSnapshotToModule(appContext, snapshot, revision) { accepted ->
-                acknowledgeHostSnapshot(appContext, revision, accepted)
-                onPersisted(accepted)
+            // 判据只有一条：**宿主本地这份文件写成功没有**。
+            //
+            // 桥接是尽力而为的镜像，不是保存的前提。远端那份副本只服务于模块 App
+            // 自己的界面，`:hld` 读的是宿主这份文件 —— 镜像没送到既不影响生效，
+            // 也没资格把结果说成失败。
+            //
+            // 历史实现要等模块 App 回执，等满 5 秒就把整次保存判成失败，
+            // 而本地其实早已写好。那条广播被拦下是日常情形：ColorOS 的自启动管理会直接
+            // 掐掉唤醒模块 App 的广播
+            // （`OplusAppStartupManager: prevent start .../ModuleBridgeReceiver`），
+            // 于是每次保存都白等 5 秒，再弹一个与事实相反的「设置保存失败」。
+            //
+            // 标记的写法因此也反过来了：先把待同步标记落成 false（保存这一瞬间本地就是
+            // 最新，没有欠账），只在镜像确实没送出去时才置回 true，留给下一次
+            // ensureHostSnapshot 补发。旧写法无条件先置 true、再由回执清掉，一旦回执
+            // 丢失就永久卡在"欠同步"，每次启动都白发一条广播。
+            var mirrorDelivered = false
+            if (isModulePackagePresent(appContext)) {
+                mirrorDelivered = sendSnapshotToModule(appContext, snapshot, revision)
+            } else {
+                // LSPatch 内嵌模式：模块 App 根本不存在，没有镜像可送。
+                AndroidLog.i(
+                    TAG,
+                    "Module app is not installed (LSPatch embed); snapshot kept locally, skipping bridge"
+                )
             }
+            localPreferences.edit()
+                .putBoolean(KEY_HOST_SYNC_PENDING, !mirrorDelivered)
+                .commit()
+            onPersisted(true)
+            return true
         }
     }
 
@@ -1264,99 +1333,51 @@ object WeTypeSettings {
         return editor.commit()
     }
 
-    private fun sendSnapshotToModule(
-        context: Context,
-        snapshot: Snapshot,
-        revision: Long,
-        onAccepted: (Boolean) -> Unit
-    ): Boolean {
-        if (context.packageName != WETYPE_PACKAGE_NAME) {
-            onAccepted(false)
-            return false
-        }
+    /**
+     * 把宿主快照镜像给模块 App（远端偏好），**尽力而为，不等回执**。
+     *
+     * 这个镜像只服务于模块 App 自己的设置界面；`:hld` 读的是宿主本地那份文件，
+     * 所以送不到不影响设置生效，更不该影响保存结果。
+     *
+     * 历史实现会注册一个一次性 `BroadcastReceiver` 等 ACK，等满 5 秒就判失败。那段逻辑
+     * 有两个致命问题：
+     *
+     * 1. **把镜像失败谎报成保存失败**。本地早已写盘成功，用户却看到「设置保存失败」。
+     * 2. **超时是常态而非异常**。ColorOS 的自启动管理会直接掐掉唤醒模块 App 的广播
+     *    （`OplusAppStartupManager: prevent start .../ModuleBridgeReceiver`），于是每次
+     *    保存都白等 5 秒。而 ACK 广播本身还要求接收方拥有唤醒宿主进程的权限 ——
+     *    宿主是输入法，常年后台，回执经常在路上就被系统丢掉。
+     *
+     * 保留的是 [moduleBridgePendingIntent] 这条路：`PendingIntent.send()` 以模块 App 的
+     * 身份发出广播，接收方看到的 sender 就是模块 App，不依赖发送方 uid 的"共享身份"
+     * 豁免。这条广播已不含回执信息，`ModuleBridgeReceiver` 也不再回执。
+     *
+     * @return 是否应该留下待补发标记（true = 这次没送出去，下次启动再试）。
+     */
+    private fun sendSnapshotToModule(context: Context, snapshot: Snapshot, revision: Long): Boolean {
+        if (context.packageName != WETYPE_PACKAGE_NAME) return false
         val appContext = context.applicationContext ?: context
-        val acknowledgementAction = "${ModuleBridgeContract.ACTION_ACK_PREFIX}.${UUID.randomUUID()}"
-        val acknowledgementToken = UUID.randomUUID().toString()
         val intent = ModuleBridgeContract.explicitBridgeIntent()
             .putExtra(ModuleBridgeContract.EXTRA_MESSAGE_TYPE, ModuleBridgeContract.MESSAGE_SAVE_SETTINGS)
             .putExtra(ModuleBridgeContract.EXTRA_SETTINGS, snapshot.toBundle())
             .putExtra(ModuleBridgeContract.EXTRA_REVISION, revision)
-            .putExtra(ModuleBridgeContract.EXTRA_ACK_ACTION, acknowledgementAction)
-            .putExtra(ModuleBridgeContract.EXTRA_ACK_TOKEN, acknowledgementToken)
-        val mainHandler = Handler(Looper.getMainLooper())
-        val finished = AtomicBoolean(false)
-        var registered = false
-        lateinit var acknowledgementReceiver: BroadcastReceiver
-
-        fun finish(accepted: Boolean) {
-            if (!finished.compareAndSet(false, true)) return
-            mainHandler.removeCallbacksAndMessages(null)
-            if (registered) runCatching { appContext.unregisterReceiver(acknowledgementReceiver) }
-            onAccepted(accepted)
-        }
-
-        acknowledgementReceiver = object : BroadcastReceiver() {
-            override fun onReceive(receiverContext: Context, acknowledgement: Intent) {
-                if (acknowledgement.action != acknowledgementAction ||
-                    acknowledgement.getStringExtra(ModuleBridgeContract.EXTRA_ACK_TOKEN) !=
-                    acknowledgementToken ||
-                    acknowledgement.getLongExtra(
-                        ModuleBridgeContract.EXTRA_REVISION,
-                        Long.MIN_VALUE
-                    ) != revision
-                ) {
-                    return
+        val sent = moduleBridgePendingIntent?.let { pendingIntent ->
+            runCatching { pendingIntent.send(appContext, 0, intent) }
+                .onFailure {
+                    // PendingIntent 可能因为模块 App 被覆盖安装/卸载而失效（CANCEL_CURRENT），
+                    // 丢掉它，下次回退到直接广播。
+                    moduleBridgePendingIntent = null
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-                    receiverContext.packageManager.getPackagesForUid(sentFromUid)
-                        ?.contains(MODULE_PACKAGE_NAME) != true
-                ) {
-                    finish(false)
-                    return
-                }
-                finish(
-                    acknowledgement.getIntExtra(ModuleBridgeContract.EXTRA_RESULT, 0) ==
-                        ModuleBridgeContract.RESULT_ACCEPTED
-                )
-            }
+                .isSuccess
+        } ?: false
+        val delivered = sent || ModuleBridgeContract.sendWithIdentity(appContext, intent)
+        if (!delivered) {
+            AndroidLog.w(
+                TAG,
+                "Settings mirror to module app was not delivered (host snapshot is still authoritative)"
+            )
         }
-        val didRegister = runCatching {
-            val filter = IntentFilter(acknowledgementAction)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                appContext.registerReceiver(
-                    acknowledgementReceiver,
-                    filter,
-                    Context.RECEIVER_EXPORTED
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                appContext.registerReceiver(acknowledgementReceiver, filter)
-            }
-            true
-        }.getOrDefault(false)
-        registered = didRegister
-        val sentViaPendingIntent = moduleBridgePendingIntent?.let { pendingIntent ->
-            runCatching {
-                pendingIntent.send(appContext, 0, intent)
-            }.onFailure {
-                moduleBridgePendingIntent = null
-            }.isSuccess
-        } == true
-        if (!didRegister ||
-            (!sentViaPendingIntent && !ModuleBridgeContract.sendWithIdentity(appContext, intent))
-        ) {
-            finish(false)
-            return false
-        }
-        mainHandler.postDelayed({ finish(false) }, ModuleBridgeContract.ACK_TIMEOUT_MILLIS)
-        return true
-    }
-
-    private fun acknowledgeHostSnapshot(context: Context, revision: Long, accepted: Boolean) {
-        if (!accepted) return
-        val preferences = appPreferences(context)
-        if (preferences.getLong(KEY_HOST_SYNC_REVISION, Long.MIN_VALUE) != revision) return
-        preferences.edit().putBoolean(KEY_HOST_SYNC_PENDING, false).commit()
+        return delivered
     }
 
     private fun nextHostRevision(preferences: SharedPreferences): Long {

@@ -13,6 +13,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
+import com.xposed.wetypehook.EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS
 import com.xposed.wetypehook.wetype.hook.WeTypePanelSwitcher
 import com.xposed.wetypehook.xposed.Log
 import java.lang.ref.WeakReference
@@ -24,6 +25,16 @@ import java.lang.ref.WeakReference
 object GestureActionExecutor {
 
     private const val TAG = "GestureActionExecutor"
+    private const val WETYPE_PACKAGE_NAME = "com.tencent.wetype"
+
+    /**
+     * 微信输入法自己的设置页，按可用性排序。主设置页拿不到时退到关于页，
+     * 两者都在 `MainHook` 的意图/点击 hook 覆盖范围内。
+     */
+    private val WETYPE_SETTINGS_ACTIVITIES = listOf(
+        "com.tencent.wetype.plugin.hld.reactnative.activity.ImeMainSettingActivity",
+        "com.tencent.wetype.plugin.hld.ui.ImeAboutActivity"
+    )
     private val LINE_BREAK_CHARS = charArrayOf('\n', '\r', '\u2028', '\u2029')
 
     fun execute(action: GestureAction, view: View) {
@@ -32,21 +43,22 @@ object GestureActionExecutor {
         val context = view.context ?: return
         val ims = resolveInputMethodService(context)
 
-        // 1. 设置页直接唤起，无需依赖输入连接
+        // 1. 输入法设置页：直接唤起，无需依赖输入连接
         if (action == GestureAction.OpenSettings) {
-            runCatching {
-                val intent = Intent().apply {
-                    setClassName(
-                        "com.tencent.wetype",
-                        "com.tencent.wetype.plugin.hld.reactnative.activity.ImeMainSettingActivity"
-                    )
-                    putExtra(com.xposed.wetypehook.EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS, true)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(intent)
-                Log.i("[$TAG] Opened WeType hosted settings")
-            }.onFailure {
-                Log.e("[$TAG] Failed to open settings: ${it.message}")
+            if (openWeTypeImeSettings(view)) {
+                Log.i("[$TAG] Opened WeType settings")
+            } else {
+                Log.e("[$TAG] Failed to open WeType settings")
+            }
+            return
+        }
+
+        // 2. 模块设置页：同一个入口页，区别只在于是否带模块 extra
+        if (action == GestureAction.OpenModuleSettings) {
+            if (openModuleSettingsPage(view)) {
+                Log.i("[$TAG] Opened module settings page")
+            } else {
+                Log.e("[$TAG] Failed to open module settings page")
             }
             return
         }
@@ -217,6 +229,53 @@ object GestureActionExecutor {
             return fromThread
         }
         return null
+    }
+
+    /**
+     * 打开模块设置页。
+     *
+     * **不能用 [WeTypeHostLauncher.show]**：那个面板挂在「宿主 App 的 Activity」上，而输入法
+     * 进程与宿主 App（Keep / 微信 / 任意应用）是**两个完全独立的进程** —— `com.tencent.wetype:hld`
+     * 里根本不存在宿主 App 的 Activity。此前连续几十条 `Host activity not found` 的根因在这里，
+     * 反射只是够不着一个本就不在该进程里的对象。
+     *
+     * 可行路径与 [GestureAction.OpenSettings] 完全一致：拉微信输入法**自己**的 Activity。
+     * 区别只在 extra —— 带上 [EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS]，`MainHook` 的
+     * `Activity.onResume` 就会把它转成 [WeTypeHostLauncher.show]。
+     */
+    private fun openModuleSettingsPage(view: View): Boolean =
+        launchWeTypeActivity(view, openEmbeddedSettings = true)
+
+    /** 20 输入法设置：只拉微信输入法自己的设置页，不带任何模块 extra。 */
+    private fun openWeTypeImeSettings(view: View): Boolean =
+        launchWeTypeActivity(view, openEmbeddedSettings = false)
+
+    /**
+     * 拉起微信输入法自己的设置页。
+     *
+     * [openEmbeddedSettings] 为 true 时附带 [EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS] —— 这是
+     * `MainHook` 里 `Activity.onResume` 唯一认的键。此前这里发的是
+     * `com.wetype.tool.OPEN_HOSTED_SETTINGS`，全仓没有一处读它，手势因此静默失效。
+     * 主设置页不可用时退到关于页，两者都在 `MainHook` 的点击/意图 hook 覆盖范围内。
+     */
+    private fun launchWeTypeActivity(view: View, openEmbeddedSettings: Boolean): Boolean {
+        val context = activeInputMethodService?.get()?.applicationContext ?: view.context
+        for (className in WETYPE_SETTINGS_ACTIVITIES) {
+            val launched = runCatching {
+                context.startActivity(Intent().apply {
+                    setClassName(WETYPE_PACKAGE_NAME, className)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    if (openEmbeddedSettings) {
+                        putExtra(EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS, true)
+                    }
+                })
+                true
+            }.onFailure {
+                Log.e("[$TAG] Failed to launch $className: ${it.message}")
+            }.getOrDefault(false)
+            if (launched) return true
+        }
+        return false
     }
 
     private fun resolveFromActivityThread(): InputMethodService? = runCatching {
