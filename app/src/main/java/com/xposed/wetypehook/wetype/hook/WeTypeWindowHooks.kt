@@ -30,6 +30,7 @@ import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.invokeMethodAs
 import com.xposed.wetypehook.xposed.loadClassOrNull
+import com.xposed.wetypehook.wetype.graphics.WeTypeNativeMaterialProbe
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterial
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
@@ -1294,6 +1295,8 @@ internal object WeTypeWindowHooks {
             carrier.invalidateOutline()
         }
         if (style.hyperMaterialEnabled) state.hyperMaterial?.updateGeometry(cornerRadii)
+        // R1 探针：仅在 debug.wetype.r1probe=1 时下发；默认关闭时若此前下发过则清理一次。
+        WeTypeNativeMaterialProbe.applyIfEnabled(carrier, "ime")
         applyNavigationBarAppearance(window, state, style)
     }
 
@@ -1441,6 +1444,7 @@ internal object WeTypeWindowHooks {
         val carrier = state.backgroundCarrier ?: return
         carrier.visibility = View.INVISIBLE
         state.hyperMaterial?.clear()
+        WeTypeNativeMaterialProbe.clear(carrier, "ime-hide")
         state.backgroundStyle = null
     }
 

@@ -107,6 +107,7 @@ import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.gesture.GestureAction
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
+import com.xposed.wetypehook.wetype.graphics.WeTypeNativeMaterialProbe
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
@@ -188,6 +189,7 @@ class MainActivity : ComponentActivity() {
         activationStatus = ModuleActivationTracker.resolveStatusForUi(this)
         activationStatusListener = ModuleActivationTracker.registerStatusListener(this) { status ->
             activationStatus = status
+            if (WeTypeNativeMaterialProbe.isEnabled()) return@registerStatusListener
             if (!status.hasFreshHeartbeat()) return@registerStatusListener
             runOnUiThread {
                 launchEmbeddedSettingsAndFinish()
@@ -198,6 +200,12 @@ class MainActivity : ComponentActivity() {
                 isActive = activationStatus.hasFreshHeartbeat(),
                 onOpenEmbeddedSettings = ::launchEmbeddedSettingsAndFinish
             )
+        }
+        // R1 探针：普通 Activity 对照宿主，默认关闭时完全不介入。
+        if (WeTypeNativeMaterialProbe.isEnabled()) {
+            (window.decorView as? android.view.ViewGroup)?.let {
+                WeTypeNativeMaterialProbe.installActivityHost(it)
+            }
         }
         launchEmbeddedSettingsIfActive()
     }
@@ -217,6 +225,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchEmbeddedSettingsIfActive(): Boolean {
+        // R1 探针开启时留在本 Activity，作为普通窗口对照宿主，不跳转内嵌设置。
+        if (WeTypeNativeMaterialProbe.isEnabled()) return false
         if (!hasAttemptedEmbeddedLaunch && activationStatus.hasFreshHeartbeat()) {
             return launchEmbeddedSettingsAndFinish()
         }
