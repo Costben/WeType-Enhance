@@ -858,10 +858,36 @@ internal object WeTypeResourceHooks {
                 }
                 val imageView = view as? ImageView ?: return@forEachView
                 if (imageView.id != logoIvId) return@forEachView
+                if (!WeTypeSettings.isLogoEnabledXposed()) return@forEachView
                 val existingDrawable = imageView.drawable
                 if (existingDrawable is WeTypeIconDrawable ||
                     existingDrawable is WeTypeIconEdgeLightLayer
                 ) {
+                    return@forEachView
+                }
+                // 隐藏 Logo 时 host 写入的透明占位既不是 WeTypeIconDrawable 也不是
+                // WeTypeIconEdgeLightLayer，若不在此拦截，下方的替换/矢量回退会把隐藏状态
+                // 覆盖成自定义图片或矢量 Logo，导致隐藏在一段时间后稳定失效。
+                if (!WeTypeSettings.isLogoShowEnabledXposed()) {
+                    if (existingDrawable !is ColorDrawable ||
+                        existingDrawable.color != Color.TRANSPARENT
+                    ) {
+                        val resourceId = imageView.getTag(LOGO_RESOURCE_TAG_KEY) as? Int
+                        synchronized(replacedLogoStates) {
+                            replacedLogoStates[imageView] = if (resourceId != null) {
+                                LogoHostState(resourceId = resourceId)
+                            } else {
+                                LogoHostState(drawable = existingDrawable)
+                            }
+                        }
+                        // 自行写入透明占位并绕过 hook，避免 hook 把 host 原始 drawable 覆盖成透明。
+                        restoringLogoDrawable.set(true)
+                        try {
+                            imageView.setImageDrawable(ColorDrawable(Color.TRANSPARENT))
+                        } finally {
+                            restoringLogoDrawable.remove()
+                        }
+                    }
                     return@forEachView
                 }
                 val resourceId = imageView.getTag(LOGO_RESOURCE_TAG_KEY) as? Int
