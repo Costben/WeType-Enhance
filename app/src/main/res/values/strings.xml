@@ -140,4 +140,9 @@
     <string name="settings_glass_lighten_angle">Brightening angle</string>
     <string name="settings_glass_highlight_parameter">Highlight · %1$s</string>
     <string name="settings_glass_reset_desc">Restore the default glass, frost, and highlight parameters.</string>
+    <string name="update_dialog_title">Update available</string>
+    <string name="update_dialog_cancel">Cancel</string>
+    <string name="update_dialog_confirm">Update</string>
+    <string name="update_dialog_version">Latest version v%1$s</string>
+    <string name="update_dialog_changelog">What\'s new</string>
 </resources>

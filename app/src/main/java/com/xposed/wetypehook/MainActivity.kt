@@ -151,6 +151,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -883,6 +884,16 @@ private fun WeTypeSettingsScreen(
 
     val scrollBehavior = MiuixScrollBehavior(state = rememberTopAppBarState())
 
+    var updateInfo by remember { mutableStateOf<ModuleUpdateInfo?>(null) }
+    var showUpdateSheet by remember { mutableStateOf(false) }
+    // 每次进入模块设置时检查一次更新，失败静默忽略。
+    LaunchedEffect(Unit) {
+        ModuleUpdateChecker.check(BuildConfig.VERSION_NAME)?.let { info ->
+            updateInfo = info
+            showUpdateSheet = true
+        }
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -1122,6 +1133,79 @@ private fun WeTypeSettingsScreen(
                 }
             }
         }
+    }
+
+    updateInfo?.let { info ->
+        WindowBottomSheet(
+            show = showUpdateSheet,
+            title = stringResource(R.string.update_dialog_title),
+            startAction = {
+                Text(
+                    text = stringResource(R.string.update_dialog_cancel),
+                    style = MiuixTheme.textStyles.main,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .clip(ContinuousRoundedRectangle(999.dp))
+                        .clickable { showUpdateSheet = false }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            },
+            endAction = {
+                Text(
+                    text = stringResource(R.string.update_dialog_confirm),
+                    style = MiuixTheme.textStyles.main,
+                    color = MiuixTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(ContinuousRoundedRectangle(999.dp))
+                        .clickable {
+                            showUpdateSheet = false
+                            openModuleUpdatePage(context, info)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            },
+            onDismissRequest = { showUpdateSheet = false }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.update_dialog_version, info.versionName),
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                )
+                if (info.changelog.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.update_dialog_changelog),
+                        style = MiuixTheme.textStyles.main,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = info.changelog,
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun openModuleUpdatePage(context: Context, info: ModuleUpdateInfo) {
+    val url = info.targetUrl
+    if (url.isBlank()) return
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }.onFailure {
+        Toast.makeText(context, url, Toast.LENGTH_LONG).show()
     }
 }
 

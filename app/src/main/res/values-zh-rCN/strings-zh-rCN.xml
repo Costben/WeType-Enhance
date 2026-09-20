@@ -140,4 +140,9 @@
     <string name="settings_glass_lighten_angle">提亮角域</string>
     <string name="settings_glass_highlight_parameter">高光 · %1$s</string>
     <string name="settings_glass_reset_desc">恢复默认的玻璃、磨砂和高光参数。</string>
+    <string name="update_dialog_title">检查到有更新</string>
+    <string name="update_dialog_cancel">取消</string>
+    <string name="update_dialog_confirm">更新</string>
+    <string name="update_dialog_version">最新版本 v%1$s</string>
+    <string name="update_dialog_changelog">更新内容</string>
 </resources>
