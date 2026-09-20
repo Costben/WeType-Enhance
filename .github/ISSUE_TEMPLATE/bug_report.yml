@@ -1,0 +1,133 @@
+name: Bug 反馈
+description: 报告模块在实机上出现的异常行为
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请尽量把环境与复现信息填完整，信息缺失的问题会被要求补充后再处理。
+        提交前请先搜索是否已有相同 issue。
+
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索过现有 issue，确认没有重复
+          required: true
+        - label: 我已确认模块与微信输入法均为最新版本，且重启过相关应用进程
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清楚描述发生了什么，不要只写“不能用”“失效了”。
+      placeholder: 例如：开启“隐藏 Logo”后，键盘右下角 Logo 区域仍显示自定义图片素材。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按顺序列出可以稳定复现的操作。写明具体的输入法、面板与开关状态。
+      placeholder: |
+        1. 打开模块设置，开启 XXX
+        2. 重启微信输入法进程
+        3. 打开任意应用拉起键盘
+        4. 观察到 XXX
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      placeholder: 例如：Logo 区域始终为空。
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 说明与预期的差异。若为间歇性问题，请描述失效前后的时间或触发条件。
+      placeholder: 例如：重启输入法后一段时间内正常隐藏，之后会变成 Logo 替换的素材。
+    validations:
+      required: true
+
+  - type: input
+    id: module_version
+    attributes:
+      label: 模块版本
+      description: 设置页底部显示的 versionCode / versionName，或 release tag。
+      placeholder: 例如：versionCode 42 / versionName 1.28.6
+    validations:
+      required: true
+
+  - type: input
+    id: ime_version
+    attributes:
+      label: 微信输入法版本
+      placeholder: 例如：3.5.2
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 系统与设备
+      description: 系统名称与版本、Android 版本、设备型号、屏幕分辨率。
+      placeholder: 例如：HyperOS 2 / Android 15 / 小米 15 / 1080x2400
+    validations:
+      required: true
+
+  - type: input
+    id: framework
+    attributes:
+      label: 框架
+      description: LSPosed / Vector / 其他，及版本号。
+      placeholder: 例如：LSPosed 1.9.2 (7029)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 作用域
+      description: 该问题在哪些输入法上出现。
+      multiple: true
+      options:
+        - 微信输入法
+        - Gboard
+        - 其他三方输入法
+        - 系统默认输入法
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 相关日志（LSPosed 日志、logcat）。可拖入 txt 文件，不要粘贴整段无关日志。
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: media
+    attributes:
+      label: 截图 / 录屏
+      description: 能直接体现问题的截图或录屏，可直接拖入。
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 其他可能有用的信息，例如是否修改过默认设置、是否复现于全新安装。
+    validations:
+      required: false
