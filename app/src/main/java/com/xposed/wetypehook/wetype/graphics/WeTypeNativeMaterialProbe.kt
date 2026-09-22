@@ -42,6 +42,7 @@ internal object WeTypeNativeMaterialProbe {
     const val PROP_CAUSTIC = "debug.wetype.r1probe.caustic"
     const val PROP_CLIP = "debug.wetype.r1probe.clip"
     const val PROP_MARKER = "debug.wetype.r1probe.marker"
+    const val PROP_OUTLINE = "debug.wetype.r1probe.outline"
 
     private const val EDGE_TYPE_RECTANGLE = 1
     private const val EDGE_ALPHA = 0.6f
@@ -56,6 +57,7 @@ internal object WeTypeNativeMaterialProbe {
     private const val CAUSTIC_LAYOUT_DP = 8
     private const val CAUSTIC_COLOR = 0x40FFFFFF
     private const val MARKER_TAG = "WeTypeR1Probe_Marker"
+    private const val MARKER_COLOR = 0xFFFF00FF.toInt()
     private const val ACTIVITY_HOST_TAG = "WeTypeR1Probe_ActivityHost"
 
     private val loggedProcess = AtomicBoolean(false)
@@ -64,8 +66,8 @@ internal object WeTypeNativeMaterialProbe {
     // 每个 View 最近一次生效的配置键；用于避免每帧重复下发。key 为 identityHashCode。
     private val appliedKeys = HashMap<Int, String>()
 
-    // 标记绘制控制：记录被临时替换的背景，便于撤销。
-    private val markerOriginalBackground = HashMap<Int, android.graphics.drawable.Drawable?>()
+    // 轮廓几何控制：记录被替换的 outlineProvider，便于撤销。
+    private val originalOutlineProviders = HashMap<Int, android.view.ViewOutlineProvider?>()
 
     private val utilClass: Class<*>? by lazy { load("com.oplus.view.material.OplusMaterialUtil") }
     private val edgeParamsClass: Class<*>? by lazy { load("com.oplus.view.material.OplusMaterialEdgeParams") }
@@ -78,10 +80,12 @@ internal object WeTypeNativeMaterialProbe {
     fun edgeOn(): Boolean = prop(PROP_EDGE) == "1"
     fun causticOn(): Boolean = prop(PROP_CAUSTIC) == "1"
     fun markerOn(): Boolean = prop(PROP_MARKER) == "1"
+    fun outlineOn(): Boolean = prop(PROP_OUTLINE) == "1"
     fun clipMode(): String = prop(PROP_CLIP) ?: ""
 
     fun describeSwitches(): String =
-        "master=${isEnabled()} edge=${edgeOn()} caustic=${causticOn()} clip='${clipMode()}' marker=${markerOn()}"
+        "master=${isEnabled()} edge=${edgeOn()} caustic=${causticOn()} clip='${clipMode()}' " +
+            "marker=${markerOn()} outline=${outlineOn()}"
 
     /**
      * 在真实 layout 完成后下发材质。必须在目标 View attach 且宽高 > 0 后调用。
@@ -103,7 +107,7 @@ internal object WeTypeNativeMaterialProbe {
             }
             val key = "${System.identityHashCode(view)}:${view.width}x${view.height}:" +
                 "${view.left},${view.top}:${view.isHardwareAccelerated}:${clipMode()}:" +
-                "edge=${edgeOn()}:caustic=${causticOn()}:marker=${markerOn()}"
+                "edge=${edgeOn()}:caustic=${causticOn()}:marker=${markerOn()}:outline=${outlineOn()}"
             if (appliedKeys[System.identityHashCode(view)] == key) return
             apply(view, host)
             // 缓存的是“这一组几何+开关已处理过”，不代表每个 setter 都成功；每次调用的四态
@@ -130,6 +134,11 @@ internal object WeTypeNativeMaterialProbe {
         }
 
         var any = false
+
+        // 轮廓几何：焦散与 clipToOutline 都依赖 Outline。真实 carrier 的 provider 可能给出
+        // 退化轮廓（rect=[0,0,0,0]），此时两者都必然零像素。该开关用真实 bounds 造一个
+        // 圆角矩形轮廓，作为对照，验证“退化轮廓”是否就是零像素的原因。
+        if (outlineOn()) ensureOutline(view, records) else removeOutline(view, records)
 
         // 与系统 native 路径一致的共享前置：corner + base（来自实际 layout）。
         val corner = call(records, "corner", util, "setCornerParams", view, cornerParamsClass) {
@@ -226,10 +235,16 @@ internal object WeTypeNativeMaterialProbe {
                         .newInstance(0, 0f, 0f, 0f))
                 }
                 booleanCall(records, "caustic.color=0", util, "setOutlineCausticShadowColor", view, 0)
+                booleanCall(records, "caustic.layout=0", util, "setOutlineCausticShadowLayout", view, 0, 0, 0, 0)
+                booleanCallVararg(
+                    records, "caustic.params=0", util, "setOutlineCausticShadowParams",
+                    arrayOf<Any?>(view, 0f, 0f, 0f, 0f, 0f, 0f)
+                )
             } else {
                 records += "OplusMaterialUtil ABSENT"
             }
             removeMarker(view, records)
+            removeOutline(view, records)
             writeEvidence(context, records)
             view.invalidateOutline()
         }.onFailure { Log.e(it) }
@@ -258,26 +273,83 @@ internal object WeTypeNativeMaterialProbe {
         return host
     }
 
-    // ---- marker -------------------------------------------------------------
+    // ---- outline geometry ---------------------------------------------------
 
-    private fun ensureMarker(view: View, records: MutableList<String>) {
+    /** 用真实 bounds 造一个圆角矩形 Outline，验证焦散/clip 在“有效轮廓”下的行为。 */
+    private fun ensureOutline(view: View, records: MutableList<String>) {
         val id = System.identityHashCode(view)
-        if (markerOriginalBackground.containsKey(id)) {
-            records += "marker already-present"
+        if (originalOutlineProviders.containsKey(id)) {
+            records += "outline already-set"
             return
         }
-        markerOriginalBackground[id] = view.background
-        view.background = ColorDrawable(0xFFFF00FF.toInt())
-        view.invalidate()
-        records += "marker set background=magenta (prev=${view.background != null})"
+        originalOutlineProviders[id] = view.outlineProvider
+        val radiusPx = CORNER_RADIUS_DP * view.resources.displayMetrics.density
+        view.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(target: View, outline: Outline) {
+                if (target.width > 0 && target.height > 0) {
+                    outline.setRoundRect(0, 0, target.width, target.height, radiusPx)
+                }
+            }
+        }
+        view.invalidateOutline()
+        records += "outline set roundrect radius=$radiusPx bounds=0,0,${view.width},${view.height}"
+    }
+
+    private fun removeOutline(view: View, records: MutableList<String>) {
+        val id = System.identityHashCode(view)
+        if (!originalOutlineProviders.containsKey(id)) return
+        view.outlineProvider = originalOutlineProviders.remove(id)
+        view.invalidateOutline()
+        records += "outline restored"
+    }
+
+    // ---- marker -------------------------------------------------------------
+
+    /**
+     * 基础绘制控制：在该节点内叠加一个不透明的独立子 View（不改动自身 background），
+     * 用来证明该节点确实进入捕获帧。叠加被证明生效后必须撤销（removeMarker）。
+     */
+    private fun ensureMarker(view: View, records: MutableList<String>) {
+        val group = view as? ViewGroup
+        if (group == null) {
+            records += "marker SKIP not-a-ViewGroup class=${view.javaClass.name}"
+            return
+        }
+        if (group.findViewWithTag<View>(MARKER_TAG) != null) {
+            records += "marker already-present childCount=${group.childCount}"
+            return
+        }
+        val marker = View(group.context).apply {
+            tag = MARKER_TAG
+            isClickable = false
+            background = ColorDrawable(MARKER_COLOR)
+        }
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        group.addView(marker, lp)
+        group.requestLayout()
+        group.invalidate()
+        marker.post {
+            writeEvidence(
+                group.context,
+                listOf(
+                    "marker child laid-out class=${marker.javaClass.name} " +
+                        "size=${marker.width}x${marker.height} left=${marker.left} top=${marker.top} " +
+                        "vis=${marker.visibility} alpha=${marker.alpha} childCount=${group.childCount}"
+                )
+            )
+        }
+        records += "marker added child=View lp=${lp.width}x${lp.height} childCount=${group.childCount}"
     }
 
     private fun removeMarker(view: View, records: MutableList<String>) {
-        val id = System.identityHashCode(view)
-        if (!markerOriginalBackground.containsKey(id)) return
-        view.background = markerOriginalBackground.remove(id)
-        view.invalidate()
-        records += "marker restored background"
+        val group = view as? ViewGroup ?: return
+        val marker = group.findViewWithTag<View>(MARKER_TAG) ?: return
+        group.removeView(marker)
+        group.invalidate()
+        records += "marker removed child childCount=${group.childCount}"
     }
 
     // ---- reflection helpers -------------------------------------------------
@@ -420,16 +492,36 @@ internal object WeTypeNativeMaterialProbe {
             "density=${view.resources.displayMetrics.density}"
     }
 
+    /**
+     * 可靠地描述 Outline：先取类型（empty/rect/roundrect/path），再给实际 rect 与 radius。
+     * 路径型或空 Outline 的 getRect 无意义，单独标注，避免把空 rect 误判为“无效”。
+     */
     private fun describeOutline(view: View): String = runCatching {
         val provider = view.outlineProvider?.javaClass?.name ?: "null"
         val outline = Outline()
         view.outlineProvider?.getOutline(view, outline)
+        val ocls = Outline::class.java
+        val empty = runCatching { ocls.getMethod("isEmpty").invoke(outline) as Boolean }.getOrDefault(true)
+        val mode = runCatching {
+            ocls.getDeclaredField("mMode").apply { isAccessible = true }.getInt(outline)
+        }.getOrDefault(-1)
+        val path = runCatching { ocls.getMethod("getPath").invoke(outline) }.getOrNull()
+        val radiusRaw = runCatching { ocls.getMethod("getRadius").invoke(outline) as Float }.getOrElse { 0f }
+        val radius = if (radiusRaw.isFinite()) radiusRaw else 0f
+        val alpha = runCatching { ocls.getMethod("getAlpha").invoke(outline) as Float }.getOrElse { 1f }
         val r = Rect()
-        outline.getRect(r)
-        val hasAlpha = runCatching { outline.alpha }.getOrDefault(-1f)
-        val radius = runCatching { outline.radius }.getOrDefault(-1f)
-        // 路径型 Outline 的 getRect 恒为空；radius<=0 且 rect 为空即提示为路径轮廓。
-        "$provider rect=[${r.left},${r.top},${r.right},${r.bottom}] radius=$radius alpha=$hasAlpha"
+        runCatching { outline.getRect(r) }
+        val type = when {
+            empty -> "empty"
+            path != null -> "path"
+            radius > 0f -> "roundrect"
+            else -> "rect"
+        }
+        val modeName = when (mode) {
+            0 -> "EMPTY"; 1 -> "CONVEX_PATH"; 2 -> "ROUND_RECT"; 3 -> "RECT"; else -> "?$mode"
+        }
+        "$provider type=$type mode=$modeName empty=$empty rect=[${r.left},${r.top},${r.right},${r.bottom}] " +
+            "radius=$radius alpha=$alpha pathPresent=${path != null}"
     }.getOrElse { "threw:${it.javaClass.simpleName}" }
 
     private fun renderNodeId(view: View): String = runCatching {

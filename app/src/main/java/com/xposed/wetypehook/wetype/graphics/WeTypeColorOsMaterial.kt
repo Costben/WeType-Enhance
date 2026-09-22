@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import com.xposed.wetypehook.PropertyUtils
@@ -21,7 +22,8 @@ import com.xposed.wetypehook.xposed.Log
  *
  * 这些类位于 `oplus-framework.jar`，是可被第三方进程反射调用的平台类（已在 ColorOS V17
  * 的 PLK110 上用独立 APK 实测落像素）。参数锁定小布输入法的实测预设：blur 150px、
- * Kawase 模糊、mix 染色；圆角使用标准圆弧，与模块描边和裁剪共用四角半径。
+ * Kawase 模糊、mix 染色；圆角使用 G2 超平滑连续曲线（weight=3.0f），与系统原生
+ * `COUIShadowEdgeDrawable` 硬件流光轮廓完美拟合。
  */
 internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMaterial {
 
@@ -160,6 +162,11 @@ internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMater
         /** ROM 判定：ColorOS / OxygenOS 系一律带此属性，与 HyperOS 的属性互斥。 */
         fun isPlatform(): Boolean = !PropertyUtils["ro.build.version.oplusrom", ""].isNullOrEmpty()
 
+        @Volatile
+        private var cachedStrokeEnabled: Boolean? = null
+        @Volatile
+        private var lastStrokeCheckTime: Long = 0L
+
         fun isAvailable(context: Context): Boolean = runCatching {
             isPlatform() && viewRootManagerClass != null && blurParamClass != null &&
                 Settings.System.getInt(context.contentResolver, MATERIAL_BLUR_SETTING, 1) == 1
@@ -170,8 +177,16 @@ internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMater
          * 面板描边与外侧焦散光晕；模块自绘的复刻层必须跟随它，否则会和系统面板观感割裂。
          */
         fun isNativeStrokeEnabled(context: Context): Boolean = runCatching {
-            isPlatform() &&
-                Settings.System.getInt(context.contentResolver, MATERIAL_STROKE_SETTING, 1) == 1
+            if (!isPlatform()) return false
+            val now = SystemClock.uptimeMillis()
+            val cached = cachedStrokeEnabled
+            if (cached != null && now - lastStrokeCheckTime < 1000L) {
+                return cached
+            }
+            val enabled = Settings.System.getInt(context.contentResolver, MATERIAL_STROKE_SETTING, 1) == 1
+            cachedStrokeEnabled = enabled
+            lastStrokeCheckTime = now
+            enabled
         }.getOrDefault(false)
 
         fun fallbackColor(isDark: Boolean): Int =
@@ -180,7 +195,11 @@ internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMater
         fun observeAvailability(context: Context, onChanged: () -> Unit): () -> Unit {
             val resolver = context.contentResolver
             val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                override fun onChange(selfChange: Boolean) = onChanged()
+                override fun onChange(selfChange: Boolean) {
+                    cachedStrokeEnabled = null
+                    lastStrokeCheckTime = 0L
+                    onChanged()
+                }
             }
             resolver.registerContentObserver(
                 Settings.System.getUriFor(MATERIAL_BLUR_SETTING),

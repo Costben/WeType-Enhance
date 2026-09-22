@@ -34,6 +34,7 @@ import com.xposed.wetypehook.wetype.graphics.WeTypeNativeMaterialProbe
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterial
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
+import com.xposed.wetypehook.wetype.graphics.WeTypeColorOsMaterialStroke
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
@@ -44,6 +45,22 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 private const val WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX = 2
+
+/**
+ * ColorOS 原生材质边缘光生效时，背板面板的最低不透明度（0xC8 ≈ 78%）。
+ *
+ * 原生材质是**背板滤镜**，输出强度正比于背板已画出的内容量。实测同一套参数下：25% 透明
+ * 面板 → 0 像素；不透明深色 → 6,052；不透明中灰 → 8,834；不透明浅色 → 10,118。默认深色
+ * 面板为 25% 黑，铺在本来就暗的宿主背景上近似空白，滤镜输入为空，光效完全不可见。
+ *
+ * 输出随面板不透明度近似线性（实测 alpha 0x40 → 0 px、0xB3 → 3,554 px、0xFF → 6,052 px），
+ * 0xC8 为深色模式留出可见余量。
+ */
+private const val MIN_PANEL_ALPHA = 0xC8
+
+/** 把 [this] 的 alpha 提升到至少 [minimum]（0..255），保留 RGB。 */
+private fun Int.withMinimumAlpha(minimum: Int): Int =
+    (this and 0x00FFFFFF) or (maxOf(this ushr 24, minimum) shl 24)
 /**
  * 导航栏图标反色的亮度判据。
  *
@@ -58,7 +75,6 @@ private const val NAV_BAR_LUMINANCE_THRESHOLD = 0.5
  */
 private const val NAV_BAR_OPAQUE_ALPHA_THRESHOLD = 200
 
-private const val WETYPE_HARDWARE_VIEW_CLASS_PREFIX = "com.tencent.wetype.plugin.hld.hardware."
 private const val WETYPE_CANDIDATE_VIEW_CLASS_NAME =
     "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView"
 private const val WETYPE_SETTINGS_KEYBOARD_CLASS_NAME =
@@ -100,6 +116,7 @@ internal object WeTypeWindowHooks {
         val blurRadius: Int,
         val edgeHighlightEnabled: Boolean,
         val edgeHighlightIntensity: Int,
+        val colorOsLightAngle: Int,
         val cornerRadii: WeTypeCornerRadii,
         val nightMode: Int,
         val density: Float,
@@ -131,6 +148,16 @@ internal object WeTypeWindowHooks {
     private data class WeTypeWindowState(
         var windowVisible: Boolean = false,
         var backgroundCarrier: View? = null,
+        /**
+         * 原生材质光效的承载层。
+         *
+         * ColorOS 材质是**背板滤镜**：它处理「节点背后、同一窗口内」已经画好的画面。
+         * 背板载体自己就是最底层节点，它背后什么都没有，所以把材质挂在它身上必然零像素
+         * （实测：同参数下给它背后垫一层窗口内实色，立刻出现 12 万+ 像素变化）。
+         * 因此材质改挂在载体内部一张透明覆盖层上——它的背板就是载体自己画出来的面板，
+         * 材质滤镜这才有输入源。
+         */
+        var materialOverlay: View? = null,
         var carrierOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
         var hyperMaterial: WeTypeSystemMaterial? = null,
         var stopMaterialObserver: (() -> Unit)? = null,
@@ -154,7 +181,10 @@ internal object WeTypeWindowHooks {
         var originalWindowBackground: Drawable? = null,
         var originalWindowBlurRadius: Int? = null,
         var navBarAppearanceCaptured: Boolean = false,
-        var originalNavBarAppearance: Int = 0
+        var originalNavBarAppearance: Int = 0,
+        var capsuleManager: WeTypeColorOsCapsuleManager? = null,
+        var materialStrokeApplied: Boolean = false,
+        var materialStrokeKey: String? = null
     )
 
     private val weTypeWindowStates = WeakHashMap<Any, WeTypeWindowState>()
@@ -997,15 +1027,25 @@ internal object WeTypeWindowHooks {
             val visibleTopInsets = insets?.visibleTopInsets ?: return@runCatching
             val visibleImeHeight = (rootHeight - visibleTopInsets).coerceAtLeast(0)
             val previousVisibleImeHeight = state.computedVisibleImeHeightPx
-            state.computedVisibleImeHeightPx = visibleImeHeight
 
             if (!state.windowVisible) return@runCatching
-            if (visibleImeHeight <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {
-                hideBackgroundCarrier(state)
+            if (visibleImeHeight > WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {
+                state.computedVisibleImeHeightPx = visibleImeHeight
+                if (visibleImeHeight == previousVisibleImeHeight) return@runCatching
+                scheduleWindowBlur(inputMethodService, refreshStyle = false)
                 return@runCatching
             }
-            if (visibleImeHeight == previousVisibleImeHeight) return@runCatching
-            scheduleWindowBlur(inputMethodService, refreshStyle = false)
+            // 微信输入法在键盘仍完整显示时会偶发上报 visibleTopInsets≈root（imeH=1）。
+            // 收起必须由真实几何**正面确认**：几何取不到（宿主正在重排）时不能当作收起，
+            // 否则背板会被反复隐藏，表现为材质/背板全部不可见。
+            // 伪上报也不写入 `computedVisibleImeHeightPx`，避免污染「键盘真实高度」。
+            // 真正的收起由生命周期回调（onWindowHidden / onFinishInputView）负责。
+            val bounds = collectBackgroundBounds(inputMethodService, window.decorView, IntArray(2), state)
+            if (bounds == null || bounds.height > WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {
+                return@runCatching
+            }
+            state.computedVisibleImeHeightPx = visibleImeHeight
+            hideBackgroundCarrier(state)
         }.onFailure {
             Log.i("Failed: Track WeType visible IME height")
             Log.i(it)
@@ -1037,11 +1077,18 @@ internal object WeTypeWindowHooks {
 
     private fun scheduleWindowBlur(inputMethodService: Any, refreshStyle: Boolean = true) {
         val state = getWindowState(inputMethodService)
-        if (!state.windowVisible) return
-        val window = (inputMethodService as? InputMethodService)?.window?.window ?: return
+        if (!state.windowVisible) {
+            return
+        }
+        val window = (inputMethodService as? InputMethodService)?.window?.window
+        if (window == null) {
+            return
+        }
         val decorView = window.decorView
         val observer = decorView.viewTreeObserver
-        if (!observer.isAlive) return
+        if (!observer.isAlive) {
+            return
+        }
         state.window = WeakReference(window)
         if (state.stopMaterialObserver == null) {
             val serviceReference = WeakReference(inputMethodService)
@@ -1075,17 +1122,17 @@ internal object WeTypeWindowHooks {
                     val context: Context = service
                     val window = service.window?.window ?: return@runCatching true
                     val latestDecorView = window.decorView
-                    if (shouldHideBackground(latestDecorView, state)) {
+                    val bounds = collectBackgroundBounds(service, latestDecorView, state.locationBuffer, state)
+                    if (shouldHideBackground(latestDecorView, state, bounds)) {
                         hideBackgroundCarrier(state)
                         return@runCatching true
                     }
-                    val bounds = collectBackgroundBounds(service, latestDecorView, state.locationBuffer)
                     if (bounds == null) {
                         // Never display a stale/full-window estimate while the host relayouts.
                         hideBackgroundCarrier(state)
                         return@runCatching true
                     }
-                    applyBackgroundCarrier(window, latestDecorView, context, state, bounds)
+                    applyBackgroundCarrier(service, window, latestDecorView, context, state, bounds)
                     true
                 }.getOrElse {
                     Log.i("Failed: Apply WeType background before drawing")
@@ -1145,39 +1192,60 @@ internal object WeTypeWindowHooks {
         }
     }
 
-    private fun resolveCornerRadii(targetView: View, context: Context, state: WeTypeWindowState, cornerRadiusDp: Int): WeTypeCornerRadii {
+    private fun resolveCornerRadii(
+        targetView: View,
+        context: Context,
+        state: WeTypeWindowState,
+        topRadiusDp: Int,
+        bottomRadiusDp: Int
+    ): WeTypeCornerRadii {
         val topRadius = android.util.TypedValue.applyDimension(
             android.util.TypedValue.COMPLEX_UNIT_DIP,
-            cornerRadiusDp.toFloat(),
+            topRadiusDp.toFloat(),
             context.resources.displayMetrics
         )
-        val insets = targetView.rootWindowInsets
-        if (insets != null) {
-            state.bottomLeftHardwareCornerRadius = insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius?.toFloat()
-            state.bottomRightHardwareCornerRadius = insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)?.radius?.toFloat()
-        }
+        val bottomRadius = android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_DIP,
+            bottomRadiusDp.toFloat(),
+            context.resources.displayMetrics
+        )
         return WeTypeCornerRadii(
             topLeft = topRadius,
             topRight = topRadius,
-            bottomRight = state.bottomRightHardwareCornerRadius ?: topRadius,
-            bottomLeft = state.bottomLeftHardwareCornerRadius ?: topRadius
+            bottomRight = bottomRadius,
+            bottomLeft = bottomRadius
         )
     }
 
     private fun collectBackgroundBounds(
         inputMethodService: Any,
         decorView: View,
-        location: IntArray
+        location: IntArray,
+        state: WeTypeWindowState
     ): WeTypeBackgroundBounds? {
         val contentViews = listOfNotNull(
             readViewField(inputMethodService, "mCandidatesFrame"),
             readViewField(inputMethodService, "mInputFrame"),
             runCatching { inputMethodService.invokeMethodAs<View>("getInputView") }.getOrNull()
         )
-        return resolveWeTypeBackgroundBounds(
+        val geometry = resolveWeTypeBackgroundBounds(
             decorView.toBackgroundLayout(location),
             contentViews.map { it.toBackgroundLayout(location) }
         )
+        // 键盘真实高度以 IME 自己声明的可见高度为准。
+        //
+        // 宿主在键盘稳定后会把自己的输入帧铺满整个窗口（实测 `mInputFrame` 变成
+        // h=2631 top=0），此时内容视图几何不再代表键盘区域；照它算出的背板会占满整屏
+        // （实测整屏染色 313 万像素）。几何只在声明高度不可用时兜底。
+        val declared = state.computedVisibleImeHeightPx
+            ?.takeIf { it > WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX }
+        val decorHeight = decorView.height
+        val usableGeometry = geometry?.takeIf { it.height < decorHeight }
+        if (usableGeometry != null) return usableGeometry
+        if (declared != null && decorHeight > 0) {
+            return WeTypeBackgroundBounds(decorHeight - declared, declared)
+        }
+        return null
     }
 
     private fun readViewField(inputMethodService: Any, fieldName: String): View? =
@@ -1195,6 +1263,7 @@ internal object WeTypeWindowHooks {
     }
 
     private fun applyBackgroundCarrier(
+        inputMethodService: Any,
         window: Window,
         decorView: View,
         context: Context,
@@ -1204,7 +1273,13 @@ internal object WeTypeWindowHooks {
         val decorGroup = decorView as? ViewGroup ?: return
         val backgroundHeight = bounds.height
         val settings = WeTypeSettings.readSnapshotXposed()
-        val cornerRadii = resolveCornerRadii(decorView, context, state, settings.cornerRadius)
+        val cornerRadii = resolveCornerRadii(
+            targetView = decorView,
+            context = context,
+            state = state,
+            topRadiusDp = settings.cornerRadius,
+            bottomRadiusDp = settings.bottomCornerRadius
+        )
         if (backgroundHeight < cornerRadii.maxRadius()) {
             hideBackgroundCarrier(state)
             return
@@ -1237,6 +1312,7 @@ internal object WeTypeWindowHooks {
             blurRadius = settings.blurRadius,
             edgeHighlightEnabled = settings.edgeHighlightEnabled,
             edgeHighlightIntensity = settings.edgeHighlightIntensity,
+            colorOsLightAngle = settings.colorOsLightAngle,
             cornerRadii = cornerRadii,
             nightMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
             density = context.resources.displayMetrics.density,
@@ -1249,8 +1325,18 @@ internal object WeTypeWindowHooks {
         } else {
             state.backgroundViewRoot
         }
+        // ColorOS 原生边缘光是否生效只看它自己的开关，不再依赖 HyperOS 质感视效开关。
+        val useColorOsStroke = style.edgeHighlightEnabled &&
+            style.nativeStrokeEnabled &&
+            WeTypeSystemMaterials.isColorOsBackend()
         if (carrier.background == null || state.backgroundStyle != style || state.backgroundViewRoot !== viewRoot) {
-            applyContinuousCornerOutline(carrier, cornerRadii)
+            val isColorOsMaterial = style.hyperMaterialEnabled && WeTypeSystemMaterials.isColorOsBackend()
+            if (!isColorOsMaterial) {
+                applyContinuousCornerOutline(carrier, cornerRadii)
+            } else {
+                carrier.clipToOutline = false
+                carrier.outlineProvider = null
+            }
             val material = checkNotNull(state.hyperMaterial)
             if (style.hyperMaterialEnabled) {
                 // Remove the old blur/bloom drawable before enabling the system material.
@@ -1259,26 +1345,39 @@ internal object WeTypeWindowHooks {
                     // An invocation failure keeps the keyboard legible without custom effects.
                     carrier.background = createTintDrawable(WeTypeSystemMaterials.fallbackColor(style.nightMode == Configuration.UI_MODE_NIGHT_YES), cornerRadii)
                     carrier.foreground = null
+                    applyContinuousCornerOutline(carrier, cornerRadii)
                 } else {
-                    // ColorOS 的原生模糊只画背景，不像 HyperOS 材质自带面板光影；
-                    // 这里把模块自绘的「流光轮廓」叠到模糊之上，跟随系统同名开关。
-                    carrier.foreground = if (
-                        style.edgeHighlightEnabled &&
-                        style.nativeStrokeEnabled &&
-                        WeTypeSystemMaterials.isColorOsBackend()
-                    ) {
-                        WeTypeBloomStrokeDrawable(
-                            context = context,
-                            cornerRadii = cornerRadii,
-                            surfaceColor = style.color,
-                            intensityScale = style.edgeHighlightIntensity / 100f
+                    // ColorOS 原生模糊只画背景，不像 HyperOS 材质自带面板光影。
+                    //
+                    // 系统原生「COUIShadowEdgeDrawable」硬件流光轮廓此前挂在背板载体的
+                    // foreground 上，而载体位于 decor 最底层，键盘自身的按键面板会把左右两条
+                    // 侧边描边整个盖住（只有顶部/底部空隙能透出来），表现为「只有上下有边缘光」。
+                    // 改为挂到 decor 的 ViewOverlay：它在所有子 View 之上绘制，因此四周四条边
+                    // 的描边、向内扩散的内发光与向外漫射的散光都能完整呈现。
+                    carrier.foreground = null
+                    // 原生材质是**背板滤镜**，只处理「节点背后、同一窗口内」已画好的画面。
+                    // 载体此前只挂模糊 Drawable，等于没画任何东西（实测键盘区像素与 App 背景
+                    // 完全一致），覆盖层的材质滤镜输入为空 → 参数下发成功但零像素。
+                    // 原生边缘光生效时让载体画出真实面板，材质才有输入源。
+                    if (useColorOsStroke) {
+                        // 原生材质是背板滤镜，输出强度正比于背板的内容量。实测同一套参数下：
+                        // 25% 透明面板 → 0 像素；不透明深色面板 → 6,052 像素；不透明中灰 →
+                        // 8,834 像素；不透明浅色 → 10,118 像素。默认深色面板是 25% 黑，铺在
+                        // 本来就暗的宿主背景上几乎等于空白，材质滤镜输入为空 → 光效不可见。
+                        // 因此原生边缘光生效时给面板一个最低不透明度。
+                        val panelColor = style.color.withMinimumAlpha(MIN_PANEL_ALPHA)
+                        carrier.background = createBackgroundDrawable(
+                            carrier, context, style.copy(color = panelColor), skipStroke = true
                         )
-                    } else null
+                    }
                 }
             } else {
                 material.clear()
+                // 原生边缘光生效时不再叠加自绘 bloom 描边，避免出现两条轮廓。
                 carrier.foreground = null
-                carrier.background = createBackgroundDrawable(carrier, context, style)
+                carrier.background = createBackgroundDrawable(
+                    carrier, context, style, skipStroke = useColorOsStroke
+                )
             }
             state.backgroundStyle = style
             state.backgroundViewRoot = viewRoot
@@ -1294,10 +1393,74 @@ internal object WeTypeWindowHooks {
             carrier.layout(0, bounds.top, decorView.width, bounds.top + backgroundHeight)
             carrier.invalidateOutline()
         }
-        if (style.hyperMaterialEnabled) state.hyperMaterial?.updateGeometry(cornerRadii)
+        if (style.hyperMaterialEnabled) {
+            state.hyperMaterial?.updateGeometry(cornerRadii)
+        }
+        // 材质边缘光/内阴影必须等载体量到真实尺寸后再下发：`OplusMaterialUtil.setBaseParams`
+        // 依赖 innerBounds，载体在 apply 时还是 0x0 会导致参数下发失败、光效不可见。
+        applyColorOsMaterialStroke(carrier, state, style, useColorOsStroke)
         // R1 探针：仅在 debug.wetype.r1probe=1 时下发；默认关闭时若此前下发过则清理一次。
         WeTypeNativeMaterialProbe.applyIfEnabled(carrier, "ime")
+        syncColorOsCapsule(inputMethodService, decorGroup, state)
         applyNavigationBarAppearance(window, state, style)
+    }
+
+    /**
+     * ColorOS 原生材质胶囊（阶段三方案·方案 C）。默认关闭：仅在
+     * `debug.wetype.coloros.capsule=1` 且四重门禁全部通过时才挂载独立 DecorView 胶囊载体，
+     * 否则清理已挂载实例，退回既有背板材质。整条链路围绕 [WeTypeColorOsCapsuleManager]，
+     * 任一异常都由其内部兜底，不向输入法主流程抛出。
+     */
+    private fun syncColorOsCapsule(
+        inputMethodService: Any,
+        decorGroup: ViewGroup,
+        state: WeTypeWindowState
+    ) {
+        if (!WeTypeColorOsCapsuleGate.isRequested()) {
+            state.capsuleManager?.let { manager ->
+                manager.clear()
+                state.capsuleManager = null
+            }
+            return
+        }
+        runCatching {
+            val anchor = findCapsuleAnchor(decorGroup, inputMethodService) ?: return@runCatching
+            val isDark = decorGroup.context.resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+            val manager = state.capsuleManager
+                ?: WeTypeColorOsCapsuleManager(decorGroup, decorGroup.context).also {
+                    state.capsuleManager = it
+                }
+            manager.sync(anchor, isDark)
+        }.onFailure {
+            Log.i("Failed: Sync ColorOS native material capsule")
+            Log.i(it)
+        }
+    }
+
+    /**
+     * 胶囊锚点：优先微信输入法自己的工具栏/候选栏 `ImeCandidateView`（方案 C 场景 1），
+     * 它才是真实的悬浮工具条；AOSP 的 `mCandidatesFrame` 在微信用不上（实测高度恒为 0，
+     * `isShown=false`）。找不到时退回顶部工具条容器，最后才用整个 `mInputFrame`。
+     */
+    private fun findCapsuleAnchor(decorView: View, inputMethodService: Any): View? {
+        val candidateClass = weTypeCandidateViewClass
+            ?: loadClassOrNull(WETYPE_CANDIDATE_VIEW_CLASS_NAME)?.also { weTypeCandidateViewClass = it }
+        if (candidateClass != null) {
+            findCandidateView(decorView, candidateClass)?.let { return it }
+        }
+        return readViewField(inputMethodService, "mInputFrame")
+    }
+
+    private fun findCandidateView(view: View, candidateClass: Class<*>): View? {
+        if (candidateClass.isInstance(view)) {
+            if (view.isShown && view.height > 0) return view
+        }
+        val group = view as? ViewGroup ?: return null
+        for (index in 0 until group.childCount) {
+            findCandidateView(group.getChildAt(index), candidateClass)?.let { return it }
+        }
+        return null
     }
 
     /**
@@ -1396,6 +1559,22 @@ internal object WeTypeWindowHooks {
             0,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
         )
+        // 透明覆盖层：原生材质光效的承载层，背板即载体画出的面板本身。
+        val overlay = View(context).apply {
+            visibility = View.INVISIBLE
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+        carrier.addView(
+            overlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        state.materialOverlay = overlay
         state.backgroundCarrier = carrier
         // A fresh RenderNode restores actual ROM defaults when an override is cleared.
         state.carrierOverrides = overrides
@@ -1405,28 +1584,43 @@ internal object WeTypeWindowHooks {
 
     private fun shouldHideBackground(
         decorView: View,
-        state: WeTypeWindowState
+        state: WeTypeWindowState,
+        bounds: WeTypeBackgroundBounds?
     ): Boolean {
         val collapsedByInsets = state.computedVisibleImeHeightPx
             ?.let { it <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX } == true
-        if (collapsedByInsets) return true
+        if (collapsedByInsets) {
+            // 与 onComputeInsets 同一套纪律：imeH=1 的单次上报不足以判定收起，必须由几何
+            // 正面确认（几何取不到时视为宿主正在重排，保持现状）。
+            if (bounds != null && bounds.height <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {
+                return true
+            }
+        }
 
-        // The input view is already a descendant of decor; do not scan it twice.
-        return containsWeTypeHardwareView(decorView, state)
+        // 外接实体键盘：系统 `Configuration.keyboard` 才是权威信号。
+        //
+        // 旧实现按 `com.tencent.wetype.plugin.hld.hardware.` 前缀扫描视图类名，但该包经混淆后
+        // 同样包含屏上键盘本体：实测 `...hardware.f`（1272x672）在软键盘正常显示时即为
+        // VISIBLE，于是背板被永久隐藏，材质/背板全部不可见。改为按系统配置判断「是否接了
+        // 实体键盘」，既保留原功能，又不再依赖混淆后的类名。
+        if (hasExternalKeyboard(decorView.context) || containsWeTypeHardwareCandidateView(decorView, state)) {
+            return true
+        }
+        return false
     }
 
-    private fun containsWeTypeHardwareView(view: View, state: WeTypeWindowState): Boolean {
-        if (view.visibility != View.VISIBLE) return false
-        val className = view.javaClass.name
-        if (className.startsWith(WETYPE_HARDWARE_VIEW_CLASS_PREFIX)) return true
+    private fun hasExternalKeyboard(context: Context): Boolean =
+        context.resources.configuration.keyboard != Configuration.KEYBOARD_NOKEYS
 
+    private fun containsWeTypeHardwareCandidateView(view: View, state: WeTypeWindowState): Boolean {
+        if (view.visibility != View.VISIBLE) return false
         val hardwareViewIds = state.hardwareViewIds ?: resolveHardwareViewIds(view.context)
             .also { state.hardwareViewIds = it }
         if (view.id != View.NO_ID && hardwareViewIds.contains(view.id)) return true
 
         val group = view as? ViewGroup ?: return false
         for (index in 0 until group.childCount) {
-            if (containsWeTypeHardwareView(group.getChildAt(index), state)) return true
+            if (containsWeTypeHardwareCandidateView(group.getChildAt(index), state)) return true
         }
         return false
     }
@@ -1441,7 +1635,9 @@ internal object WeTypeWindowHooks {
         // 键盘收起时 IME 窗口在 WM 眼里仍然 visible，依旧是导航栏外观的权威来源。不在这里
         // 交还，桌面和宿主 App 的底栏图标会被输入法的残留值继续按着。
         restoreNavigationBarAppearance(state)
+        state.capsuleManager?.hide()
         val carrier = state.backgroundCarrier ?: return
+        detachStrokeOverlay(state)
         carrier.visibility = View.INVISIBLE
         state.hyperMaterial?.clear()
         WeTypeNativeMaterialProbe.clear(carrier, "ime-hide")
@@ -1453,9 +1649,13 @@ internal object WeTypeWindowHooks {
         state.stopMaterialObserver = null
         state.hyperMaterial?.clear()
         state.hyperMaterial = null
+        state.capsuleManager?.clear()
+        state.capsuleManager = null
         // 必须在置空 state.window 之前交还：restoreNavigationBarAppearance 依赖它取窗口。
         restoreNavigationBarAppearance(state)
         val carrier = state.backgroundCarrier ?: return
+        detachStrokeOverlay(state)
+        carrier.foreground = null
         (carrier.parent as? ViewGroup)?.removeView(carrier)
         state.backgroundCarrier = null
         state.backgroundStyle = null
@@ -1476,20 +1676,26 @@ internal object WeTypeWindowHooks {
         state.originalWindowBlurRadius = null
     }
 
-    private fun createBackgroundDrawable(targetView: View, context: Context, style: BackgroundStyle): Drawable {
-        val (color, blurRadius, edgeHighlightEnabled, edgeHighlightIntensity, cornerRadii) = style
+    private fun createBackgroundDrawable(
+        targetView: View,
+        context: Context,
+        style: BackgroundStyle,
+        skipStroke: Boolean = false
+    ): Drawable {
+        val color = style.color
+        val cornerRadii = style.cornerRadii
         val tintDrawable = createTintDrawable(color, cornerRadii)
-        val blurDrawable = createInternalBackgroundBlurDrawable(targetView, blurRadius, cornerRadii)
+        val blurDrawable = createInternalBackgroundBlurDrawable(targetView, style.blurRadius, cornerRadii)
         val layers = buildList {
             blurDrawable?.also(::add)
             add(tintDrawable)
-            if (edgeHighlightEnabled) {
+            if (style.edgeHighlightEnabled && !skipStroke) {
                 add(
                     WeTypeBloomStrokeDrawable(
                         context = context,
                         cornerRadii = cornerRadii,
                         surfaceColor = color,
-                        intensityScale = edgeHighlightIntensity / 100f
+                        intensityScale = style.edgeHighlightIntensity / 100f
                     )
                 )
             }
@@ -1513,8 +1719,8 @@ internal object WeTypeWindowHooks {
                 blurDrawable,
                 cornerRadii.topLeft,
                 cornerRadii.topRight,
-                cornerRadii.bottomRight,
-                cornerRadii.bottomLeft
+                cornerRadii.bottomLeft,
+                cornerRadii.bottomRight
             )
         }.recoverCatching {
             blurDrawable.javaClass.getMethod("setCornerRadius", Float::class.javaPrimitiveType)
@@ -1527,6 +1733,54 @@ internal object WeTypeWindowHooks {
         shape = GradientDrawable.RECTANGLE
         this.cornerRadii = cornerRadii.toArray()
         setColor(color)
+    }
+
+    /**
+     * 给背板载体下发 ColorOS 原生材质「边缘光 + 内阴影」（RenderNode 材质参数）。
+     *
+     * 之前用 `COUIShadowEdgeDrawable` 自绘流光轮廓的方案在这台设备上实测无可见光效
+     * （见 [WeTypeColorOsMaterialStroke] 的说明），因此改走系统真正的材质通道：
+     * `OplusMaterialUtil.setEdgeParams/setShadowParams`，其中 `lineAngle` 即光照方向。
+     * 关闭时清空参数，避免残留上一次的光效。
+     */
+    private fun applyColorOsMaterialStroke(
+        carrier: View,
+        state: WeTypeWindowState,
+        style: BackgroundStyle,
+        enabled: Boolean
+    ) {
+        if (!enabled) {
+            detachStrokeOverlay(state)
+            return
+        }
+        // 尺寸/样式未变就不重复下发，避免每个布局回调都走一遍反射。
+        val key = listOf(
+            carrier.width, carrier.height,
+            style.nightMode, style.edgeHighlightIntensity, style.colorOsLightAngle,
+            style.cornerRadii
+        ).joinToString("|")
+        if (state.materialStrokeApplied && state.materialStrokeKey == key) return
+        val strokeTarget = state.materialOverlay ?: carrier
+        strokeTarget.visibility = View.VISIBLE
+        val applied = WeTypeColorOsMaterialStroke.apply(
+            view = strokeTarget,
+            isDark = style.nightMode == Configuration.UI_MODE_NIGHT_YES,
+            intensityScale = style.edgeHighlightIntensity / 100f,
+            angleDegrees = style.colorOsLightAngle.toFloat(),
+            cornerRadiusPx = style.cornerRadii.maxRadius(),
+            maskColor = style.color
+        )
+        state.materialStrokeApplied = applied
+        state.materialStrokeKey = key
+    }
+
+    /** 清空背板载体上的原生材质边缘光与内阴影参数。 */
+    private fun detachStrokeOverlay(state: WeTypeWindowState) {
+        if (!state.materialStrokeApplied) return
+        state.materialStrokeApplied = false
+        state.materialStrokeKey = null
+        state.backgroundCarrier?.let { WeTypeColorOsMaterialStroke.clear(it) }
+        state.materialOverlay?.let { WeTypeColorOsMaterialStroke.clear(it) }
     }
 
     private fun applyContinuousCornerOutline(

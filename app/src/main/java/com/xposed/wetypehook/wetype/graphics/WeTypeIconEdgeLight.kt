@@ -36,10 +36,15 @@ internal object WeTypeIconEdgeLight {
 
     private fun wrap(view: View, inner: Drawable?): WeTypeIconEdgeLightLayer? {
         if (!WeTypeSettings.isIconEdgeLightEnabledXposed()) return null
+        if (WeTypeSystemMaterials.isColorOsBackend() &&
+            !WeTypeSystemMaterials.isNativeStrokeEnabled(view.context)
+        ) {
+            return null
+        }
         val light = resolve(view) ?: return null
         val dark = (view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
-        return WeTypeIconEdgeLightLayer(inner, light, dark)
+        return WeTypeIconEdgeLightLayer(view.context, inner, light, dark)
     }
 
     private fun resolve(view: View): WeTypeColorOsKeyLight? {

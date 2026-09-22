@@ -31,9 +31,11 @@ object WeTypeSettings {
     private const val KEY_GLASS_MATERIAL_TYPE = "glass_material_type"
     private const val KEY_BLUR_RADIUS = "blur_radius"
     private const val KEY_CORNER_RADIUS = "corner_radius"
+    private const val KEY_BOTTOM_CORNER_RADIUS = "bottom_corner_radius"
     private const val KEY_KEY_CORNER_RADIUS = "key_corner_radius"
     private const val KEY_EDGE_HIGHLIGHT_ENABLED = "edge_highlight_enabled"
     private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
+    private const val KEY_COLOROS_LIGHT_ANGLE = "coloros_light_angle"
     private const val KEY_KEY_OPACITY = "key_opacity"
     private const val KEY_KEY_OPACITY_MIGRATED = "key_opacity_migrated"
     private const val KEY_GESTURE_LABEL_MIDLINE_MIGRATED = "gesture_label_midline_migrated"
@@ -221,10 +223,15 @@ object WeTypeSettings {
     const val DEFAULT_BLUR_RADIUS = 60
     const val DEFAULT_CORNER_RADIUS = 28
     const val MAX_CORNER_RADIUS = DEFAULT_CORNER_RADIUS * 2
+    const val DEFAULT_BOTTOM_CORNER_RADIUS = 28
+    const val MAX_BOTTOM_CORNER_RADIUS = 80
     const val DEFAULT_KEY_CORNER_RADIUS = 10
     const val MAX_KEY_CORNER_RADIUS = 40
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 80
+    const val MAX_EDGE_HIGHLIGHT_INTENSITY = 200
+    const val DEFAULT_COLOROS_LIGHT_ANGLE = 45
+    const val MAX_COLOROS_LIGHT_ANGLE = 360
     const val DEFAULT_CANDIDATE_BACKGROUND_ALPHA = 150
     const val DEFAULT_CANDIDATE_BACKGROUND_CORNER = 60f
     const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
@@ -296,9 +303,11 @@ object WeTypeSettings {
         val darkColor: Int,
         val blurRadius: Int,
         val cornerRadius: Int,
+        val bottomCornerRadius: Int = DEFAULT_BOTTOM_CORNER_RADIUS,
         val keyCornerRadius: Int,
         val edgeHighlightEnabled: Boolean,
         val edgeHighlightIntensity: Int,
+        val colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         val candidateBackgroundAlpha: Int,
         val candidateBackgroundCorner: Float,
         val candidateBackgroundLeftMarginDp: Int,
@@ -526,11 +535,91 @@ object WeTypeSettings {
 
     fun getCornerRadius(context: Context): Int = readSnapshot(context).cornerRadius
 
+    fun getBottomCornerRadius(context: Context): Int = readSnapshot(context).bottomCornerRadius
+
     fun getKeyCornerRadius(context: Context): Int = readSnapshot(context).keyCornerRadius
 
     fun isEdgeHighlightEnabled(context: Context): Boolean = readSnapshot(context).edgeHighlightEnabled
 
     fun getEdgeHighlightIntensity(context: Context): Int = readSnapshot(context).edgeHighlightIntensity
+
+    fun getColorOsLightAngle(context: Context): Int = readSnapshot(context).colorOsLightAngle
+
+    /**
+     * ColorOS 光感二级页的定点更新入口：读当前快照后只覆盖光感相关字段，
+     * 其余设置原样回写。同时把 ColorOS 光感与 HyperOS 质感开关解耦——
+     * 光感是否生效只看这里的 `edgeHighlightEnabled`。
+     */
+    fun saveColorOsLight(
+        context: Context,
+        edgeHighlightEnabled: Boolean? = null,
+        edgeHighlightIntensity: Int? = null,
+        colorOsLightAngle: Int? = null,
+        iconEdgeLightEnabled: Boolean? = null,
+        onPersisted: (Boolean) -> Unit = {}
+    ): Boolean {
+        val current = readLocalSnapshot(context)
+        return save(
+            context = context,
+            lightColor = current.lightColor,
+            darkColor = current.darkColor,
+            blurRadius = current.blurRadius,
+            cornerRadius = current.cornerRadius,
+            bottomCornerRadius = current.bottomCornerRadius,
+            keyCornerRadius = current.keyCornerRadius,
+            edgeHighlightEnabled = edgeHighlightEnabled ?: current.edgeHighlightEnabled,
+            edgeHighlightIntensity = edgeHighlightIntensity ?: current.edgeHighlightIntensity,
+            colorOsLightAngle = colorOsLightAngle ?: current.colorOsLightAngle,
+            candidateBackgroundAlpha = current.candidateBackgroundAlpha,
+            candidateBackgroundCorner = current.candidateBackgroundCorner,
+            candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
+            candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
+            toolbarIconBgOpacity = current.toolbarIconBgOpacity,
+            iconEdgeLightEnabled = iconEdgeLightEnabled ?: current.iconEdgeLightEnabled,
+            appearanceColors = current.appearanceColors,
+            disableHotUpdate = current.disableHotUpdate,
+            showCrossDeviceClipboard = current.showCrossDeviceClipboard,
+            removeClipboardRetentionLimit = current.removeClipboardRetentionLimit,
+            removeClipboardTextLimit = current.removeClipboardTextLimit,
+            clipboardSearchEnabled = current.clipboardSearchEnabled,
+            clipboardSearchClearOnBack = current.clipboardSearchClearOnBack,
+            clipboardImageAdjustRatio = current.clipboardImageAdjustRatio,
+            clipboardImageCrop = current.clipboardImageCrop,
+            clipboardImageUniformRowHeight = current.clipboardImageUniformRowHeight,
+            clipboardImageMaxCount = current.clipboardImageMaxCount,
+            clipboardImageMaxSizeMb = current.clipboardImageMaxSizeMb,
+            qwertyGestureEnabled = current.qwertyGestureEnabled,
+            t9GestureEnabled = current.t9GestureEnabled,
+            gestureThreshold = current.gestureThreshold,
+            t9GestureThreshold = current.t9GestureThreshold,
+            gestureVibration = current.gestureVibration,
+            t9GestureVibration = current.t9GestureVibration,
+            gestureBindingsJson = current.gestureBindingsJson,
+            showGestureKeyLabels = current.showGestureKeyLabels,
+            gestureLabelTextSizeSp = current.gestureLabelTextSizeSp,
+            gestureLabelAlpha = current.gestureLabelAlpha,
+            gestureLabelPosition = current.gestureLabelPosition,
+            gestureLabelMarginTopDp = current.gestureLabelMarginTopDp,
+            gestureLabelMarginBottomDp = current.gestureLabelMarginBottomDp,
+            gestureLabelMarginLeftDp = current.gestureLabelMarginLeftDp,
+            gestureLabelMarginRightDp = current.gestureLabelMarginRightDp,
+            logoEnabled = current.logoEnabled,
+            logoShowEnabled = current.logoShowEnabled,
+            logoColorMode = current.logoColorMode,
+            logoCustomColor = current.logoCustomColor,
+            logoImageEnabled = current.logoImageEnabled,
+            logoImageType = current.logoImageType,
+            logoSvgRecolorEnabled = current.logoSvgRecolorEnabled,
+            logoImagePngBase64 = current.logoImagePngBase64,
+            logoImageSvgText = current.logoImageSvgText,
+            logoImageName = current.logoImageName,
+            logoImageUpdatedAt = current.logoImageUpdatedAt,
+            fontMode = current.fontMode,
+            hyperMaterialEnabled = current.hyperMaterialEnabled,
+            glassOverrides = current.glassOverrides,
+            onPersisted = onPersisted
+        )
+    }
 
     fun getCandidateBackgroundAlpha(context: Context): Int =
         readSnapshot(context).candidateBackgroundAlpha
@@ -713,9 +802,11 @@ object WeTypeSettings {
         darkColor: Int,
         blurRadius: Int,
         cornerRadius: Int,
+        bottomCornerRadius: Int = DEFAULT_BOTTOM_CORNER_RADIUS,
         keyCornerRadius: Int,
         edgeHighlightEnabled: Boolean,
         edgeHighlightIntensity: Int,
+        colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
@@ -774,9 +865,11 @@ object WeTypeSettings {
             darkColor = darkColor,
             blurRadius = blurRadius,
             cornerRadius = cornerRadius,
+            bottomCornerRadius = bottomCornerRadius,
             keyCornerRadius = keyCornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
+            colorOsLightAngle = colorOsLightAngle,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
@@ -851,9 +944,11 @@ object WeTypeSettings {
             darkColor = current.darkColor,
             blurRadius = current.blurRadius,
             cornerRadius = current.cornerRadius,
+            bottomCornerRadius = current.bottomCornerRadius,
             keyCornerRadius = current.keyCornerRadius,
             edgeHighlightEnabled = current.edgeHighlightEnabled,
             edgeHighlightIntensity = current.edgeHighlightIntensity,
+            colorOsLightAngle = current.colorOsLightAngle,
             candidateBackgroundAlpha = current.candidateBackgroundAlpha,
             candidateBackgroundCorner = current.candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
@@ -917,6 +1012,8 @@ object WeTypeSettings {
 
     fun getCornerRadiusXposed(context: Context): Int = readSnapshotXposed().cornerRadius
 
+    fun getBottomCornerRadiusXposed(context: Context): Int = readSnapshotXposed().bottomCornerRadius
+
     fun getKeyCornerRadiusXposed(): Int = readSnapshotXposed().keyCornerRadius
 
     fun isEdgeHighlightEnabledXposed(context: Context): Boolean =
@@ -924,6 +1021,8 @@ object WeTypeSettings {
 
     fun getEdgeHighlightIntensityXposed(context: Context): Int =
         readSnapshotXposed().edgeHighlightIntensity
+
+    fun getColorOsLightAngleXposed(): Int = readSnapshotXposed().colorOsLightAngle
 
     fun getCandidateBackgroundAlphaXposed(): Int =
         readSnapshotXposed().candidateBackgroundAlpha
@@ -1076,9 +1175,11 @@ object WeTypeSettings {
         darkColor: Int,
         blurRadius: Int,
         cornerRadius: Int,
+        bottomCornerRadius: Int = DEFAULT_BOTTOM_CORNER_RADIUS,
         keyCornerRadius: Int,
         edgeHighlightEnabled: Boolean,
         edgeHighlightIntensity: Int,
+        colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
@@ -1133,9 +1234,11 @@ object WeTypeSettings {
             darkColor = darkColor,
             blurRadius = blurRadius.coerceIn(0, 100),
             cornerRadius = cornerRadius.coerceIn(0, MAX_CORNER_RADIUS),
+            bottomCornerRadius = bottomCornerRadius.coerceIn(0, MAX_BOTTOM_CORNER_RADIUS),
             keyCornerRadius = keyCornerRadius.coerceIn(0, MAX_KEY_CORNER_RADIUS),
             edgeHighlightEnabled = edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity.coerceIn(0, 200),
+            edgeHighlightIntensity = edgeHighlightIntensity.coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
+            colorOsLightAngle = colorOsLightAngle.coerceIn(0, MAX_COLOROS_LIGHT_ANGLE),
             candidateBackgroundAlpha = candidateBackgroundAlpha.coerceIn(0, 255),
             candidateBackgroundCorner = candidateBackgroundCorner.coerceIn(
                 0f,
@@ -1260,9 +1363,11 @@ object WeTypeSettings {
             .putInt(KEY_DARK_COLOR, snapshot.darkColor)
             .putInt(KEY_BLUR_RADIUS, snapshot.blurRadius)
             .putInt(KEY_CORNER_RADIUS, snapshot.cornerRadius)
+            .putInt(KEY_BOTTOM_CORNER_RADIUS, snapshot.bottomCornerRadius)
             .putInt(KEY_KEY_CORNER_RADIUS, snapshot.keyCornerRadius)
             .putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, snapshot.edgeHighlightEnabled)
             .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, snapshot.edgeHighlightIntensity)
+            .putInt(KEY_COLOROS_LIGHT_ANGLE, snapshot.colorOsLightAngle)
             .putInt(KEY_CANDIDATE_BACKGROUND_ALPHA, snapshot.candidateBackgroundAlpha)
             .putFloat(KEY_CANDIDATE_BACKGROUND_CORNER, snapshot.candidateBackgroundCorner)
             .putInt(
@@ -1402,6 +1507,7 @@ object WeTypeSettings {
         putInt(KEY_DARK_COLOR, darkColor)
         putInt(KEY_BLUR_RADIUS, blurRadius)
         putInt(KEY_CORNER_RADIUS, cornerRadius)
+        putInt(KEY_BOTTOM_CORNER_RADIUS, bottomCornerRadius)
         putInt(KEY_KEY_CORNER_RADIUS, keyCornerRadius)
         putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, edgeHighlightEnabled)
         putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity)
@@ -1481,6 +1587,8 @@ object WeTypeSettings {
             blurRadius = getInt(KEY_BLUR_RADIUS, defaults.blurRadius).coerceIn(0, 100),
             cornerRadius = getInt(KEY_CORNER_RADIUS, defaults.cornerRadius)
                 .coerceIn(0, MAX_CORNER_RADIUS),
+            bottomCornerRadius = getInt(KEY_BOTTOM_CORNER_RADIUS, getInt(KEY_CORNER_RADIUS, defaults.bottomCornerRadius))
+                .coerceIn(0, MAX_BOTTOM_CORNER_RADIUS),
             keyCornerRadius = getInt(KEY_KEY_CORNER_RADIUS, defaults.keyCornerRadius)
                 .coerceIn(0, MAX_KEY_CORNER_RADIUS),
             edgeHighlightEnabled = getBoolean(
@@ -1491,6 +1599,10 @@ object WeTypeSettings {
                 KEY_EDGE_HIGHLIGHT_INTENSITY,
                 defaults.edgeHighlightIntensity
             ).coerceIn(0, 200),
+            colorOsLightAngle = getInt(
+                KEY_COLOROS_LIGHT_ANGLE,
+                defaults.colorOsLightAngle
+            ).coerceIn(0, MAX_COLOROS_LIGHT_ANGLE),
             candidateBackgroundAlpha = getInt(
                 KEY_CANDIDATE_BACKGROUND_ALPHA,
                 defaults.candidateBackgroundAlpha
@@ -1644,6 +1756,8 @@ object WeTypeSettings {
             blurRadius = getInt(KEY_BLUR_RADIUS, DEFAULT_BLUR_RADIUS),
             cornerRadius = getInt(KEY_CORNER_RADIUS, DEFAULT_CORNER_RADIUS)
                 .coerceIn(0, MAX_CORNER_RADIUS),
+            bottomCornerRadius = getInt(KEY_BOTTOM_CORNER_RADIUS, getInt(KEY_CORNER_RADIUS, DEFAULT_BOTTOM_CORNER_RADIUS))
+                .coerceIn(0, MAX_BOTTOM_CORNER_RADIUS),
             keyCornerRadius = getInt(KEY_KEY_CORNER_RADIUS, DEFAULT_KEY_CORNER_RADIUS)
                 .coerceIn(0, MAX_KEY_CORNER_RADIUS),
             edgeHighlightEnabled = getBoolean(
@@ -1653,6 +1767,10 @@ object WeTypeSettings {
             edgeHighlightIntensity = getInt(
                 KEY_EDGE_HIGHLIGHT_INTENSITY,
                 DEFAULT_EDGE_HIGHLIGHT_INTENSITY
+            ),
+            colorOsLightAngle = getInt(
+                KEY_COLOROS_LIGHT_ANGLE,
+                DEFAULT_COLOROS_LIGHT_ANGLE
             ),
             candidateBackgroundAlpha = getInt(
                 KEY_CANDIDATE_BACKGROUND_ALPHA,
@@ -1777,9 +1895,11 @@ object WeTypeSettings {
         darkColor = DEFAULT_DARK_COLOR,
         blurRadius = DEFAULT_BLUR_RADIUS,
         cornerRadius = DEFAULT_CORNER_RADIUS,
+        bottomCornerRadius = DEFAULT_BOTTOM_CORNER_RADIUS,
         keyCornerRadius = DEFAULT_KEY_CORNER_RADIUS,
         edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED,
         edgeHighlightIntensity = DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
+        colorOsLightAngle = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha = DEFAULT_CANDIDATE_BACKGROUND_ALPHA,
         candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
         candidateBackgroundLeftMarginDp = DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
@@ -1832,9 +1952,11 @@ object WeTypeSettings {
             contains(KEY_DARK_COLOR) ||
             contains(KEY_BLUR_RADIUS) ||
             contains(KEY_CORNER_RADIUS) ||
+            contains(KEY_BOTTOM_CORNER_RADIUS) ||
             contains(KEY_KEY_CORNER_RADIUS) ||
             contains(KEY_EDGE_HIGHLIGHT_ENABLED) ||
             contains(KEY_EDGE_HIGHLIGHT_INTENSITY) ||
+            contains(KEY_COLOROS_LIGHT_ANGLE) ||
             contains(KEY_KEY_OPACITY) ||
             contains(KEY_CANDIDATE_BACKGROUND_ALPHA) ||
             contains(KEY_CANDIDATE_BACKGROUND_CORNER) ||

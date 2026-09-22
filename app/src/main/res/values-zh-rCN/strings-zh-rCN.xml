@@ -46,6 +46,8 @@
     <string name="settings_edge_highlight_title">开启边缘高光效果</string>
     <string name="settings_edge_highlight_desc">关闭后仅保留背景模糊与底色，不再绘制边缘高光。</string>
     <string name="settings_edge_highlight_intensity_title">高光效果强度</string>
+    <string name="settings_coloros_light_title">ColorOS 光感设置</string>
+    <string name="settings_coloros_light_desc">背板边缘光、光照角度、强度与图标光感。</string>
     <string name="settings_group_color">颜色</string>
     <string name="settings_group_actions">操作</string>
     <string name="settings_group_other">其他</string>
@@ -57,7 +59,8 @@
     <string name="settings_preview_mode_light">浅色模式</string>
     <string name="settings_preview_mode_dark">深色模式</string>
     <string name="settings_blur_title">模糊强度</string>
-    <string name="settings_corner_title">圆角大小</string>
+    <string name="settings_corner_title">顶部圆角大小</string>
+    <string name="settings_bottom_corner_title">底部圆角大小</string>
     <string name="settings_key_corner_title">键盘按键圆角</string>
     <string name="settings_alpha_title">背景不透明度</string>
     <string name="settings_key_opacity_title">按键不透明度</string>

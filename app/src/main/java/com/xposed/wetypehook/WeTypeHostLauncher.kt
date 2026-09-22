@@ -44,6 +44,7 @@ private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
 private val activeHostDialogs = WeakHashMap<Activity, ComponentDialog>()
 private val activeBackupPages = WeakHashMap<Activity, View>()
 private val activeLogoImagePages = WeakHashMap<Activity, View>()
+private val activeColorOsLightPages = WeakHashMap<Activity, View>()
 private val backupPageBusy = WeakHashMap<Activity, () -> Boolean>()
 private val moduleResourcesCache = HashMap<String, Resources>()
 private val BACKUP_PAGE_HOST_ACTIVITIES = listOf(
@@ -152,6 +153,26 @@ object WeTypeHostLauncher {
         return false
     }
 
+    /**
+     * ColorOS 光感设置是宿主外层 Activity 上再启动的设置 Activity 实例，
+     * 与备份页同模式，返回键回退到嵌入设置。
+     */
+    fun launchColorOsLightPage(activity: Activity?): Boolean {
+        if (activity == null) return false
+        for (className in BACKUP_PAGE_HOST_ACTIVITIES) {
+            val intent = Intent().apply {
+                component = ComponentName(HOST_PACKAGE_NAME, className)
+                putExtra(EXTRA_OPEN_WETYPE_COLOROS_LIGHT_PAGE, true)
+            }
+            val started = runCatching {
+                activity.startActivity(intent)
+                true
+            }.getOrDefault(false)
+            if (started) return true
+        }
+        return false
+    }
+
     fun showLogoImagePage(activity: Activity) {
         if (activeLogoImagePages.containsKey(activity)) return
         val moduleContext = resolveModuleContext(activity) ?: return
@@ -199,6 +220,55 @@ object WeTypeHostLauncher {
             }
         }
         activeLogoImagePages[activity] = composeView
+    }
+
+    fun showColorOsLightPage(activity: Activity) {
+        if (activeColorOsLightPages.containsKey(activity)) return
+        val moduleContext = resolveModuleContext(activity) ?: return
+        val isDarkMode = resolveWindowIsDarkMode(activity)
+        val windowBackgroundColor = if (isDarkMode) {
+            Color.BLACK
+        } else {
+            Color.parseColor("#F7F7F7")
+        }
+        val pageLifecycleOwner = HostPageLifecycleOwner().apply { moveToResumed() }
+        val composeView = ComposeView(ModuleHostContext(activity, moduleContext)).apply {
+            setBackgroundColor(windowBackgroundColor)
+            setViewTreeLifecycleOwner(pageLifecycleOwner)
+            setViewTreeViewModelStoreOwner(HostPageViewModelOwner())
+            setViewTreeSavedStateRegistryOwner(HostPageSavedStateOwner())
+            setContent {
+                ColorOsLightApp(
+                    settingsContext = activity,
+                    onClose = { activity.finish() }
+                )
+            }
+        }
+        activity.window?.apply {
+            WindowCompat.setDecorFitsSystemWindows(this, false)
+            statusBarColor = windowBackgroundColor
+            navigationBarColor = windowBackgroundColor
+            setBackgroundDrawable(ColorDrawable(windowBackgroundColor))
+            WindowCompat.getInsetsController(this, decorView).apply {
+                isAppearanceLightStatusBars = !isDarkMode
+                isAppearanceLightNavigationBars = !isDarkMode
+            }
+        }
+        activity.setContentView(
+            composeView,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        composeView.post {
+            val insets = ViewCompat.getRootWindowInsets(composeView)
+            val topInset = insets?.getInsets(WindowInsetsCompat.Type.statusBars())?.top ?: 0
+            if (topInset > 0 && composeView.paddingTop != topInset) {
+                composeView.setPadding(0, topInset, 0, 0)
+            }
+        }
+        activeColorOsLightPages[activity] = composeView
     }
 
     fun showBackupPage(activity: Activity) {
@@ -274,6 +344,11 @@ object WeTypeHostLauncher {
             synchronized(activeLogoImagePages) {
                 activeLogoImagePages.keys.toList().also {
                     activeLogoImagePages.clear()
+                }
+            }.forEach { page -> page.finish() }
+            synchronized(activeColorOsLightPages) {
+                activeColorOsLightPages.keys.toList().also {
+                    activeColorOsLightPages.clear()
                 }
             }.forEach { page -> page.finish() }
         }

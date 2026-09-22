@@ -14,6 +14,7 @@ import com.xposed.wetypehook.wetype.gesture.GestureAction
 import com.xposed.wetypehook.wetype.gesture.GestureActionExecutor
 import com.xposed.wetypehook.wetype.gesture.KeyGestureResolver
 import com.xposed.wetypehook.wetype.graphics.WeTypeColorOsKeyLight
+import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
@@ -338,6 +339,11 @@ internal object WeTypeKeyLabelHooks {
         keyRadiusPx: Float
     ) {
         if (!WeTypeSettings.isHyperMaterialEnabledXposed()) return
+        if (WeTypeSystemMaterials.isColorOsBackend() &&
+            !WeTypeSystemMaterials.isNativeStrokeEnabled(keyView.context)
+        ) {
+            return
+        }
         val light = keyLight ?: run {
             if (keyLightResolved) return
             keyLightResolved = true

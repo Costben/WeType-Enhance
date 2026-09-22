@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import com.xposed.wetypehook.PropertyUtils
 import com.xposed.wetypehook.xposed.Log
-import dalvik.system.PathClassLoader
 
 /**
  * ColorOS 逐键光感：加载系统自身的 `COUIShadowEdgeDrawable`。
@@ -84,11 +83,7 @@ internal class WeTypeColorOsKeyLight private constructor(
         fun isPlatform(): Boolean = !PropertyUtils["ro.build.version.oplusrom", ""].isNullOrEmpty()
 
         fun create(context: Context): WeTypeColorOsKeyLight? = runCatching {
-            if (!isPlatform()) return null
-            val info = context.packageManager.getApplicationInfo("com.android.systemui", 0)
-            var paths = info.sourceDir
-            info.splitSourceDirs?.forEach { paths += java.io.File.pathSeparator + it }
-            val loader = PathClassLoader(paths, context.classLoader)
+            val loader = WeTypeColorOsClassLoader.get(context) ?: return null
             val drawable = loader
                 .loadClass("com.coui.appcompat.shadowedge.COUIShadowEdgeDrawable")
                 .getConstructor()

@@ -160,6 +160,7 @@ import kotlin.math.roundToInt
 const val EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS = "com.xposed.wetypehook.extra.OPEN_WETYPE_EMBEDDED_SETTINGS"
 const val EXTRA_OPEN_WETYPE_BACKUP_PAGE = "com.xposed.wetypehook.extra.OPEN_WETYPE_BACKUP_PAGE"
 const val EXTRA_OPEN_WETYPE_LOGO_IMAGE_PAGE = "com.xposed.wetypehook.extra.OPEN_WETYPE_LOGO_IMAGE_PAGE"
+const val EXTRA_OPEN_WETYPE_COLOROS_LIGHT_PAGE = "com.xposed.wetypehook.extra.OPEN_WETYPE_COLOROS_LIGHT_PAGE"
 private const val ACTIVATION_HEARTBEAT_WINDOW_MS = 4_000L
 private const val ACTIVATION_KEYBOARD_RETRY_COUNT = 3
 private const val ACTIVATION_KEYBOARD_RETRY_DELAY_MS = 450L
@@ -503,6 +504,7 @@ private fun WeTypeSettingsScreen(
     var darkColor by rememberSaveable { mutableIntStateOf(snapshot.darkColor) }
     var blurRadius by rememberSaveable { mutableIntStateOf(snapshot.blurRadius) }
     var cornerRadius by rememberSaveable { mutableIntStateOf(snapshot.cornerRadius) }
+    var bottomCornerRadius by rememberSaveable { mutableIntStateOf(snapshot.bottomCornerRadius) }
     var keyCornerRadius by rememberSaveable { mutableIntStateOf(snapshot.keyCornerRadius) }
     var edgeHighlightEnabled by rememberSaveable { mutableStateOf(snapshot.edgeHighlightEnabled) }
     var edgeHighlightIntensity by rememberSaveable { mutableIntStateOf(snapshot.edgeHighlightIntensity) }
@@ -743,15 +745,20 @@ private fun WeTypeSettingsScreen(
             Toast.makeText(context, R.string.settings_glass_invalid, Toast.LENGTH_SHORT).show()
             return false
         }
+        // 光感相关字段已移到「ColorOS 光感设置」二级页，本页不再编辑它们。
+        // 保存时以最新快照为准，避免用过期本地状态覆盖二级页刚写入的修改。
+        val latest = WeTypeSettings.readLocalSnapshot(preferencesContext)
         return WeTypeSettings.save(
             context = preferencesContext,
             lightColor = lightColor,
             darkColor = darkColor,
             blurRadius = blurRadius,
             cornerRadius = cornerRadius,
+            bottomCornerRadius = bottomCornerRadius,
             keyCornerRadius = keyCornerRadius,
-            edgeHighlightEnabled = edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity,
+            edgeHighlightEnabled = latest.edgeHighlightEnabled,
+            edgeHighlightIntensity = latest.edgeHighlightIntensity,
+            colorOsLightAngle = latest.colorOsLightAngle,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.toIntOrNull()
@@ -759,7 +766,7 @@ private fun WeTypeSettingsScreen(
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.toIntOrNull()
                 ?: WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
-            iconEdgeLightEnabled = iconEdgeLightEnabled,
+            iconEdgeLightEnabled = latest.iconEdgeLightEnabled,
             appearanceColors = currentAppearanceColors(),
             disableHotUpdate = disableHotUpdate,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
@@ -819,6 +826,7 @@ private fun WeTypeSettingsScreen(
         darkColor = WeTypeSettings.DEFAULT_DARK_COLOR
         blurRadius = WeTypeSettings.DEFAULT_BLUR_RADIUS
         cornerRadius = WeTypeSettings.DEFAULT_CORNER_RADIUS
+        bottomCornerRadius = WeTypeSettings.DEFAULT_BOTTOM_CORNER_RADIUS
         keyCornerRadius = WeTypeSettings.DEFAULT_KEY_CORNER_RADIUS
         edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
         edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
@@ -829,6 +837,15 @@ private fun WeTypeSettingsScreen(
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
         iconEdgeLightEnabled = WeTypeSettings.DEFAULT_ICON_EDGE_LIGHT_ENABLED
+        // 光感字段已移到二级页，本页只保留预览状态；重置必须直接写回快照，
+        // 因为 saveSettings 会从最新快照读取这些字段。
+        WeTypeSettings.saveColorOsLight(
+            context = preferencesContext,
+            edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED,
+            edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
+            colorOsLightAngle = WeTypeSettings.DEFAULT_COLOROS_LIGHT_ANGLE,
+            iconEdgeLightEnabled = WeTypeSettings.DEFAULT_ICON_EDGE_LIGHT_ENABLED
+        )
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
@@ -1009,12 +1026,17 @@ private fun WeTypeSettingsScreen(
                         onBlurRadiusChange = { blurRadius = it },
                         cornerRadius = cornerRadius,
                         onCornerRadiusChange = { cornerRadius = it },
+                        bottomCornerRadius = bottomCornerRadius,
+                        onBottomCornerRadiusChange = { bottomCornerRadius = it },
                         keyCornerRadius = keyCornerRadius,
                         onKeyCornerRadiusChange = { keyCornerRadius = it },
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         onEdgeHighlightEnabledChange = { edgeHighlightEnabled = it },
                         edgeHighlightIntensity = edgeHighlightIntensity,
                         onEdgeHighlightIntensityChange = { edgeHighlightIntensity = it },
+                        onOpenColorOsLight = {
+                            WeTypeHostLauncher.launchColorOsLightPage(settingsContext as? Activity)
+                        },
                         hyperMaterialEnabled = hyperMaterialEnabled,
                         onHyperMaterialEnabledChange = { hyperMaterialEnabled = it },
                         hyperMaterialAvailable = hyperMaterialAvailable,
@@ -1388,6 +1410,8 @@ private fun LazyListScope.AppearanceTabContent(
     onBlurRadiusChange: (Int) -> Unit,
     cornerRadius: Int,
     onCornerRadiusChange: (Int) -> Unit,
+    bottomCornerRadius: Int,
+    onBottomCornerRadiusChange: (Int) -> Unit,
     keyCornerRadius: Int,
     onKeyCornerRadiusChange: (Int) -> Unit,
     edgeHighlightEnabled: Boolean,
@@ -1405,6 +1429,7 @@ private fun LazyListScope.AppearanceTabContent(
     onToolbarIconBgOpacityChange: (Int) -> Unit,
     iconEdgeLightEnabled: Boolean,
     onIconEdgeLightEnabledChange: (Boolean) -> Unit,
+    onOpenColorOsLight: () -> Unit,
     appearanceSectionGroups: List<WeTypeAppearanceColorGroup>,
     appearanceGroupColors: MutableList<Int>,
     groupIndex: (String) -> Int,
@@ -1454,6 +1479,7 @@ private fun LazyListScope.AppearanceTabContent(
                         color = currentColor,
                         blurRadius = blurRadius,
                         cornerRadius = cornerRadius,
+                        bottomCornerRadius = bottomCornerRadius,
                         keyCornerRadius = keyCornerRadius,
                         edgeHighlightEnabled = edgeHighlightEnabled,
                         edgeHighlightIntensity = edgeHighlightIntensity,
@@ -1610,24 +1636,11 @@ private fun LazyListScope.AppearanceTabContent(
                     )
                 }
                 HorizontalDivider()
-                MiuixSwitchWidget(
-                    title = stringResource(R.string.settings_edge_highlight_title),
-                    description = stringResource(R.string.settings_edge_highlight_desc),
-                    checked = edgeHighlightEnabled,
-                    enabled = !hyperMaterialEnabled,
-                    onCheckedChange = onEdgeHighlightEnabledChange
+                ArrowPreference(
+                    title = stringResource(R.string.settings_coloros_light_title),
+                    summary = stringResource(R.string.settings_coloros_light_desc),
+                    onClick = onOpenColorOsLight
                 )
-
-                if (edgeHighlightEnabled) {
-                    SliderPreferenceItem(
-                        title = stringResource(R.string.settings_edge_highlight_intensity_title),
-                        value = edgeHighlightIntensity,
-                        max = 200,
-                        enabled = !hyperMaterialEnabled,
-                        onValueChange = onEdgeHighlightIntensityChange
-                    )
-                }
-
 
                 // 模糊滑块
                 SliderPreferenceItem(
@@ -1647,6 +1660,13 @@ private fun LazyListScope.AppearanceTabContent(
                 )
 
                 SliderPreferenceItem(
+                    title = stringResource(R.string.settings_bottom_corner_title),
+                    value = bottomCornerRadius,
+                    max = WeTypeSettings.MAX_BOTTOM_CORNER_RADIUS,
+                    onValueChange = onBottomCornerRadiusChange
+                )
+
+                SliderPreferenceItem(
                     title = stringResource(R.string.settings_key_corner_title),
                     value = keyCornerRadius,
                     max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
@@ -1658,13 +1678,6 @@ private fun LazyListScope.AppearanceTabContent(
                     value = toolbarIconBgOpacity,
                     max = 255,
                     onValueChange = onToolbarIconBgOpacityChange
-                )
-
-                MiuixSwitchWidget(
-                    title = stringResource(R.string.settings_icon_edge_light_title),
-                    description = stringResource(R.string.settings_icon_edge_light_desc),
-                    checked = iconEdgeLightEnabled,
-                    onCheckedChange = onIconEdgeLightEnabledChange
                 )
 
                 appearanceSectionGroups.forEach { group ->
@@ -1726,6 +1739,7 @@ private fun PreviewSection(
     color: Int,
     blurRadius: Int,
     cornerRadius: Int,
+    bottomCornerRadius: Int,
     keyCornerRadius: Int,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
@@ -1755,6 +1769,7 @@ private fun PreviewSection(
                     color = color,
                     blurRadius = blurRadius,
                     cornerRadius = cornerRadius,
+                    bottomCornerRadius = bottomCornerRadius,
                     keyCornerRadius = keyCornerRadius,
                     edgeHighlightEnabled = edgeHighlightEnabled,
                     edgeHighlightIntensity = edgeHighlightIntensity,
@@ -1773,6 +1788,7 @@ private fun PreviewCard(
     color: Int,
     blurRadius: Int,
     cornerRadius: Int,
+    bottomCornerRadius: Int,
     keyCornerRadius: Int,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
@@ -1793,15 +1809,18 @@ private fun PreviewCard(
         )
     }
     val previewCornerValue = cornerRadius.coerceIn(0, WeTypeSettings.MAX_CORNER_RADIUS)
+    val previewBottomCornerValue = bottomCornerRadius.coerceIn(0, WeTypeSettings.MAX_BOTTOM_CORNER_RADIUS)
     val previewCorner = previewCornerValue.dp
-    val previewMinHeight = maxOf(88.dp, (previewCornerValue * 2).dp)
+    val previewBottomCorner = previewBottomCornerValue.dp
+    val previewMinHeight = maxOf(88.dp, (previewCornerValue + previewBottomCornerValue).dp)
     val previewRadiusPx = with(LocalDensity.current) { previewCorner.toPx() }
+    val previewBottomRadiusPx = with(LocalDensity.current) { previewBottomCorner.toPx() }
     val previewShape = WeTypeSmoothRoundedShape(
         WeTypeCornerRadii(
             topLeft = previewRadiusPx,
             topRight = previewRadiusPx,
-            bottomRight = 0f,
-            bottomLeft = 0f
+            bottomRight = previewBottomRadiusPx,
+            bottomLeft = previewBottomRadiusPx
         )
     )
     val previewKeyColor = if (isDark) darkKeyColor else lightKeyColor
@@ -1821,7 +1840,8 @@ private fun PreviewCard(
                     .defaultMinSize(minHeight = previewMinHeight)
                     .weTypePreviewBloom(
                         color = displayColor,
-                        cornerRadius = previewCorner,
+                        topCornerRadius = previewCorner,
+                        bottomCornerRadius = previewBottomCorner,
                         edgeHighlightEnabled = edgeHighlightEnabled &&
                             (!hyperMaterialEnabled || WeTypeSystemMaterials.isColorOsBackend()),
                         edgeHighlightIntensity = edgeHighlightIntensity,
@@ -1899,9 +1919,9 @@ private fun PreviewCard(
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (hyperMaterialEnabled) {
-                                "${stringResource(R.string.settings_corner_label)} $cornerRadius"
+                                "${stringResource(R.string.settings_corner_label)} $cornerRadius / $bottomCornerRadius"
                             } else {
-                                "${stringResource(R.string.settings_blur_label)} $blurRadius · ${stringResource(R.string.settings_corner_label)} $cornerRadius"
+                                "${stringResource(R.string.settings_blur_label)} $blurRadius · ${stringResource(R.string.settings_corner_label)} $cornerRadius / $bottomCornerRadius"
                             },
                             color = previewTextColor(displayColor).copy(alpha = 0.7f),
                             style = MiuixTheme.textStyles.body2
@@ -1917,7 +1937,8 @@ private fun PreviewCard(
 @Composable
 private fun Modifier.weTypePreviewBloom(
     color: Int,
-    cornerRadius: androidx.compose.ui.unit.Dp,
+    topCornerRadius: androidx.compose.ui.unit.Dp,
+    bottomCornerRadius: androidx.compose.ui.unit.Dp,
     edgeHighlightEnabled: Boolean,
     edgeHighlightIntensity: Int,
     isDark: Boolean
@@ -1927,13 +1948,14 @@ private fun Modifier.weTypePreviewBloom(
     val previewContext = remember(context, isDark) {
         createPreviewContext(context, isDark)
     }
-    val cornerRadiusPx = with(density) { cornerRadius.toPx() }
+    val topRadiusPx = with(density) { topCornerRadius.toPx() }
+    val bottomRadiusPx = with(density) { bottomCornerRadius.toPx() }
     return this.drawWithCache {
         val previewCornerRadii = WeTypeCornerRadii(
-            topLeft = cornerRadiusPx,
-            topRight = cornerRadiusPx,
-            bottomRight = 0f,
-            bottomLeft = 0f
+            topLeft = topRadiusPx,
+            topRight = topRadiusPx,
+            bottomRight = bottomRadiusPx,
+            bottomLeft = bottomRadiusPx
         )
         val widthPx = size.width.roundToInt()
         val heightPx = size.height.roundToInt()

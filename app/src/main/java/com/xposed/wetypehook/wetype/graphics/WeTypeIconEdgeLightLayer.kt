@@ -1,5 +1,6 @@
 package com.xposed.wetypehook.wetype.graphics
 
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.ColorFilter
 import android.graphics.PixelFormat
@@ -17,6 +18,7 @@ import android.graphics.drawable.Drawable
  * 在图标上画不出任何东西。
  */
 internal class WeTypeIconEdgeLightLayer(
+    private val context: Context,
     private val host: Drawable?,
     private val light: WeTypeColorOsKeyLight,
     private val dark: Boolean
@@ -28,6 +30,9 @@ internal class WeTypeIconEdgeLightLayer(
         host?.let {
             it.setBounds(bounds)
             it.draw(canvas)
+        }
+        if (WeTypeSystemMaterials.isColorOsBackend() && !WeTypeSystemMaterials.isNativeStrokeEnabled(context)) {
+            return
         }
         val save = canvas.save()
         canvas.clipRect(bounds)
