@@ -64,11 +64,12 @@ private val weTypeSmoothContinuity = G2Continuity(
 )
 
 /**
- * ColorOS G2 超平滑圆角权重（3.0f 对齐小布输入法官方实现），与 [WeTypeColorOsMaterial]
- * 下发给 `OplusBlurParam` 的 `smoothCornerWeight` 及 [WeTypeColorOsStrokeDrawable]
- * 的 `setWeight` 严格保持一致。
+ * ColorOS 圆角权重。2 表示关闭平滑曲线，`OplusBlurParam` 的 `smoothCornerWeight=2` 落成
+ * 标准正圆弧角，与 [createWeTypeSmoothRoundedPath]、`GradientDrawable` 染色层和背板载体
+ * 轮廓用同一条曲线；权重 3 会把面板画成超椭圆角，虽同半径但与正圆弧相差最多 26px
+ * （33dp@620dpi 实测），边缘高光因此吃不到面板四角。
  */
-internal const val WETYPE_COLOROS_SMOOTH_WEIGHT = 3f
+internal const val WETYPE_COLOROS_SMOOTH_WEIGHT = 2f
 
 /**
  * Use the same standard rounded rectangle as the ColorOS compositor with weight=2.

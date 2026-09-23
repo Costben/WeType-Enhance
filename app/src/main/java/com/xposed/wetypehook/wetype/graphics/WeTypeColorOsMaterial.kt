@@ -22,8 +22,8 @@ import com.xposed.wetypehook.xposed.Log
  *
  * 这些类位于 `oplus-framework.jar`，是可被第三方进程反射调用的平台类（已在 ColorOS V17
  * 的 PLK110 上用独立 APK 实测落像素）。参数锁定小布输入法的实测预设：blur 150px、
- * Kawase 模糊、mix 染色；圆角使用 G2 超平滑连续曲线（weight=3.0f），与系统原生
- * `COUIShadowEdgeDrawable` 硬件流光轮廓完美拟合。
+ * Kawase 模糊、mix 染色；圆角权重固定为 [WETYPE_COLOROS_SMOOTH_WEIGHT]（2，正圆弧），
+ * 与模块自绘的高光、裁剪和染色层同一条曲线。
  */
 internal class WeTypeColorOsMaterial(private val view: View) : WeTypeSystemMaterial {
 

@@ -6,17 +6,17 @@ import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.util.TypedValue
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * A single CSS-style box-shadow layer. All length values are expressed in CSS px and are mapped to
@@ -50,14 +50,22 @@ private class RenderedShadow(
  * ```
  *
  * Outer shadows are clipped to the region outside the content shape so the overlay never darkens the
- * surface interior; inset shadows are clipped to the inside of the content shape. The public API is
- * unchanged so existing call sites keep working.
+ * surface interior; inset shadows are clipped to the inside of the content shape. [intensityScale]
+ * scales every layer's alpha, [strokeWidthScale] scales every layer's offset/blur/spread — that is,
+ * the visible stroke width.
+ *
+ * [lightAngleDegrees] steers the whole stack. The layer offsets above are authored for a light source
+ * 45° up and to the left, so every offset is rotated by `lightAngleDegrees - 45` around the panel
+ * centre: 0° puts the source straight above, the angle grows clockwise, 45° therefore reproduces the
+ * authored look exactly, and 225° mirrors the highlight onto the opposite corner.
  */
 internal class WeTypeBloomStrokeDrawable(
     private val context: Context,
     private val cornerRadii: WeTypeCornerRadii,
     private val surfaceColor: Int,
-    private val intensityScale: Float = 1f
+    private val intensityScale: Float = 1f,
+    private val strokeWidthScale: Float = 1f,
+    private val lightAngleDegrees: Float = BASE_LIGHT_ANGLE_DEGREES
 ) : Drawable() {
     private val contentPath = Path()
     private val renderedShadows = mutableListOf<RenderedShadow>()
@@ -112,63 +120,15 @@ internal class WeTypeBloomStrokeDrawable(
             if (isDarkMode()) DARK_MODE_ALPHA_SCALE else 1f
         if (alphaScale <= 0f) return
 
-        // ColorOS blur and its highlight share the full drawable bounds.
-        val followSurfaceContour = WeTypeSystemMaterials.isColorOsBackend()
-        val contentRect = RectF(bounds).apply {
-            if (!followSurfaceContour) inset(0.5f, 0.5f)
-        }
+        val contentRect = RectF(bounds).apply { inset(0.5f, 0.5f) }
         if (contentRect.width() <= 0f || contentRect.height() <= 0f) return
         contentPath.set(createOffsetRoundedPath(contentRect, cornerRadii))
-
-        if (followSurfaceContour) {
-            buildSurfaceContourShadows(alphaScale)
-            return
-        }
 
         // CSS paints the first listed shadow on top, so build the list reversed: earlier list
         // entries are appended last and therefore drawn last (on top).
         BOX_SHADOWS.asReversed().forEach { shadow ->
             buildShadow(shadow, contentRect, alphaScale)?.let(renderedShadows::add)
         }
-    }
-
-    /**
-     * 「流光轮廓」复刻：沿背景同一路径做内描边，一半在路径外被裁掉，因此不会改变圆角几何。
-     *
-     * 分两层还原系统观感：
-     * 1. 柔和的均匀内辉光，保证轮廓在任意底色上都可辨识；
-     * 2. 带方向的亮边——光来自左上，沿对角线衰减到右下，形成「流光」的流动感。
-     * 宽度只决定光向内渗透的深度，圆角仍由设置里的唯一半径决定。
-     */
-    private fun buildSurfaceContourShadows(alphaScale: Float) {
-        val width = bounds.width().toFloat()
-        val height = bounds.height().toFloat()
-        if (width <= 0f || height <= 0f) return
-
-        val softGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(3f) * 2f
-            color = scaleColorAlpha(0x38FFFFFF, alphaScale)
-            colorFilter = activeColorFilter
-            maskFilter = BlurMaskFilter(dp(2f) * CSS_BLUR_TO_MASK_RADIUS, BlurMaskFilter.Blur.NORMAL)
-        }
-        renderedShadows.add(RenderedShadow(true, Path(contentPath), softGlow))
-
-        val directional = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = dp(1f) * 2f
-            colorFilter = activeColorFilter
-            shader = LinearGradient(
-                0f, 0f, width, height,
-                intArrayOf(
-                    scaleColorAlpha(0xE6FFFFFF.toInt(), alphaScale),
-                    scaleColorAlpha(0x1FFFFFFF, alphaScale)
-                ),
-                floatArrayOf(0f, 1f),
-                Shader.TileMode.CLAMP
-            )
-        }
-        renderedShadows.add(RenderedShadow(true, Path(contentPath), directional))
     }
 
     private fun buildShadow(
@@ -179,10 +139,16 @@ internal class WeTypeBloomStrokeDrawable(
         val color = scaleColorAlpha(shadow.color, alphaScale)
         if (Color.alpha(color) == 0) return null
 
-        val offsetX = dp(shadow.offsetX)
-        val offsetY = dp(shadow.offsetY)
-        val spread = dp(shadow.spread)
-        val blur = dp(shadow.blur)
+        val widthScale = strokeWidthScale.coerceAtLeast(0f)
+        val baseOffsetX = dp(shadow.offsetX) * widthScale
+        val baseOffsetY = dp(shadow.offsetY) * widthScale
+        val rotation = Math.toRadians((lightAngleDegrees - BASE_LIGHT_ANGLE_DEGREES).toDouble())
+        val cosRotation = cos(rotation).toFloat()
+        val sinRotation = sin(rotation).toFloat()
+        val offsetX = baseOffsetX * cosRotation - baseOffsetY * sinRotation
+        val offsetY = baseOffsetX * sinRotation + baseOffsetY * cosRotation
+        val spread = dp(shadow.spread) * widthScale
+        val blur = dp(shadow.blur) * widthScale
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
@@ -278,15 +244,18 @@ internal class WeTypeBloomStrokeDrawable(
         private const val CSS_BLUR_TO_MASK_RADIUS = 0.8660f
         private const val MIN_MASK_RADIUS_PX = 0.05f
 
+        /** The light-source azimuth the [BOX_SHADOWS] offsets are authored for: 45° up and to the left. */
+        private const val BASE_LIGHT_ANGLE_DEGREES = 45f
+
         // The highlight reads much brighter on dark keyboards, so dim every shadow layer's opacity
         // in night mode (mirrors the previous bloom behaviour).
-        private const val DARK_MODE_ALPHA_SCALE = 0.25f
+        private const val DARK_MODE_ALPHA_SCALE = 0.3f
 
         private val BOX_SHADOWS = listOf(
             BoxShadow(inset = true, offsetX = 2f, offsetY = 2f, blur = 0.25f, spread = -1.5f, color = 0xB3FFFFFF.toInt()),
             BoxShadow(inset = true, offsetX = 1f, offsetY = 1f, blur = 2f, spread = 0f, color = 0xCCFFFFFF.toInt()),
             BoxShadow(inset = true, offsetX = -1f, offsetY = -1f, blur = 2f, spread = 0f, color = 0x99FFFFFF.toInt()),
-            BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 10f, spread = 0.5f, color = 0x18000000)
+            BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 8f, spread = 1f, color = 0x33000000)
         )
     }
 }

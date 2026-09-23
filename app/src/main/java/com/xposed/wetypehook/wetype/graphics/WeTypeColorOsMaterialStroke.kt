@@ -21,7 +21,9 @@ import com.xposed.wetypehook.xposed.Log
  * 它不调用 `setBaseParams` / `setCornerParams`，也不调用 `RenderNode.setOplusMaterialEffect`。
  *
  * 参数取自系统原生预设 `FRAMEWORK_CAPSULE_PARAMS_1`（light / dark），并按模块设置线性缩放：
- * 边缘线透明度与内阴影淡入 alpha 随「边缘光效强度」缩放，光照角度随「光照角度」设置下发。
+ * 边缘线宽随「边缘光效」卡片里的宽度、边缘线透明度与内阴影淡入 alpha 随该卡片里的强度缩放，
+ * 光照角度随同一张卡片里的角度下发。这三个参数都只作用于原生后端，与模块自绘的
+ * [WeTypeBloomStrokeDrawable] 各自独立。
  *
  * 这些类位于 `oplus-framework.jar`（boot classpath），第三方进程可反射调用；任何一步失败都
  * 只记日志、返回 false，不影响输入法主流程。
@@ -36,14 +38,25 @@ internal object WeTypeColorOsMaterialStroke {
     private const val BACKDROP_EFFECT = "com.oplus.view.OplusViewBackgroundRenderEffect"
     private const val OPLUS_VIEW = "com.oplus.view.OplusView"
 
-    /** `OplusMaterialCornerParams` 的圆角权重，与胶囊配方一致。 */
-    private const val CORNER_WEIGHT = 1.0f
-
     /** `OplusMaterialEdgeParams.EDGE_TYPE_RECTANGLE`：矩形（非圆/方）边缘光。 */
     private const val EDGE_TYPE_RECTANGLE = 1
 
-    /** 原生预设线宽 2.2dp。 */
-    private const val EDGE_WIDTH_DP = 2.2f
+    /** 边缘线宽的安全区间（dp）。设置层已裁剪，这里只兜住异常入参。 */
+    private const val MIN_EDGE_WIDTH_DP = 0.5f
+    private const val MAX_EDGE_WIDTH_DP = 12f
+
+    /**
+     * 强度缩放上限，与设置层 `MAX_EDGE_HIGHLIGHT_INTENSITY` 的 100 对应，
+     * 由 `WeTypeWindowHooks` 的 `COLOROS_EDGE_INTENSITY_GAIN` 把滑杆值放大到这里。
+     */
+    private const val MAX_INTENSITY_SCALE = 4f
+
+    /** 内阴影淡入 alpha 相对强度的放大倍数（原生预设值只有 0.01，直接乘强度几乎看不出）。 */
+    private const val SHADOW_FADE_IN_GAIN = 12f
+
+    /** 内阴影扩散宽度的基数与随强度的增量。 */
+    private const val SHADOW_FADE_SCALE_FLOOR = 0.5f
+    private const val SHADOW_FADE_SCALE_GAIN = 0.6f
 
     /** 节点级背板模糊半径，与 ColorOS 材质模糊预设（150px）保持一致。 */
     private const val BACKDROP_BLUR_PX = 150f
@@ -62,13 +75,14 @@ internal object WeTypeColorOsMaterialStroke {
 
     /**
      * 给 [view] 下发原生材质边缘光与内阴影。`intensityScale` 为 1.0 表示 100% 强度，
-     * `angleDegrees` 为光照方向角（度）。
+     * `angleDegrees` 为光照方向角（度），`edgeWidthDp` 为边缘线宽（dp）。
      */
     fun apply(
         view: View,
         isDark: Boolean,
         intensityScale: Float,
         angleDegrees: Float,
+        edgeWidthDp: Float,
         cornerRadiusPx: Float,
         maskColor: Int
     ): Boolean = runCatching {
@@ -76,7 +90,7 @@ internal object WeTypeColorOsMaterialStroke {
         val edgeClass = Class.forName(EDGE_PARAMS)
         val shadowClass = Class.forName(SHADOW_PARAMS)
         val density = view.resources.displayMetrics.density
-        val scale = intensityScale.coerceIn(0f, 2f)
+        val scale = intensityScale.coerceIn(0f, MAX_INTENSITY_SCALE)
 
         // 平台在 nSetOplusMaterialEdgeParams 之前会读 RenderNode 的 layerType，只有
         // LAYER_TYPE_HARDWARE 才会走到 OplusMaterialFilterDrawable::draw；软件图层下
@@ -97,10 +111,14 @@ internal object WeTypeColorOsMaterialStroke {
         // 放在材质滤镜重建成功之后才生效——重建失败时保留原有背景，避免键盘整片变透明。
 
         val edgeAlpha = (if (isDark) DARK_EDGE_ALPHA else LIGHT_EDGE_ALPHA) * scale
-        val edgeWidthDp = EDGE_WIDTH_DP
-        val fadeIn = (if (isDark) DARK_SHADOW_FADE_IN else LIGHT_SHADOW_FADE_IN) * scale
+        val widthDp = edgeWidthDp.coerceIn(MIN_EDGE_WIDTH_DP, MAX_EDGE_WIDTH_DP)
+        // 边缘线 alpha 会在 1.5 左右被平台吃满（实测 alpha 3.6 与 5.4 出像素完全相同），
+        // 所以「强度」不能只压在 alpha 上：内阴影的淡入 alpha 与扩散宽度还有很大余量，
+        // 让它们跟着强度一起长，滑杆才在整段范围内都有可见响应。
+        val fadeIn = (if (isDark) DARK_SHADOW_FADE_IN else LIGHT_SHADOW_FADE_IN) * scale * SHADOW_FADE_IN_GAIN
         val fadeOut = if (isDark) DARK_SHADOW_FADE_OUT else LIGHT_SHADOW_FADE_OUT
-        val fadeScale = if (isDark) DARK_SHADOW_FADE_SCALE else LIGHT_SHADOW_FADE_SCALE
+        val fadeScale = (if (isDark) DARK_SHADOW_FADE_SCALE else LIGHT_SHADOW_FADE_SCALE) *
+            (SHADOW_FADE_SCALE_FLOOR + scale * SHADOW_FADE_SCALE_GAIN)
         val edgeType = EDGE_TYPE_RECTANGLE
         val shadowType = EDGE_TYPE_RECTANGLE
         val radius = cornerRadiusPx
@@ -115,7 +133,7 @@ internal object WeTypeColorOsMaterialStroke {
             Float::class.javaPrimitiveType,
             Float::class.javaPrimitiveType,
             Float::class.javaPrimitiveType
-        ).newInstance(edgeType, edgeWidthDp * density, edgeAlpha, angleDegrees)
+        ).newInstance(edgeType, widthDp * density, edgeAlpha, angleDegrees)
 
         val shadow = shadowClass.getConstructor(
             Int::class.javaPrimitiveType,
@@ -139,7 +157,7 @@ internal object WeTypeColorOsMaterialStroke {
         Log.i(
             "MaterialStroke apply edge=$edgeOk shadow=$shadowOk cleared=$cleared rebuilt=$rebuilt " +
                 "w=${view.width} h=${view.height} r=$radius alpha=$edgeAlpha " +
-                "width=${edgeWidthDp}dp angle=$angleDegrees type=$edgeType/$shadowType " +
+                "width=${widthDp}dp angle=$angleDegrees type=$edgeType/$shadowType " +
                 "fadeIn=$fadeIn fadeScale=$fadeScale " +
                 "attached=${view.isAttachedToWindow} layer=${view.layerType}"
         )
@@ -161,13 +179,20 @@ internal object WeTypeColorOsMaterialStroke {
         false
     }
 
-    /** 下发材质圆角轮廓（`OplusMaterialUtil.setCornerParams`）。 */
+    /**
+     * 下发材质圆角轮廓（`OplusMaterialUtil.setCornerParams`）。
+     *
+     * 权重必须与面板轮廓用同一条曲线（[WETYPE_COLOROS_SMOOTH_WEIGHT]）：HWUI 的
+     * `OplusMaterialEffectShader::smoothSdfD` 在 `weight < 2` 时走 `sdCapsule` 分支，半径恒为
+     * 节点短边的一半、`radius` 参数被丢弃（整块键盘被画成巨型胶囊弧）；`weight > 2` 是超椭圆角，
+     * 与正圆弧面板相差最多 26px（33dp@620dpi 实测）。两者都会让边缘光吃不到面板四角。
+     */
     private fun setCornerParams(view: View, radiusPx: Float): Boolean = try {
         val util = Class.forName(MATERIAL_UTIL)
         val cornerClass = Class.forName(CORNER_PARAMS)
         val params = cornerClass
             .getConstructor(Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
-            .newInstance(radiusPx, CORNER_WEIGHT)
+            .newInstance(radiusPx, WETYPE_COLOROS_SMOOTH_WEIGHT)
         util.getMethod("setCornerParams", View::class.java, cornerClass)
             .invoke(null, view, params) as? Boolean ?: false
     } catch (t: Throwable) {

@@ -61,6 +61,26 @@ private const val MIN_PANEL_ALPHA = 0xC8
 /** 把 [this] 的 alpha 提升到至少 [minimum]（0..255），保留 RGB。 */
 private fun Int.withMinimumAlpha(minimum: Int): Int =
     (this and 0x00FFFFFF) or (maxOf(this ushr 24, minimum) shl 24)
+
+/** 模块自绘高光的基准宽度（dp），对应 WeTypeBloomStrokeDrawable 的 CSS 阴影几何。 */
+private const val BASE_EDGE_WIDTH_DP = 2f
+
+/**
+ * 强度滑杆（0..100）到自绘高光的换算倍数。
+ *
+ * 滑杆从 0..300 收到 0..100，倍数相应提高，使 100 与原来的 300 等效——自绘高光的
+ * 可达上限不变，只是每一格对应的调整量更大。
+ */
+private const val BLOOM_EDGE_INTENSITY_GAIN = 3f
+
+/**
+ * 强度滑杆（0..100）到原生材质的换算倍数。
+ *
+ * 原生材质的边缘线 alpha 在 1.5 左右就被平台吃满，所以倍数比自绘更大，剩下的量由
+ * `WeTypeColorOsMaterialStroke` 分给内阴影的淡入 alpha 与扩散宽度。
+ */
+private const val COLOROS_EDGE_INTENSITY_GAIN = 4f
+
 /**
  * 导航栏图标反色的亮度判据。
  *
@@ -117,6 +137,10 @@ internal object WeTypeWindowHooks {
         val edgeHighlightEnabled: Boolean,
         val edgeHighlightIntensity: Int,
         val colorOsLightAngle: Int,
+        val nativeEdgeLightEnabled: Boolean,
+        val edgeLightWidth: Int,
+        val edgeLightAngle: Int,
+        val nativeEdgeLightWidth: Int,
         val cornerRadii: WeTypeCornerRadii,
         val nightMode: Int,
         val density: Float,
@@ -145,19 +169,54 @@ internal object WeTypeWindowHooks {
         }
     }
 
+    /**
+     * 面板轮廓，材质节点专用。与 [ContinuousCornerOutline] 的区别是尺寸不由 target 决定：
+     * 材质节点是两倍背板高，只有其中一半落在面板上，轮廓必须按面板本身给。
+     */
+    private class PanelOutline(
+        private val width: Int,
+        private val height: Int,
+        private val offsetY: Int,
+        private val cornerRadii: WeTypeCornerRadii
+    ) : ViewOutlineProvider() {
+        private var cachedPath: Path? = null
+
+        fun matches(w: Int, h: Int, offset: Int, radii: WeTypeCornerRadii): Boolean =
+            width == w && height == h && offsetY == offset && cornerRadii == radii
+
+        override fun getOutline(target: View, outline: Outline) {
+            if (width <= 0 || height <= 0) return
+            val path = cachedPath ?: createWeTypeSmoothRoundedPath(
+                width.toFloat(), height.toFloat(), cornerRadii
+            ).apply {
+                if (offsetY != 0) offset(0f, offsetY.toFloat())
+                cachedPath = this
+            }
+            runCatching { outline.setPath(path) }.onFailure {
+                outline.setRoundRect(0, offsetY, width, offsetY + height, cornerRadii.maxRadius())
+            }
+        }
+    }
+
     private data class WeTypeWindowState(
         var windowVisible: Boolean = false,
         var backgroundCarrier: View? = null,
         /**
-         * 原生材质光效的承载层。
+         * 原生材质光效的承载层，上下各一片。
          *
          * ColorOS 材质是**背板滤镜**：它处理「节点背后、同一窗口内」已经画好的画面。
          * 背板载体自己就是最底层节点，它背后什么都没有，所以把材质挂在它身上必然零像素
          * （实测：同参数下给它背后垫一层窗口内实色，立刻出现 12 万+ 像素变化）。
-         * 因此材质改挂在载体内部一张透明覆盖层上——它的背板就是载体自己画出来的面板，
+         * 因此材质改挂在载体内部两张透明覆盖层上——它的背板就是载体自己画出来的面板，
          * 材质滤镜这才有输入源。
+         *
+         * 材质圆角在 HWUI 里是**一个标量**，一个节点只能有一种圆角。上下圆角不同时照旧
+         * 传 `maxRadius()` 会让顶角画成底部那么大的圆弧，光带被真实面板轮廓整段裁掉。
+         * 所以按上下拆成两片，每片取自己那一端的圆角；「错误的那一端」靠节点尺寸伸出载体
+         * 之外，由载体自己的 `clipChildren` 裁掉。
          */
-        var materialOverlay: View? = null,
+        var materialOverlayTop: View? = null,
+        var materialOverlayBottom: View? = null,
         var carrierOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
         var hyperMaterial: WeTypeSystemMaterial? = null,
         var stopMaterialObserver: (() -> Unit)? = null,
@@ -1313,6 +1372,10 @@ internal object WeTypeWindowHooks {
             edgeHighlightEnabled = settings.edgeHighlightEnabled,
             edgeHighlightIntensity = settings.edgeHighlightIntensity,
             colorOsLightAngle = settings.colorOsLightAngle,
+            nativeEdgeLightEnabled = settings.nativeEdgeLightEnabled,
+            edgeLightWidth = settings.edgeLightWidth,
+            edgeLightAngle = settings.edgeLightAngle,
+            nativeEdgeLightWidth = settings.nativeEdgeLightWidth,
             cornerRadii = cornerRadii,
             nightMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
             density = context.resources.displayMetrics.density,
@@ -1325,9 +1388,9 @@ internal object WeTypeWindowHooks {
         } else {
             state.backgroundViewRoot
         }
-        // ColorOS 原生边缘光是否生效只看它自己的开关，不再依赖 HyperOS 质感视效开关。
+        // ColorOS 原生边缘光是否生效只看模块自己的开关，不再依赖 HyperOS 质感视效开关。
         val useColorOsStroke = style.edgeHighlightEnabled &&
-            style.nativeStrokeEnabled &&
+            style.nativeEdgeLightEnabled &&
             WeTypeSystemMaterials.isColorOsBackend()
         if (carrier.background == null || state.backgroundStyle != style || state.backgroundViewRoot !== viewRoot) {
             val isColorOsMaterial = style.hyperMaterialEnabled && WeTypeSystemMaterials.isColorOsBackend()
@@ -1347,19 +1410,14 @@ internal object WeTypeWindowHooks {
                     carrier.foreground = null
                     applyContinuousCornerOutline(carrier, cornerRadii)
                 } else {
-                    // ColorOS 原生模糊只画背景，不像 HyperOS 材质自带面板光影。
-                    //
-                    // 系统原生「COUIShadowEdgeDrawable」硬件流光轮廓此前挂在背板载体的
-                    // foreground 上，而载体位于 decor 最底层，键盘自身的按键面板会把左右两条
-                    // 侧边描边整个盖住（只有顶部/底部空隙能透出来），表现为「只有上下有边缘光」。
-                    // 改为挂到 decor 的 ViewOverlay：它在所有子 View 之上绘制，因此四周四条边
-                    // 的描边、向内扩散的内发光与向外漫射的散光都能完整呈现。
-                    carrier.foreground = null
-                    // 原生材质是**背板滤镜**，只处理「节点背后、同一窗口内」已画好的画面。
-                    // 载体此前只挂模糊 Drawable，等于没画任何东西（实测键盘区像素与 App 背景
-                    // 完全一致），覆盖层的材质滤镜输入为空 → 参数下发成功但零像素。
-                    // 原生边缘光生效时让载体画出真实面板，材质才有输入源。
+                    // ColorOS 的原生模糊只画背景，不像 HyperOS 材质自带面板光影；
+                    // 这里把模块自绘的「流光轮廓」叠到模糊之上，跟随系统同名开关。
                     if (useColorOsStroke) {
+                        // 原生材质是**背板滤镜**，只处理「节点背后、同一窗口内」已画好的画面。
+                        // 载体此前只挂模糊 Drawable，等于没画任何东西（实测键盘区像素与 App 背景
+                        // 完全一致），覆盖层的材质滤镜输入为空 → 参数下发成功但零像素。
+                        // 原生边缘光生效时让载体画出真实面板，材质才有输入源。
+                        carrier.foreground = null
                         // 原生材质是背板滤镜，输出强度正比于背板的内容量。实测同一套参数下：
                         // 25% 透明面板 → 0 像素；不透明深色面板 → 6,052 像素；不透明中灰 →
                         // 8,834 像素；不透明浅色 → 10,118 像素。默认深色面板是 25% 黑，铺在
@@ -1368,6 +1426,15 @@ internal object WeTypeWindowHooks {
                         val panelColor = style.color.withMinimumAlpha(MIN_PANEL_ALPHA)
                         carrier.background = createBackgroundDrawable(
                             carrier, context, style.copy(color = panelColor), skipStroke = true
+                        )
+                    } else {
+                        carrier.foreground = WeTypeBloomStrokeDrawable(
+                            context = context,
+                            cornerRadii = cornerRadii,
+                            surfaceColor = style.color,
+                            intensityScale = style.edgeHighlightIntensity / 100f * BLOOM_EDGE_INTENSITY_GAIN,
+                            strokeWidthScale = style.edgeLightWidth / BASE_EDGE_WIDTH_DP,
+                            lightAngleDegrees = style.edgeLightAngle.toFloat()
                         )
                     }
                 }
@@ -1386,6 +1453,7 @@ internal object WeTypeWindowHooks {
         // This decorative child keeps a zero-height layout spec. Its rendered bounds must
         // not feed back into the IME's measurement or the app-facing inset calculation.
         if (carrier.width != decorView.width || carrier.height != backgroundHeight || carrier.top != bounds.top) {
+            syncMaterialOverlayLayout(state, cornerRadii, decorView.width, backgroundHeight)
             carrier.measure(
                 View.MeasureSpec.makeMeasureSpec(decorView.width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(backgroundHeight, View.MeasureSpec.EXACTLY)
@@ -1532,6 +1600,78 @@ internal object WeTypeWindowHooks {
     private fun relativeLuminance(color: Int): Float =
         (Color.red(color) * 0.299f + Color.green(color) * 0.587f + Color.blue(color) * 0.114f) / 255f
 
+    /**
+     * 一片材质覆盖层：一张透明节点，背板就是载体画出的面板本身。
+     *
+     * 材质圆角在 HWUI 里是**一个标量**，一个节点只能有一种圆角。上下圆角不同时传
+     * `maxRadius()` 会把顶角画成底部那么大的圆弧，光带被真实面板轮廓裁掉一段。所以上下
+     * 各一片，每片取自己那一端的圆角；「错误的那一端」靠节点尺寸伸出载体之外裁掉，
+     * 不引入额外的容器层级。
+     */
+    private fun createMaterialOverlay(context: Context): View = View(context).apply {
+        visibility = View.INVISIBLE
+        isClickable = false
+        isFocusable = false
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        setBackgroundColor(Color.TRANSPARENT)
+    }
+
+    /**
+     * 把两片材质覆盖层的几何摆好。必须在载体 `measure`/`layout` **之前**调用：尺寸和偏移都
+     * 靠 `FrameLayout` 的 LayoutParams 表达，由载体的布局流程一起算。
+     *
+     * 两片都是整块背板的两倍高：上半片占 `[0, 2H]`，下半片占 `[-H, H]`。于是每片只有一个
+     * 端点的圆角落在载体范围内，另一端伸出载体、被 `clipChildren` 裁掉。
+     */
+    private fun syncMaterialOverlayLayout(
+        state: WeTypeWindowState,
+        cornerRadii: WeTypeCornerRadii,
+        width: Int,
+        height: Int
+    ) {
+        val nodeTop = state.materialOverlayTop ?: return
+        val nodeBottom = state.materialOverlayBottom ?: return
+        setOverlayParams(nodeTop, width, height * 2, 0)
+        setOverlayParams(nodeBottom, width, height * 2, -height)
+        applyPanelClip(nodeTop, width, height, 0, cornerRadii)
+        applyPanelClip(nodeBottom, width, height, height, cornerRadii)
+    }
+
+    /**
+     * 把材质节点裁到面板轮廓。
+     *
+     * 节点上的底色（`OplusMaterialBaseParams` 的 mask）与背板模糊都铺满**整个节点矩形**，
+     * 不跟随 `setCornerParams` 给出的圆角轮廓。于是面板圆角外侧那一块会被铺上一层半透明
+     * 的面板底色——看上去就是「圆角外面到顶栏之间有一片没做全透明的区域」。
+     * 裁到面板轮廓后，圆角之外回到完全透明。
+     */
+    private fun applyPanelClip(
+        node: View,
+        width: Int,
+        height: Int,
+        offsetY: Int,
+        cornerRadii: WeTypeCornerRadii
+    ) {
+        val current = node.outlineProvider as? PanelOutline
+        if (current?.matches(width, height, offsetY, cornerRadii) == true && node.clipToOutline) return
+        node.outlineProvider = PanelOutline(width, height, offsetY, cornerRadii)
+        node.clipToOutline = true
+        node.invalidateOutline()
+    }
+
+    private fun setOverlayParams(view: View, width: Int, height: Int, topMargin: Int) {
+        val params = view.layoutParams as? FrameLayout.LayoutParams
+        if (params == null) {
+            view.layoutParams = FrameLayout.LayoutParams(width, height).apply { this.topMargin = topMargin }
+            return
+        }
+        if (params.width == width && params.height == height && params.topMargin == topMargin) return
+        params.width = width
+        params.height = height
+        params.topMargin = topMargin
+        view.layoutParams = params
+    }
+
     private fun ensureBackgroundCarrier(
         context: Context,
         decorGroup: ViewGroup,
@@ -1559,22 +1699,14 @@ internal object WeTypeWindowHooks {
             0,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
         )
-        // 透明覆盖层：原生材质光效的承载层，背板即载体画出的面板本身。
-        val overlay = View(context).apply {
-            visibility = View.INVISIBLE
-            isClickable = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setBackgroundColor(Color.TRANSPARENT)
-        }
-        carrier.addView(
-            overlay,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        state.materialOverlay = overlay
+        // 透明覆盖层：原生材质光效的承载层，背板即载体画出的面板本身；上下各一片，
+        // 各取自己那一端的圆角。
+        val nodeTop = createMaterialOverlay(context)
+        val nodeBottom = createMaterialOverlay(context)
+        carrier.addView(nodeTop, FrameLayout.LayoutParams(0, 0))
+        carrier.addView(nodeBottom, FrameLayout.LayoutParams(0, 0))
+        state.materialOverlayTop = nodeTop
+        state.materialOverlayBottom = nodeBottom
         state.backgroundCarrier = carrier
         // A fresh RenderNode restores actual ROM defaults when an override is cleared.
         state.carrierOverrides = overrides
@@ -1651,6 +1783,8 @@ internal object WeTypeWindowHooks {
         state.hyperMaterial = null
         state.capsuleManager?.clear()
         state.capsuleManager = null
+        state.materialOverlayTop = null
+        state.materialOverlayBottom = null
         // 必须在置空 state.window 之前交还：restoreNavigationBarAppearance 依赖它取窗口。
         restoreNavigationBarAppearance(state)
         val carrier = state.backgroundCarrier ?: return
@@ -1695,7 +1829,9 @@ internal object WeTypeWindowHooks {
                         context = context,
                         cornerRadii = cornerRadii,
                         surfaceColor = color,
-                        intensityScale = style.edgeHighlightIntensity / 100f
+                        intensityScale = style.edgeHighlightIntensity / 100f * BLOOM_EDGE_INTENSITY_GAIN,
+                        strokeWidthScale = style.edgeLightWidth / BASE_EDGE_WIDTH_DP,
+                        lightAngleDegrees = style.edgeLightAngle.toFloat()
                     )
                 )
             }
@@ -1753,24 +1889,46 @@ internal object WeTypeWindowHooks {
             detachStrokeOverlay(state)
             return
         }
+        val height = carrier.height
+        val topRadius = maxOf(style.cornerRadii.topLeft, style.cornerRadii.topRight)
+        val bottomRadius = maxOf(style.cornerRadii.bottomLeft, style.cornerRadii.bottomRight)
+        val degenerate = topRadius + bottomRadius >= height
+        val upperRadius = if (degenerate) style.cornerRadii.maxRadius() else topRadius
+        val lowerRadius = if (degenerate) style.cornerRadii.maxRadius() else bottomRadius
         // 尺寸/样式未变就不重复下发，避免每个布局回调都走一遍反射。
         val key = listOf(
             carrier.width, carrier.height,
             style.nightMode, style.edgeHighlightIntensity, style.colorOsLightAngle,
-            style.cornerRadii
+            style.nativeEdgeLightWidth, topRadius, bottomRadius
         ).joinToString("|")
         if (state.materialStrokeApplied && state.materialStrokeKey == key) return
-        val strokeTarget = state.materialOverlay ?: carrier
-        strokeTarget.visibility = View.VISIBLE
-        val applied = WeTypeColorOsMaterialStroke.apply(
-            view = strokeTarget,
-            isDark = style.nightMode == Configuration.UI_MODE_NIGHT_YES,
-            intensityScale = style.edgeHighlightIntensity / 100f,
-            angleDegrees = style.colorOsLightAngle.toFloat(),
-            cornerRadiusPx = style.cornerRadii.maxRadius(),
+        val upperTarget = state.materialOverlayTop ?: carrier
+        val lowerTarget = state.materialOverlayBottom ?: carrier
+        upperTarget.visibility = View.VISIBLE
+        lowerTarget.visibility = View.VISIBLE
+        val isDark = style.nightMode == Configuration.UI_MODE_NIGHT_YES
+        val intensityScale = style.edgeHighlightIntensity / 100f * COLOROS_EDGE_INTENSITY_GAIN
+        val angleDegrees = style.colorOsLightAngle.toFloat()
+        val edgeWidthDp = style.nativeEdgeLightWidth.toFloat()
+        val upperOk = WeTypeColorOsMaterialStroke.apply(
+            view = upperTarget,
+            isDark = isDark,
+            intensityScale = intensityScale,
+            angleDegrees = angleDegrees,
+            edgeWidthDp = edgeWidthDp,
+            cornerRadiusPx = upperRadius,
             maskColor = style.color
         )
-        state.materialStrokeApplied = applied
+        val lowerOk = WeTypeColorOsMaterialStroke.apply(
+            view = lowerTarget,
+            isDark = isDark,
+            intensityScale = intensityScale,
+            angleDegrees = angleDegrees,
+            edgeWidthDp = edgeWidthDp,
+            cornerRadiusPx = lowerRadius,
+            maskColor = style.color
+        )
+        state.materialStrokeApplied = upperOk || lowerOk
         state.materialStrokeKey = key
     }
 
@@ -1780,7 +1938,8 @@ internal object WeTypeWindowHooks {
         state.materialStrokeApplied = false
         state.materialStrokeKey = null
         state.backgroundCarrier?.let { WeTypeColorOsMaterialStroke.clear(it) }
-        state.materialOverlay?.let { WeTypeColorOsMaterialStroke.clear(it) }
+        state.materialOverlayTop?.let { WeTypeColorOsMaterialStroke.clear(it) }
+        state.materialOverlayBottom?.let { WeTypeColorOsMaterialStroke.clear(it) }
     }
 
     private fun applyContinuousCornerOutline(

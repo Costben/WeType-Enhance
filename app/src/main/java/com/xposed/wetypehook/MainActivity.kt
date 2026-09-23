@@ -759,6 +759,10 @@ private fun WeTypeSettingsScreen(
             edgeHighlightEnabled = latest.edgeHighlightEnabled,
             edgeHighlightIntensity = latest.edgeHighlightIntensity,
             colorOsLightAngle = latest.colorOsLightAngle,
+            nativeEdgeLightEnabled = latest.nativeEdgeLightEnabled,
+            edgeLightWidth = latest.edgeLightWidth,
+            nativeEdgeLightWidth = latest.nativeEdgeLightWidth,
+            edgeLightAngle = latest.edgeLightAngle,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.toIntOrNull()
@@ -844,7 +848,11 @@ private fun WeTypeSettingsScreen(
             edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED,
             edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
             colorOsLightAngle = WeTypeSettings.DEFAULT_COLOROS_LIGHT_ANGLE,
-            iconEdgeLightEnabled = WeTypeSettings.DEFAULT_ICON_EDGE_LIGHT_ENABLED
+            iconEdgeLightEnabled = WeTypeSettings.DEFAULT_ICON_EDGE_LIGHT_ENABLED,
+            nativeEdgeLightEnabled = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
+            edgeLightWidth = WeTypeSettings.DEFAULT_EDGE_LIGHT_WIDTH,
+            nativeEdgeLightWidth = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
+            edgeLightAngle = WeTypeSettings.DEFAULT_EDGE_LIGHT_ANGLE
         )
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD

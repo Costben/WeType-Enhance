@@ -51,6 +51,8 @@ import top.yukonga.miuix.kmp.utils.overScrollVertical
 private const val MIN_LIGHT_ANGLE = 0
 private const val MAX_LIGHT_ANGLE = WeTypeSettings.MAX_COLOROS_LIGHT_ANGLE
 private const val MAX_EDGE_HIGHLIGHT_INTENSITY = WeTypeSettings.MAX_EDGE_HIGHLIGHT_INTENSITY
+private const val MIN_EDGE_LIGHT_WIDTH = WeTypeSettings.MIN_EDGE_LIGHT_WIDTH
+private const val MAX_EDGE_LIGHT_WIDTH = WeTypeSettings.MAX_EDGE_LIGHT_WIDTH
 
 @Composable
 internal fun ColorOsLightApp(
@@ -75,8 +77,12 @@ internal fun ColorOsLightPage(
     val saved = remember(settingsContext) { WeTypeSettings.readLocalSnapshot(settingsContext) }
     var edgeHighlightEnabled by remember { mutableStateOf(saved.edgeHighlightEnabled) }
     var edgeHighlightIntensity by remember { mutableStateOf(saved.edgeHighlightIntensity) }
-    var lightAngle by remember { mutableStateOf(saved.colorOsLightAngle) }
+    var nativeLightAngle by remember { mutableStateOf(saved.colorOsLightAngle) }
     var iconEdgeLightEnabled by remember { mutableStateOf(saved.iconEdgeLightEnabled) }
+    var nativeEdgeLightEnabled by remember { mutableStateOf(saved.nativeEdgeLightEnabled) }
+    var edgeLightWidth by remember { mutableStateOf(saved.edgeLightWidth) }
+    var edgeLightAngle by remember { mutableStateOf(saved.edgeLightAngle) }
+    var nativeEdgeLightWidth by remember { mutableStateOf(saved.nativeEdgeLightWidth) }
     var message by remember { mutableStateOf("") }
 
     fun persist() {
@@ -84,8 +90,12 @@ internal fun ColorOsLightPage(
             context = settingsContext,
             edgeHighlightEnabled = edgeHighlightEnabled,
             edgeHighlightIntensity = edgeHighlightIntensity,
-            colorOsLightAngle = lightAngle,
+            colorOsLightAngle = nativeLightAngle,
             iconEdgeLightEnabled = iconEdgeLightEnabled,
+            nativeEdgeLightEnabled = nativeEdgeLightEnabled,
+            edgeLightWidth = edgeLightWidth,
+            edgeLightAngle = edgeLightAngle,
+            nativeEdgeLightWidth = nativeEdgeLightWidth,
             onPersisted = { ok -> if (!ok) message = "保存失败，请重试" }
         )
     }
@@ -126,7 +136,7 @@ internal fun ColorOsLightPage(
                     insideMargin = PaddingValues(16.dp)
                 ) {
                     Text(
-                        text = "本页光感依赖 ColorOS 系统的硬件流光轮廓能力，仅在使用系统原生模糊背景时生效，与「HyperOS 质感视效」开关相互独立。",
+                        text = "「背板边缘光」由模块自绘，可在任意模糊背景上显示；「ColorOS 原生边缘光」改用系统材质通道，仅在使用系统原生模糊背景时生效。两者各自独立，同时开启时以原生为准。",
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary
                     )
@@ -142,8 +152,8 @@ internal fun ColorOsLightPage(
                 ) {
                     Column {
                         BasicComponent(
-                            title = "边缘光效",
-                            summary = "在键盘背板四周显示系统原生流光轮廓",
+                            title = "边缘高光",
+                            summary = "模块自绘，在键盘背板四周显示边缘高光",
                             endActions = {
                                 Switch(
                                     checked = edgeHighlightEnabled,
@@ -161,10 +171,18 @@ internal fun ColorOsLightPage(
                             }
                         )
                         LightAngleSlider(
-                            value = lightAngle,
-                            enabled = edgeHighlightEnabled,
+                            value = edgeLightAngle,
+                            enabled = edgeHighlightEnabled && !nativeEdgeLightEnabled,
                             onValueChange = {
-                                lightAngle = it
+                                edgeLightAngle = it
+                                persist()
+                            }
+                        )
+                        WidthSlider(
+                            value = edgeLightWidth,
+                            enabled = edgeHighlightEnabled && !nativeEdgeLightEnabled,
+                            onValueChange = {
+                                edgeLightWidth = it
                                 persist()
                             }
                         )
@@ -172,21 +190,59 @@ internal fun ColorOsLightPage(
                 }
             }
             item {
-                SmallTitle(text = "边缘光效强度")
+                SmallTitle(text = "边缘光效")
             }
             item {
                 Card(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     insideMargin = PaddingValues(0.dp)
                 ) {
-                    IntensitySlider(
-                        value = edgeHighlightIntensity,
-                        enabled = edgeHighlightEnabled,
-                        onValueChange = {
-                            edgeHighlightIntensity = it
-                            persist()
-                        }
-                    )
+                    Column {
+                        BasicComponent(
+                            title = "ColorOS 原生边缘光",
+                            summary = "改用系统原生材质绘制边缘光与内阴影，下方宽度与强度同时作用于它",
+                            endActions = {
+                                Switch(
+                                    checked = nativeEdgeLightEnabled,
+                                    onCheckedChange = {
+                                        nativeEdgeLightEnabled = it
+                                        message = ""
+                                        persist()
+                                    }
+                                )
+                            },
+                            onClick = {
+                                nativeEdgeLightEnabled = !nativeEdgeLightEnabled
+                                message = ""
+                                persist()
+                            }
+                        )
+                        LightAngleSlider(
+                            value = nativeLightAngle,
+                            enabled = edgeHighlightEnabled && nativeEdgeLightEnabled,
+                            note = "当前 ColorOS 版本未使用该参数：实测 45° 与 225° 在键盘背板上逐像素相同。",
+                            onValueChange = {
+                                nativeLightAngle = it
+                                persist()
+                            }
+                        )
+                        WidthSlider(
+                            value = nativeEdgeLightWidth,
+                            enabled = edgeHighlightEnabled && nativeEdgeLightEnabled,
+                            onValueChange = {
+                                nativeEdgeLightWidth = it
+                                persist()
+                            }
+                        )
+                        IntensitySlider(
+                            value = edgeHighlightIntensity,
+                            enabled = edgeHighlightEnabled,
+                            onValueChange = {
+                                edgeHighlightIntensity = it
+                                persist()
+                            }
+                        )
+                    }
                 }
             }
             item {
@@ -236,6 +292,7 @@ internal fun ColorOsLightPage(
 private fun LightAngleSlider(
     value: Int,
     enabled: Boolean,
+    note: String? = null,
     onValueChange: (Int) -> Unit
 ) {
     Column(
@@ -263,6 +320,13 @@ private fun LightAngleSlider(
             style = MiuixTheme.textStyles.body2,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary
         )
+        if (note != null) {
+            Text(
+                text = note,
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
         Slider(
             enabled = enabled,
@@ -274,6 +338,47 @@ private fun LightAngleSlider(
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { contentDescription = "光照角度" }
+        )
+    }
+}
+
+@Composable
+private fun WidthSlider(
+    value: Int,
+    enabled: Boolean,
+    onValueChange: (Int) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "宽度",
+                style = MiuixTheme.textStyles.main,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = "${value}dp",
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                style = MiuixTheme.textStyles.main
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Slider(
+            enabled = enabled,
+            value = value.coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH).toFloat(),
+            onValueChange = {
+                onValueChange(it.roundToInt().coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH))
+            },
+            valueRange = MIN_EDGE_LIGHT_WIDTH.toFloat()..MAX_EDGE_LIGHT_WIDTH.toFloat(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "边缘光宽度" }
         )
     }
 }
