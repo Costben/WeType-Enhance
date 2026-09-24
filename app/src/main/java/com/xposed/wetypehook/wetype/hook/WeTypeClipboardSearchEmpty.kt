@@ -7,6 +7,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewStub
 import android.widget.TextView
+import com.xposed.wetypehook.wetype.host.HostResources
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.util.Collections
 import java.util.WeakHashMap
@@ -217,7 +218,8 @@ internal object WeTypeClipboardSearchEmpty {
         for (cl in loaders) {
             if (cl == null) continue
             try {
-                val sClass = Class.forName(WETYPE_ID_CLASS, false, cl)
+                val sClass = HostResources.rClass(WETYPE_ID_CLASS, cl)
+                    ?: Class.forName(WETYPE_ID_CLASS, false, cl)
                 val ids = ResolvedIds(
                     vsId = runCatching { sClass.getField("empty_clipboard_view_vs").getInt(null) }.getOrNull(),
                     titleId = runCatching { sClass.getField("clipboard_empty_title").getInt(null) }.getOrNull(),

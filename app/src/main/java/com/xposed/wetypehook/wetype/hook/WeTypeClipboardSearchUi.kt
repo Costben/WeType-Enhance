@@ -22,6 +22,12 @@ import android.view.inputmethod.InputConnectionWrapper
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.HostResources
+import com.xposed.wetypehook.wetype.host.requireClass
+import com.xposed.wetypehook.wetype.host.requireConstant
+import com.xposed.wetypehook.wetype.host.requireField
+import com.xposed.wetypehook.wetype.host.requireMethod
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.ProceedWithOriginal
 import com.xposed.wetypehook.xposed.hookAfter
@@ -73,74 +79,57 @@ internal object WeTypeClipboardSearchUi {
         throw NoSuchFieldException("${target.javaClass.name}.$name")
     }
 
-    private fun singleton(cls: Class<*>): Any {
-        val field = cls.declaredFields.single {
-            java.lang.reflect.Modifier.isStatic(it.modifiers) && it.type == cls
-        }
-        field.isAccessible = true
-        return field.get(null) ?: error("Missing native singleton")
-    }
-
     /**
-     * 原生提交契约（3.5.3/3.5.4，全部按签名现取）：
-     * 导航 3.5.3=N#p3 / 3.5.4=N#n3；候选 getter 按 ImeCandidateView 返回型；
-     * pending 3.5.3=i0#B2 / 3.5.4=i0#D2；emit 3.5.3=i0#W1 / 3.5.4=i0#Y1。
+     * 原生提交契约（3.5.3/3.5.4）：槽位一律走 `WeTypeHostContracts` 契约层解析，历史短名
+     * （`model.N` / `keyboard.t` / `model.i0` / `key.d` / `WxHldService` / `translatingwhilewriting.q`）
+     * 只在契约层内部当兜底候选，本函数不再自查名字。
+     * 导航 = `panel.switch.enum`（3.5.3=N#p3 / 3.5.4=N#o3；3.5.4 的 N#t3 形状相同但语义是切键盘，
+     * 契约层已按字符串锚排除）；候选 getter 按 ImeCandidateView 返回型；pending = i0#B2 / i0#D2；
+     * emit = i0#W1 / i0#Y1。纯类槽位单独 `requireClass` 只作「类必须存在」的前置校验。
      * 任一契约取不到即整链 fail-closed，禁兜底。
      */
     private fun installNativeSubmitBridge(anchor: View): Boolean {
         if (nativeSubmitInstalled) return true
         return runCatching {
-            val cl = hostClassLoader ?: error("Missing host loader")
-            val n = Class.forName("com.tencent.wetype.plugin.hld.model.N", false, cl)
-            val panelClass = Class.forName("com.tencent.wetype.plugin.hld.keyboard.t", false, cl)
+            checkNotNull(hostClassLoader) { "Missing host loader" }
+            requireClass(HostContractId.PANEL_MANAGER)
+            val panelClass = requireClass(HostContractId.PANEL_ENUM)
             check(panelClass.isEnum)
-            val panel = panelClass.enumConstants?.single { (it as Enum<*>).name == "CustomPhraseAndClipboard" }
-                ?: error("Missing CustomPhraseAndClipboard panel")
-            val navigation = n.declaredMethods.firstOrNull {
-                (it.name == "n3" || it.name == "p3") && it.parameterTypes.size == 2 &&
-                    it.parameterTypes[0] == panelClass &&
-                    it.parameterTypes[1] == android.os.Bundle::class.java &&
-                    it.returnType == Void.TYPE
-            } ?: error("Missing native scene navigation")
-            val candidateClass = Class.forName("com.tencent.wetype.plugin.hld.candidate.ImeCandidateView", false, cl)
-            val candidate = n.declaredMethods.firstOrNull {
-                it.parameterTypes.isEmpty() && candidateClass.isAssignableFrom(it.returnType)
-            } ?: error("Missing native candidate view getter")
-            val engine = Class.forName("com.tencent.wetype.plugin.hld.model.i0", false, cl)
-            val pending = engine.declaredMethods.firstOrNull {
-                (it.name == "B2" || it.name == "D2") && it.parameterTypes.size == 1 &&
-                    it.parameterTypes[0] == java.lang.Boolean.TYPE &&
-                    CharSequence::class.java.isAssignableFrom(it.returnType)
-            } ?: error("Missing native pending input getter")
-            val emit = engine.declaredMethods.firstOrNull {
-                (it.name == "W1" || it.name == "Y1") && it.parameterTypes.size == 3 &&
-                    it.parameterTypes[0] == String::class.java &&
-                    it.parameterTypes[1] == java.lang.Boolean.TYPE &&
-                    it.parameterTypes[2] == java.lang.Boolean.TYPE &&
-                    it.returnType == Void.TYPE
-            } ?: error("Missing native pending input emitter")
-            val dispatcher = Class.forName("com.tencent.wetype.plugin.hld.key.d", false, cl)
-                .getDeclaredMethod("O", Integer.TYPE, Any::class.java)
+            val panel = requireConstant(HostContractId.PANEL_CLIPBOARD_CONSTANT)
+            val navigation = requireMethod(HostContractId.PANEL_SWITCH_ENUM)
+            requireClass(HostContractId.CLIPBOARD_CANDIDATE_VIEW)
+            val candidate = requireMethod(HostContractId.CLIPBOARD_CANDIDATE_GETTER)
+            requireClass(HostContractId.CLIPBOARD_ENGINE)
+            val pending = requireMethod(HostContractId.CLIPBOARD_PENDING_GETTER)
+            val emit = requireMethod(HostContractId.CLIPBOARD_PENDING_EMIT)
+            requireClass(HostContractId.CLIPBOARD_ACTION)
+            val dispatcher = requireMethod(HostContractId.CLIPBOARD_ACTION_DISPATCH)
             check(dispatcher.returnType == Void.TYPE)
-            val serviceClass = Class.forName("com.tencent.wetype.plugin.hld.WxHldService", false, cl)
-            val service = serviceClass.getDeclaredMethod("c")
+            requireClass(HostContractId.CLIPBOARD_IME_SERVICE)
+            val service = requireMethod(HostContractId.CLIPBOARD_IME_SERVICE_KICK)
             check(service.returnType == Void.TYPE)
-            val companionPair = resolveServiceCompanion(serviceClass)
-            val q = Class.forName(NATIVE_HEIGHT_MGR_CLASS, false, cl)
-            check(q.getDeclaredMethod("T0", CharSequence::class.java).returnType == Void.TYPE)
-            check(q.getDeclaredMethod("T", java.lang.Boolean.TYPE).returnType == Void.TYPE)
-            nativeManager = singleton(n)
-            nativeEngine = singleton(engine)
+            val companion = requireField(HostContractId.CLIPBOARD_IME_SERVICE_COMPANION).get(null)
+            val companionGetter = requireMethod(HostContractId.CLIPBOARD_IME_SERVICE_COMPANION)
+            requireClass(HostContractId.CLIPBOARD_HEIGHT_MANAGER)
+            val heightSetText = requireMethod(HostContractId.CLIPBOARD_HEIGHT_SET_TEXT)
+            check(heightSetText.returnType == Void.TYPE)
+            val heightSetChar = requireMethod(HostContractId.CLIPBOARD_HEIGHT_SET_CHAR)
+            check(heightSetChar.returnType == Void.TYPE)
+            nativeManager = requireField(HostContractId.PANEL_MANAGER_INSTANCE).get(null)
+                ?: error("Missing native singleton")
+            nativeEngine = requireField(HostContractId.CLIPBOARD_ENGINE_INSTANCE).get(null)
+                ?: error("Missing native singleton")
             nativeNavigation = navigation.apply { isAccessible = true }
             nativeCandidateView = candidate.apply { isAccessible = true }
             nativePendingInput = pending.apply { isAccessible = true }
             nativePanel = panel
-            nativeServiceCompanion = companionPair?.first
-            nativeServiceGetter = companionPair?.second?.apply { isAccessible = true }
-            nativeActionListener = singleton(dispatcher.declaringClass)
+            nativeServiceCompanion = companion
+            nativeServiceGetter = companionGetter.apply { isAccessible = true }
+            nativeActionListener = requireField(HostContractId.CLIPBOARD_ACTION_INSTANCE).get(null)
+                ?: error("Missing native singleton")
             nativeActionDispatcher = dispatcher
             AndroidLog.i(TAG, "native search contract ready: nav=${navigation.name} " +
-                "pending=${pending.name} emit=${emit.name} service=${companionPair != null}")
+                "pending=${pending.name} emit=${emit.name} service=${companion != null}")
             dispatcher.isAccessible = true
             dispatcher.hookBefore { param ->
                 if (param.args.firstOrNull() != 2) return@hookBefore
@@ -186,33 +175,9 @@ internal object WeTypeClipboardSearchUi {
             nativeSubmitInstalled = true
             true
         }.getOrElse {
-            AndroidLog.e(TAG, "native search contract unavailable: ${it.message}")
+            AndroidLog.e(TAG, "native search contract unavailable: ${it.message}", it)
             false
         }
-    }
-
-    /**
-     * 宿主 Companion 字段名随版本漂移（3.5.3 raw=G，3.5.4 变化）：
-     * 只认“静态字段 + 零参 getter 返回 WxHldService 实现的接口”的组合，取不到返回 null。
-     */
-    private fun resolveServiceCompanion(serviceClass: Class<*>): Pair<Any, java.lang.reflect.Method>? {
-        for (field in serviceClass.declaredFields) {
-            if (!java.lang.reflect.Modifier.isStatic(field.modifiers)) continue
-            val companionType = field.type
-            if (companionType == serviceClass) continue
-            val getters = companionType.declaredMethods.filter { m ->
-                m.parameterTypes.isEmpty() && m.returnType != Void.TYPE && m.returnType.isInterface &&
-                    runCatching { m.returnType.isAssignableFrom(serviceClass) }.getOrDefault(false)
-            }
-            if (getters.isEmpty()) continue
-            val getter = getters.firstOrNull { it.name == "e" } ?: getters.first()
-            val companion = runCatching {
-                field.isAccessible = true
-                field.get(null)
-            }.getOrNull() ?: continue
-            return companion to getter
-        }
-        return null
     }
 
     /** 在 [root] 子树按类名 BFS 找宿主视图；找不到返回 null。 */
@@ -292,7 +257,7 @@ internal object WeTypeClipboardSearchUi {
         root.postOnAnimation { awaitSearchShellExit(token) }
     }
 
-    /** N.p3(enum, Bundle) is WxHldService.U1 switchScene=12's native navigation contract. */
+    /** N#o3(enum, Bundle) is WxHldService.U1 switchScene=12's native navigation contract (N#p3 on 3.5.3). */
     private fun openNativeClipboard(): Boolean = runCatching {
         val method = nativeNavigation ?: return@runCatching false
         if (currentImeRoot() == null) return@runCatching false
@@ -332,7 +297,8 @@ internal object WeTypeClipboardSearchUi {
             // 3.5.3 binary fields: K=currentTabIndex, I=mTabIdClipboard, C=emptyClipboardView.
             val tab = readNativeField(host, "K") as? Int
             val clipboard = readNativeField(host, "I") as? Int
-            val ids = Class.forName(WETYPE_ID_CLASS, false, host.javaClass.classLoader)
+            val ids = HostResources.rClass(WETYPE_ID_CLASS, host.javaClass.classLoader)
+                ?: return@runCatching absent
             val listId = ids.getField("t15_clipboard_list").getInt(null)
             val list = host.findViewById<View>(listId)
             val empty = readNativeField(host, "C") as? View
@@ -817,8 +783,8 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
-     * 搜索面板展开态下点击剪贴板按钮：宿主侧同样是 `N#n3(CustomPhraseAndClipboard, bundle)`
-     * （keyboard toolbar 的 `voice.C0608t#u`）。原实现按 `k3/p3/l3` 过滤，3.5.4 上这些是
+     * 搜索面板展开态下点击剪贴板按钮：宿主侧同样是 `N` 上的「面板枚举 + Bundle」导航
+     * （3.5.4 为 `N#o3`）。原实现按 `k3/p3/l3` 过滤，3.5.4 上这些是
      * int/synthetic 形参，永远匹配不到（实机日志 `switch methods not found, disabled`），
      * 导致搜索壳未收、窗口高残留（中间空白）。现在 `hookBefore` 里同步收壳（含窗高/焦点还账），
      * 再放行原生切页：同一次点击、同一调用栈完成，无延迟。
@@ -1236,7 +1202,7 @@ internal object WeTypeClipboardSearchUi {
     private fun resolveCustomToolbarViewF39(decor: ViewGroup): View? {
         return try {
             val cl = hostClassLoader ?: decor.context?.classLoader ?: return null
-            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull() ?: return null
+            val sCls = HostResources.rClass(WETYPE_ID_CLASS, cl) ?: return null
             val exacts = arrayOf("customToolbarRv", "custom_toolbar_rv", "toolbar_rv", "customToolbarRecyclerView")
             for (n in exacts) {
                 val id = runCatching { sCls.getField(n).getInt(null) }.getOrNull()
@@ -1270,7 +1236,7 @@ internal object WeTypeClipboardSearchUi {
     private fun resolveLogoContainerViewF39(decor: ViewGroup): View? {
         return try {
             val cl = hostClassLoader ?: decor.context?.classLoader ?: return null
-            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull() ?: return null
+            val sCls = HostResources.rClass(WETYPE_ID_CLASS, cl) ?: return null
             val exacts = arrayOf("logoContainerRl", "logo_container_rl", "logoContainer", "toolbar_logo_container")
             for (n in exacts) {
                 val id = runCatching { sCls.getField(n).getInt(null) }.getOrNull()
@@ -4390,7 +4356,8 @@ internal object WeTypeClipboardSearchUi {
 
     private fun resolveKeyboardContainerId(cl: ClassLoader): Int? {
         return try {
-            val sCls = Class.forName("com.tencent.wetype.plugin.hld.s", false, cl)
+            val sCls = HostResources.rClass("com.tencent.wetype.plugin.hld.s", cl)
+                ?: Class.forName("com.tencent.wetype.plugin.hld.s", false, cl)
             // F40：exact优先，混淆漂移时fuzzy回退（Int字段名含keyboard+container/rl/layout，现取不写死id值）。
             val exact = runCatching {
                 val f = sCls.getDeclaredField("keyboard_container_rl")
@@ -13029,7 +12996,7 @@ internal object WeTypeClipboardSearchUi {
     private fun resolveLogoView(decor: ViewGroup): View? {
         return try {
             val cl = hostClassLoader ?: return null
-            val sCls = runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull()
+            val sCls = HostResources.rClass(WETYPE_ID_CLASS, cl)
                 ?: return null
             val id = runCatching { sCls.getField("logo_iv").getInt(null) }.getOrNull()
                 ?: return null
@@ -13386,6 +13353,71 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
+    /** 工具栏行的查找结果；[row] 为 null 时用其余字段复现失败诊断。 */
+    internal class ToolbarRowHit(
+        val row: ViewGroup?,
+        val maxIconSlots: Int,
+        val hops: Int,
+        val widthPx: Int,
+        val maxSpacing: String
+    )
+
+    /**
+     * 广度优先找出工具栏行：横向 LinearLayout/Row + 直孩图标槽位 5~9 + 键盘窗几何 + 间距像一行工具图标。
+     *
+     * **只读，不改任何视图。** 键盘复刻件要抓这一行的条带当工具栏，判定必须与
+     * [alignToolbarRowWithLogo] 完全一致 —— 否则复刻件显示的不是用户看到的那一行。
+     */
+    internal fun findToolbarRow(decor: ViewGroup): ToolbarRowHit {
+        val wPx = runCatching { decor.resources.displayMetrics.widthPixels }.getOrDefault(0)
+        var row: ViewGroup? = null
+        var hops = 0
+        var maxKids = 0
+        var maxSpacing = ""
+        val q: ArrayDeque<View> = ArrayDeque()
+        q.add(decor)
+        while (q.isNotEmpty() && hops < 400) {
+            val v = q.removeFirst()
+            hops++
+            val slots = runCatching {
+                if (v is ViewGroup && v.getTag() != TAG_SEARCH_BUTTON &&
+                    v.getTag() != TAG_SEARCH_BOX_CONTAINER &&
+                    v.visibility == View.VISIBLE && isToolbarRowShape(v)
+                ) {
+                    rowIconSlotViews(v)
+                } else null
+            }.getOrNull()
+            val kids = slots?.size ?: -1
+            if (kids > maxKids) {
+                maxKids = kids
+                maxSpacing = runCatching {
+                    if (slots != null && wPx > 0 && kids in 5..12) {
+                        val lefts = slots.map {
+                            val loc = IntArray(2)
+                            runCatching { it.getLocationOnScreen(loc) }
+                            loc[0]
+                        }.sorted()
+                        val dxs = (0 until lefts.size - 1).map { lefts[it + 1] - lefts[it] }
+                        "dxs=$dxs"
+                    } else ""
+                }.getOrDefault("")
+            }
+            if (row == null && v is ViewGroup && kids in 5..9 &&
+                isToolbarRowGeometry(v, decor) &&
+                (wPx <= 0 || isToolbarRowSpacingOk(slots!!, wPx))
+            ) {
+                row = v
+                break
+            }
+            if (v is ViewGroup) {
+                for (i in 0 until minOf(v.childCount, 25)) {
+                    v.getChildAt(i)?.let { q.add(it) }
+                }
+            }
+        }
+        return ToolbarRowHit(row, maxKids, hops, wPx, maxSpacing)
+    }
+
     /**
      * 工具栏行对齐：logo_iv（模块重绘 96px）与各图标容器高度/重心不一致，
      * 条撑开候选区后下推重排即暴露偏上。找到横向工具栏行（与跳回同判据：
@@ -13401,56 +13433,11 @@ internal object WeTypeClipboardSearchUi {
                 mainHandler.post { alignToolbarRowWithLogo(decor) }
                 return
             }
-            val wPx = runCatching { decor.resources.displayMetrics.widthPixels }.getOrDefault(0)
-            var row: ViewGroup? = null
-            var hops = 0
-            var maxKids = 0
-            var maxSpacing = ""
-            val q: ArrayDeque<View> = ArrayDeque()
-            q.add(decor)
-            while (q.isNotEmpty() && hops < 400) {
-                val v = q.removeFirst()
-                hops++
-                val slots = runCatching {
-                    if (v is ViewGroup && v.getTag() != TAG_SEARCH_BUTTON &&
-                        v.getTag() != TAG_SEARCH_BOX_CONTAINER &&
-                        v.visibility == View.VISIBLE && isToolbarRowShape(v)
-                    ) {
-                        rowIconSlotViews(v)
-                    } else null
-                }.getOrNull()
-                val kids = slots?.size ?: -1
-                if (kids > maxKids) {
-                    maxKids = kids
-                    maxSpacing = runCatching {
-                        if (slots != null && wPx > 0 && kids in 5..12) {
-                            val lefts = slots.map {
-                                val loc = IntArray(2)
-                                runCatching { it.getLocationOnScreen(loc) }
-                                loc[0]
-                            }.sorted()
-                            val dxs = (0 until lefts.size - 1).map { lefts[it + 1] - lefts[it] }
-                            "dxs=$dxs"
-                        } else ""
-                    }.getOrDefault("")
-                }
-                if (row == null && v is ViewGroup && kids in 5..9 &&
-                    isToolbarRowGeometry(v, decor) &&
-                    (wPx <= 0 || isToolbarRowSpacingOk(slots!!, wPx))
-                ) {
-                    row = v
-                    break
-                }
-                if (v is ViewGroup) {
-                    for (i in 0 until minOf(v.childCount, 25)) {
-                        v.getChildAt(i)?.let { q.add(it) }
-                    }
-                }
-            }
-            val bar = row ?: run {
+            val hit = findToolbarRow(decor)
+            val bar = hit.row ?: run {
                 val qTop = runCatching { findQTopOnScreen(decor) }.getOrNull()
                 AndroidLog.e(TAG, "toolbar align: icon row not found " +
-                    "maxKids=$maxKids hops=$hops W=$wPx qTop=$qTop $maxSpacing " +
+                    "maxKids=${hit.maxIconSlots} hops=${hit.hops} W=${hit.widthPx} qTop=$qTop ${hit.maxSpacing} " +
                     "need=5~9 spacing=[0.07W,0.18W]/firstMax=0.45W")
                 alignLogoToIconLine(decor)
                 return
@@ -14399,7 +14386,7 @@ internal object WeTypeClipboardSearchUi {
         for (cl in idClassLoaders(anchor, hostLoader)) {
             if (cl == null) continue
             val id = runCatching {
-                Class.forName(WETYPE_DRAWABLE_CLASS, false, cl).getField(name).getInt(null)
+                HostResources.rClass(WETYPE_DRAWABLE_CLASS, cl)?.getField(name)?.getInt(null)
             }.getOrNull()
             if (id != null && id != 0) return id
         }
@@ -14707,7 +14694,7 @@ internal object WeTypeClipboardSearchUi {
     private fun resolveHostIconRes(vararg names: String): Int? {
         return try {
             val cl = hostClassLoader ?: return null
-            val rCls = Class.forName(WETYPE_DRAWABLE_CLASS, false, cl)
+            val rCls = HostResources.rClass(WETYPE_DRAWABLE_CLASS, cl) ?: return null
             names.firstNotNullOfOrNull { runCatching { rCls.getField(it).getInt(null) }.getOrNull() }
         } catch (_: Throwable) {
             null
@@ -15471,7 +15458,7 @@ internal object WeTypeClipboardSearchUi {
     private fun findIdClass(anchor: View, hostLoader: ClassLoader): Class<*>? {
         for (cl in idClassLoaders(anchor, hostLoader)) {
             if (cl == null) continue
-            runCatching { Class.forName(WETYPE_ID_CLASS, false, cl) }.getOrNull()?.let { return it }
+            HostResources.rClass(WETYPE_ID_CLASS, cl)?.let { return it }
         }
         return null
     }
@@ -15516,7 +15503,8 @@ internal object WeTypeClipboardSearchUi {
         for (cl in idClassLoaders(anchor, hostLoader)) {
             if (cl == null) continue
             try {
-                val rClass = Class.forName(WETYPE_DRAWABLE_CLASS, false, cl)
+                val rClass = HostResources.rClass(WETYPE_DRAWABLE_CLASS, cl)
+                    ?: Class.forName(WETYPE_DRAWABLE_CLASS, false, cl)
                 val fields = rClass.declaredFields
                 var firstHost: Int? = null
                 for (field in fields) {

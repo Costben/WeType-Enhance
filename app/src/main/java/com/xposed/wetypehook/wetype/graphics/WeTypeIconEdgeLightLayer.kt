@@ -24,9 +24,13 @@ internal class WeTypeIconEdgeLightLayer(
     private val dark: Boolean
 ) : Drawable() {
 
+    /** [forwardCallback] 是否已经补过 callback，避免每帧重复写。 */
+    private var callbackForwarded = false
+
     override fun draw(canvas: Canvas) {
         val bounds = bounds
         if (bounds.isEmpty) return
+        forwardCallback()
         host?.let {
             it.setBounds(bounds)
             it.draw(canvas)
@@ -46,6 +50,20 @@ internal class WeTypeIconEdgeLightLayer(
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
         host?.colorFilter = colorFilter
+    }
+
+    /**
+     * 包装层要把 callback 转给内层 drawable，否则内层拿不到宿主 View，它的
+     * `invalidateSelf()` 会被直接丢弃，改 alpha 或颜色后不触发重绘。
+     *
+     * 不能 override `setCallback` —— 它在 `Drawable` 里是 final。改在首次绘制时补一次：
+     * `Drawable.setCallback` 只写字段、不触发失效，所以这里不会造成重绘递归。
+     */
+    private fun forwardCallback() {
+        if (callbackForwarded) return
+        val cb = callback ?: return
+        callbackForwarded = true
+        runCatching { host?.callback = cb }
     }
 
     @Suppress("OVERRIDE_DEPRECATION")

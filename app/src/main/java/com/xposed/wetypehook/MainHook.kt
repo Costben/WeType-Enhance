@@ -27,6 +27,7 @@ import com.xposed.wetypehook.wetype.hook.WeTypeKeyLabelHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeUpdateHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.HookEnvironment
 import com.xposed.wetypehook.xposed.Log
@@ -309,6 +310,12 @@ class MainHook : XposedModule() {
             }
         } else {
             Log.i("Framework exposes no remote preferences; settings fall back to the host snapshot")
+        }
+
+        // 契约自检排在所有依赖它的 hook 组之前：它把宿主混淆名解析成一组句柄并把命中策略
+        // 打进日志。宿主更新后先看这一行报告，再决定改哪里。
+        HookEnvironment.withHookScope("wetype.host-contract") {
+            WeTypeHostContracts.install(sourceDir, classLoader)
         }
 
         HookEnvironment.withHookScope("wetype.activation") { hookActivationHeartbeat(sourcePackage) }
@@ -733,15 +740,6 @@ class MainHook : XposedModule() {
                     activity.window?.decorView?.let { decorView ->
                         HookEnvironment.postTracked(decorView) {
                             WeTypeHostLauncher.showBackupPage(activity)
-                        }
-                    }
-                    return@hookAfter
-                }
-                if (intent.getBooleanExtra(EXTRA_OPEN_WETYPE_LOGO_IMAGE_PAGE, false)) {
-                    intent.removeExtra(EXTRA_OPEN_WETYPE_LOGO_IMAGE_PAGE)
-                    activity.window?.decorView?.let { decorView ->
-                        HookEnvironment.postTracked(decorView) {
-                            WeTypeHostLauncher.showLogoImagePage(activity)
                         }
                     }
                     return@hookAfter

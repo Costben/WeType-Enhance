@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.os.Bundle
 import android.util.Log as AndroidLog
 import com.xposed.wetypehook.ModuleBridgeContract
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 object WeTypeSettings {
@@ -73,6 +74,10 @@ object WeTypeSettings {
     const val KEY_BACKUP_WEBDAV_KEEP_COUNT = "clipboard_backup_webdav_keep_count"
     const val KEY_BACKUP_WEBDAV_ALLOW_SELF_SIGNED = "clipboard_backup_webdav_allow_self_signed"
     const val KEY_BACKUP_PRE_EXPORT_DOWNLOAD = "clipboard_backup_pre_export_download"
+
+    // 设置页展示偏好（独立读写，不进入 Snapshot）。
+    const val KEY_APPEARANCE_STAGE_PREVIEW = "appearance_stage_preview"
+    const val KEY_APPEARANCE_STAGE_GUIDES = "appearance_stage_guides"
 
     const val KEY_QWERTY_GESTURE_ENABLED = "qwerty_gesture_enabled"
     const val KEY_T9_GESTURE_ENABLED = "t9_gesture_enabled"
@@ -403,6 +408,22 @@ object WeTypeSettings {
         KEY_BACKUP_PRE_EXPORT_DOWNLOAD
     )
 
+    /**
+     * 真机键盘预览：设置页展示偏好，不进 Snapshot，因此也不会被宿主侧的设置回写覆盖。
+     */
+    fun isAppearanceStagePreviewEnabled(context: Context): Boolean =
+        appPreferences(context).getBoolean(KEY_APPEARANCE_STAGE_PREVIEW, false)
+
+    fun setAppearanceStagePreviewEnabled(context: Context, enabled: Boolean): Boolean =
+        appPreferences(context).edit().putBoolean(KEY_APPEARANCE_STAGE_PREVIEW, enabled).commit()
+
+    /** 圆角对齐参考线：叠在真机键盘底部两角的屏幕圆角 / 配置圆角参考弧。 */
+    fun isAppearanceStageGuidesEnabled(context: Context): Boolean =
+        appPreferences(context).getBoolean(KEY_APPEARANCE_STAGE_GUIDES, false)
+
+    fun setAppearanceStageGuidesEnabled(context: Context, enabled: Boolean): Boolean =
+        appPreferences(context).edit().putBoolean(KEY_APPEARANCE_STAGE_GUIDES, enabled).commit()
+
     fun readClipboardBackupSettings(context: Context): ClipboardBackupSettings {
         val local = appPreferences(context)
         // 备份设置由嵌入设置（宿主进程）写入宿主本地偏好；remote prefs 仅作兼容兜底读取。
@@ -700,6 +721,44 @@ object WeTypeSettings {
     }
 
     fun prepareForHotReload() = unbindRemotePreferences()
+
+    /**
+     * 让本进程那份宿主偏好的内存表跟磁盘上的文件对齐，并丢掉快照缓存。
+     *
+     * 存在的理由是「实时效果预览」：设置页（`com.tencent.wetype`）与输入法本体（`:hld`）
+     * 是两个进程，设置页写盘后 `:hld` 里那份内存快照还是旧的。[WeTypeProcessRestarter]
+     * 靠杀掉 `:hld` 让下次 `onStartInputView` 重新读，代价是整块键盘重来一次 ——
+     * 预览开着时改一个值就得重来一次，没法边调边看。这里给
+     * [com.xposed.wetypehook.wetype.hook.KeyboardPreviewLiveReload] 一个定点失效的入口，
+     * 配合 `reconcileCurrentInputMethodService` 就能原地重放。
+     *
+     * 光清 [cachedXposedSnapshot] 不够：`SharedPreferences` 自己就有一层进程内缓存，
+     * 别的进程改了文件它并不知道。`MODE_MULTI_PROCESS` 自 O 起标为废弃，但
+     * `ContextImpl.getSharedPreferences` 里那条 `startReloadIfChangedUnexpectedly()` 分支
+     * 至今还在：它比对文件的 mtime/size，变了就把内存表标成待加载并从磁盘重读，紧接着的
+     * 任一次 getter 会被 `awaitLoadedLocked()` 拦到重读结束。所以这个调用返回时，本进程
+     * 后续读到的一定是设置页刚写下的那份。
+     */
+    fun reloadHostPreferences(context: Context) {
+        val appContext = context.applicationContext ?: context
+        @Suppress("DEPRECATION")
+        val preferences = appContext.getSharedPreferences(
+            PREF_GROUP,
+            Context.MODE_PRIVATE or Context.MODE_MULTI_PROCESS
+        )
+        // 触发那次重读之后随便读一个键，把异步的磁盘加载等到结束。
+        preferences.contains(KEY_APPEARANCE_STAGE_PREVIEW)
+        cachedXposedSnapshot = null
+    }
+
+    /**
+     * 宿主偏好落盘的那个文件。`:hld` 侧靠比对它的 mtime/size 发现设置页刚写下的改动 ——
+     * 两个进程同包同 uid，写的就是同一个文件，不需要任何 IPC。
+     */
+    fun hostPreferencesFile(context: Context): File {
+        val appContext = context.applicationContext ?: context
+        return File(appContext.dataDir, "shared_prefs/$PREF_GROUP.xml")
+    }
 
     fun bindModuleBridgePendingIntent(pendingIntent: PendingIntent?) {
         moduleBridgePendingIntent = pendingIntent
@@ -1195,21 +1254,6 @@ object WeTypeSettings {
         return {
             runCatching { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
         }
-    }
-
-    /** 二级图片 Logo 页入口摘要：关闭/未上传/已上传类型。 */
-    fun logoImageSummary(snapshot: Snapshot): String {
-        if (!snapshot.logoImageEnabled) return "已关闭，用回矢量 Logo"
-        val hasPng = snapshot.logoImagePngBase64.isNotEmpty()
-        val hasSvg = snapshot.logoImageSvgText.isNotEmpty()
-        if (!hasPng && !hasSvg) return "已开启，尚未上传图片"
-        val current = when (WeTypeSettings.normalizeLogoImageType(snapshot.logoImageType)) {
-            LOGO_IMAGE_TYPE_SVG -> if (hasSvg) "SVG" else "PNG"
-            else -> if (hasPng) "PNG" else "SVG"
-        }
-        val name = snapshot.logoImageName.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()
-        val recolor = if (current == "SVG" && snapshot.logoSvgRecolorEnabled) " · 跟随主体色" else ""
-        return "生效中：$current$name$recolor"
     }
 
     private fun saveDirect(

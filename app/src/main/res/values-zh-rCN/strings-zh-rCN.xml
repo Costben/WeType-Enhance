@@ -83,7 +83,7 @@
     <string name="settings_candidate_pinyin_margin_desc">编辑候选栏内显拼音的左边距</string>
 
     <string name="settings_save_title">保存设置</string>
-    <string name="settings_save_restart_title">保存并重启输入法进程</string>
+    <string name="settings_refresh_title">刷新</string>
     <string name="settings_save_desc">将当前配置写入模块</string>
     <string name="settings_reset_title">恢复默认</string>
     <string name="settings_reset_desc">重置所有选项为默认值</string>
@@ -105,9 +105,9 @@
     <string name="activation_active_title">模块已启用</string>
     <string name="activation_active_summary">点击下方按钮进入寄生的 WeType 设置页</string>
     <string name="activation_open_embedded_settings">进入寄生的 WeType 设置页</string>
-    <string name="settings_hyper_material_title">使用 HyperOS 4 的键盘高级材质</string>
-    <string name="settings_hyper_material_desc">使用与超级小爱输入法相同的背景颜色、模糊、阴影与高光，保留背景平滑圆角；原背景颜色、模糊与高光设置暂不生效。</string>
-    <string name="settings_hyper_material_unavailable">当前系统不支持所需材质接口，或未开启系统高级材质 / 灵动视效。</string>
+    <string name="settings_hyper_material_title">使用系统材质</string>
+    <string name="settings_hyper_material_desc">跟随系统材质渲染键盘背景与模糊，本页其余设置随之生效。</string>
+    <string name="settings_hyper_material_unavailable">当前系统不支持该材质。</string>
     <string name="settings_hyper_material_preview">系统材质</string>
     <string name="settings_glass_params">玻璃效果参数</string>
     <string name="settings_glass_params_desc">42 个有限数值，以逗号分隔，保持接口原始顺序与单位。</string>
@@ -143,7 +143,7 @@
     <string name="settings_glass_lighten_angle">提亮角域</string>
     <string name="settings_glass_highlight_parameter">高光 · %1$s</string>
     <string name="settings_glass_reset_desc">恢复默认的玻璃、磨砂和高光参数。</string>
-    <string name="update_dialog_title">检查到有更新</string>
+    <string name="update_dialog_title">更新提示</string>
     <string name="update_dialog_cancel">取消</string>
     <string name="update_dialog_confirm">更新</string>
     <string name="update_dialog_version">最新版本 v%1$s</string>

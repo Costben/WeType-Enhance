@@ -57,11 +57,11 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
-import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
@@ -433,6 +433,11 @@ internal fun ClipboardBackupPage(
                             contentDescription = "返回"
                         )
                     }
+                },
+                actions = {
+                    SettingsRefreshButton {
+                        applySettingsToImeProcess(context)
+                    }
                 }
             )
         }
@@ -506,22 +511,14 @@ internal fun ClipboardBackupPage(
                                 summary = "选择备份包（.zip）并合并恢复到剪贴板",
                                 onClick = { launchPickFile() }
                             )
-                            BasicComponent(
-                                title = "导出前补下载跨设备图片",
-                                summary = "导出时先尝试下载未落盘的跨设备图片，耗时更长",
-                                endActions = {
-                                    Switch(
-                                        checked = settings.preExportDownload,
-                                        onCheckedChange = {
-                                            settings = settings.copy(preExportDownload = it)
-                                            persist()
-                                        }
-                                    )
-                                },
-                                onClick = {
-                                    settings = settings.copy(preExportDownload = !settings.preExportDownload)
+                            SwitchPreference(
+                                checked = settings.preExportDownload,
+                                onCheckedChange = {
+                                    settings = settings.copy(preExportDownload = it)
                                     persist()
-                                }
+                                },
+                                title = "导出前补下载跨设备图片",
+                                summary = "导出时先尝试下载未落盘的跨设备图片，耗时更长"
                             )
                         }
                     }
@@ -575,22 +572,14 @@ internal fun ClipboardBackupPage(
                                     persist()
                                 }
                             )
-                            BasicComponent(
-                                title = "允许自签名证书",
-                                summary = "仅对自建服务器开启；开启后无法防御中间人攻击",
-                                endActions = {
-                                    Switch(
-                                        checked = settings.webDavAllowSelfSigned,
-                                        onCheckedChange = {
-                                            settings = settings.copy(webDavAllowSelfSigned = it)
-                                            persist()
-                                        }
-                                    )
-                                },
-                                onClick = {
-                                    settings = settings.copy(webDavAllowSelfSigned = !settings.webDavAllowSelfSigned)
+                            SwitchPreference(
+                                checked = settings.webDavAllowSelfSigned,
+                                onCheckedChange = {
+                                    settings = settings.copy(webDavAllowSelfSigned = it)
                                     persist()
-                                }
+                                },
+                                title = "允许自签名证书",
+                                summary = "仅对自建服务器开启；开启后无法防御中间人攻击"
                             )
                             if (settings.webDavUrl.startsWith("http://")) {
                                 Text(

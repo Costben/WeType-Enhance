@@ -168,15 +168,36 @@ internal object WeTypeClipboardHooks {
 
     /**
      * 3. 剪贴板条数上限解除 (返回 100000)
+     * 优先用字符串锚收窄到返回 long 的方法；锚失效时回退到「第一个返回 long 的方法」。
      */
     private fun hookRetentionCount(bridge: DexKitBridge, classLoader: ClassLoader) {
         runCatching {
-            val method = bridge.findMethod {
-                searchPackages("com.tencent.wetype.plugin.hld.clipboard")
-                matcher {
-                    returnType = "long"
+            // usingStrings(a, b) 要求两个字符串同时命中，所以逐个锚单独查询再合并。
+            val anchorHits = listOf("clipboard_text_max_size_new", "THREE_MONTHS").flatMap { anchor ->
+                bridge.findMethod {
+                    searchPackages("com.tencent.wetype.plugin.hld.clipboard")
+                    matcher {
+                        usingStrings(anchor)
+                        returnType = "long"
+                    }
                 }
-            }.firstOrNull()?.getMethodInstance(classLoader)
+            }
+            val longCandidates = if (anchorHits.isNotEmpty()) {
+                anchorHits
+            } else {
+                Log.i("[$TAG] No retention count string anchor hit; falling back to first long getter")
+                bridge.findMethod {
+                    searchPackages("com.tencent.wetype.plugin.hld.clipboard")
+                    matcher {
+                        returnType = "long"
+                    }
+                }
+            }
+            if (longCandidates.size > 1) {
+                val names = longCandidates.map { "${it.declaredClassName}#${it.name}" }
+                Log.e("[$TAG] Multiple long retention candidates $names; using ${names.first()}")
+            }
+            val method = longCandidates.firstOrNull()?.getMethodInstance(classLoader)
                 ?: bridge.findMethod {
                     searchPackages("com.tencent.wetype.plugin.hld.clipboard")
                     matcher {

@@ -6,14 +6,10 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -24,25 +20,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import kotlin.math.roundToInt
-import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
-import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.preference.SliderPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
@@ -115,6 +109,11 @@ internal fun ColorOsLightPage(
                             contentDescription = "返回"
                         )
                     }
+                },
+                actions = {
+                    SettingsRefreshButton {
+                        applySettingsToImeProcess(settingsContext)
+                    }
                 }
             )
         }
@@ -151,24 +150,15 @@ internal fun ColorOsLightPage(
                     insideMargin = PaddingValues(0.dp)
                 ) {
                     Column {
-                        BasicComponent(
-                            title = "边缘高光",
-                            summary = "模块自绘，在键盘背板四周显示边缘高光",
-                            endActions = {
-                                Switch(
-                                    checked = edgeHighlightEnabled,
-                                    onCheckedChange = {
-                                        edgeHighlightEnabled = it
-                                        message = ""
-                                        persist()
-                                    }
-                                )
-                            },
-                            onClick = {
-                                edgeHighlightEnabled = !edgeHighlightEnabled
+                        SwitchPreference(
+                            checked = edgeHighlightEnabled,
+                            onCheckedChange = {
+                                edgeHighlightEnabled = it
                                 message = ""
                                 persist()
-                            }
+                            },
+                            title = "边缘高光",
+                            summary = "模块自绘，在键盘背板四周显示边缘高光"
                         )
                         LightAngleSlider(
                             value = edgeLightAngle,
@@ -198,24 +188,15 @@ internal fun ColorOsLightPage(
                     insideMargin = PaddingValues(0.dp)
                 ) {
                     Column {
-                        BasicComponent(
-                            title = "ColorOS 原生边缘光",
-                            summary = "改用系统原生材质绘制边缘光与内阴影，下方宽度与强度同时作用于它",
-                            endActions = {
-                                Switch(
-                                    checked = nativeEdgeLightEnabled,
-                                    onCheckedChange = {
-                                        nativeEdgeLightEnabled = it
-                                        message = ""
-                                        persist()
-                                    }
-                                )
-                            },
-                            onClick = {
-                                nativeEdgeLightEnabled = !nativeEdgeLightEnabled
+                        SwitchPreference(
+                            checked = nativeEdgeLightEnabled,
+                            onCheckedChange = {
+                                nativeEdgeLightEnabled = it
                                 message = ""
                                 persist()
-                            }
+                            },
+                            title = "ColorOS 原生边缘光",
+                            summary = "改用系统原生材质绘制边缘光与内阴影，下方宽度与强度同时作用于它"
                         )
                         LightAngleSlider(
                             value = nativeLightAngle,
@@ -253,24 +234,15 @@ internal fun ColorOsLightPage(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     insideMargin = PaddingValues(0.dp)
                 ) {
-                    BasicComponent(
-                        title = "工具栏与 Logo 光感",
-                        summary = "让工具栏图标与 Logo 跟随系统边缘光效呈现光泽",
-                        endActions = {
-                            Switch(
-                                checked = iconEdgeLightEnabled,
-                                onCheckedChange = {
-                                    iconEdgeLightEnabled = it
-                                    message = ""
-                                    persist()
-                                }
-                            )
-                        },
-                        onClick = {
-                            iconEdgeLightEnabled = !iconEdgeLightEnabled
+                    SwitchPreference(
+                        checked = iconEdgeLightEnabled,
+                        onCheckedChange = {
+                            iconEdgeLightEnabled = it
                             message = ""
                             persist()
-                        }
+                        },
+                        title = "工具栏与 Logo 光感",
+                        summary = "让工具栏图标与 Logo 跟随系统边缘光效呈现光泽"
                     )
                 }
             }
@@ -295,51 +267,22 @@ private fun LightAngleSlider(
     note: String? = null,
     onValueChange: (Int) -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "光照角度",
-                style = MiuixTheme.textStyles.main,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = "$value°",
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.main
-            )
-        }
-        Text(
-            text = "0°/180° 照亮上下，90°/270° 照亮左右，45°/135° 为对角。",
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
-        )
-        if (note != null) {
-            Text(
-                text = note,
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Slider(
-            enabled = enabled,
-            value = value.coerceIn(MIN_LIGHT_ANGLE, MAX_LIGHT_ANGLE).toFloat(),
-            onValueChange = {
-                onValueChange(it.roundToInt().coerceIn(MIN_LIGHT_ANGLE, MAX_LIGHT_ANGLE))
-            },
-            valueRange = MIN_LIGHT_ANGLE.toFloat()..MAX_LIGHT_ANGLE.toFloat(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = "光照角度" }
-        )
-    }
+    SliderPreference(
+        value = value.coerceIn(MIN_LIGHT_ANGLE, MAX_LIGHT_ANGLE).toFloat(),
+        onValueChange = {
+            onValueChange(it.roundToInt().coerceIn(MIN_LIGHT_ANGLE, MAX_LIGHT_ANGLE))
+        },
+        modifier = Modifier.semantics { contentDescription = "光照角度" },
+        title = "光照角度",
+        summary = buildString {
+            append("0°/180° 照亮上下，90°/270° 照亮左右，45°/135° 为对角。")
+            if (note != null) append("\n").append(note)
+        },
+        valueText = "$value°",
+        enabled = enabled,
+        valueRange = MIN_LIGHT_ANGLE.toFloat()..MAX_LIGHT_ANGLE.toFloat(),
+        steps = (MAX_LIGHT_ANGLE - MIN_LIGHT_ANGLE - 1).coerceAtLeast(0)
+    )
 }
 
 @Composable
@@ -348,39 +291,18 @@ private fun WidthSlider(
     enabled: Boolean,
     onValueChange: (Int) -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "宽度",
-                style = MiuixTheme.textStyles.main,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = "${value}dp",
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.main
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Slider(
-            enabled = enabled,
-            value = value.coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH).toFloat(),
-            onValueChange = {
-                onValueChange(it.roundToInt().coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH))
-            },
-            valueRange = MIN_EDGE_LIGHT_WIDTH.toFloat()..MAX_EDGE_LIGHT_WIDTH.toFloat(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = "边缘光宽度" }
-        )
-    }
+    SliderPreference(
+        value = value.coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH).toFloat(),
+        onValueChange = {
+            onValueChange(it.roundToInt().coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH))
+        },
+        modifier = Modifier.semantics { contentDescription = "边缘光宽度" },
+        title = "宽度",
+        valueText = "${value}dp",
+        enabled = enabled,
+        valueRange = MIN_EDGE_LIGHT_WIDTH.toFloat()..MAX_EDGE_LIGHT_WIDTH.toFloat(),
+        steps = (MAX_EDGE_LIGHT_WIDTH - MIN_EDGE_LIGHT_WIDTH - 1).coerceAtLeast(0)
+    )
 }
 
 @Composable
@@ -389,37 +311,16 @@ private fun IntensitySlider(
     enabled: Boolean,
     onValueChange: (Int) -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "强度",
-                style = MiuixTheme.textStyles.main,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = "$value",
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.main
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Slider(
-            enabled = enabled,
-            value = value.coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY).toFloat(),
-            onValueChange = {
-                onValueChange(it.roundToInt().coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY))
-            },
-            valueRange = 0f..MAX_EDGE_HIGHLIGHT_INTENSITY.toFloat(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = "边缘光效强度" }
-        )
-    }
+    SliderPreference(
+        value = value.coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY).toFloat(),
+        onValueChange = {
+            onValueChange(it.roundToInt().coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY))
+        },
+        modifier = Modifier.semantics { contentDescription = "边缘光效强度" },
+        title = "强度",
+        valueText = "$value",
+        enabled = enabled,
+        valueRange = 0f..MAX_EDGE_HIGHLIGHT_INTENSITY.toFloat(),
+        steps = (MAX_EDGE_HIGHLIGHT_INTENSITY - 1).coerceAtLeast(0)
+    )
 }

@@ -23,11 +23,12 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,11 +43,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
@@ -76,32 +77,46 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ClipOp
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.core.view.ViewCompat
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.gesture.GestureAction
@@ -109,11 +124,13 @@ import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.WeTypeNativeMaterialProbe
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
+import com.xposed.wetypehook.wetype.hook.KeyboardToolbarStrip
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
 import com.xposed.wetypehook.wetype.settings.GlassSliderParameter
 import com.xposed.wetypehook.wetype.graphics.WeTypeSmoothRoundedShape
 import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
+import com.xposed.wetypehook.wetype.logo.LogoImageStore
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
@@ -121,12 +138,13 @@ import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeProcessRestarter
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
+import top.yukonga.miuix.kmp.basic.Badge
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
+import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
-import top.yukonga.miuix.kmp.basic.DropdownArrowEndAction
-import top.yukonga.miuix.kmp.basic.DropdownDefaults
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -134,32 +152,48 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.Switch
+import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.popup.OverlayDropdownPopup
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.preference.SliderPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.GridView
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Ok
+import top.yukonga.miuix.kmp.icon.extended.Pin
+import top.yukonga.miuix.kmp.icon.extended.Theme
+import top.yukonga.miuix.kmp.icon.extended.Unpin
+import top.yukonga.miuix.kmp.nav.core.NavDisplay
+import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
+import top.yukonga.miuix.kmp.nav.core.NavKey
+import top.yukonga.miuix.kmp.nav.core.rememberNavBackStack
+import top.yukonga.miuix.kmp.nav.core.rememberNavSystemCornerRadius
+import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.window.WindowBottomSheet
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlin.math.roundToInt
 
 const val EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS = "com.xposed.wetypehook.extra.OPEN_WETYPE_EMBEDDED_SETTINGS"
 const val EXTRA_OPEN_WETYPE_BACKUP_PAGE = "com.xposed.wetypehook.extra.OPEN_WETYPE_BACKUP_PAGE"
-const val EXTRA_OPEN_WETYPE_LOGO_IMAGE_PAGE = "com.xposed.wetypehook.extra.OPEN_WETYPE_LOGO_IMAGE_PAGE"
 const val EXTRA_OPEN_WETYPE_COLOROS_LIGHT_PAGE = "com.xposed.wetypehook.extra.OPEN_WETYPE_COLOROS_LIGHT_PAGE"
 private const val ACTIVATION_HEARTBEAT_WINDOW_MS = 4_000L
 private const val ACTIVATION_KEYBOARD_RETRY_COUNT = 3
@@ -401,7 +435,7 @@ private fun ActivationEntryScreen(
             insideMargin = PaddingValues(0.dp)
         ) {
             if (isActive) {
-                BasicComponent(
+                ArrowPreference(
                     title = stringResource(R.string.activation_open_embedded_settings),
                     titleColor = BasicComponentDefaults.titleColor(
                         color = MiuixTheme.colorScheme.primary
@@ -480,6 +514,41 @@ private tailrec fun Context.findHostActivity(): Activity? = when (this) {
     is ContextWrapper -> baseContext.findHostActivity()
     else -> null
 }
+
+/**
+ * 设置界面的导航路由。一级页是返回栈的根，二级页压在其上。
+ *
+ * 交给 `miuix-nav` 的 `rememberNavBackStack` 托管，所以整条层级必须可序列化，
+ * 配置变更与进程重建后由库自行恢复返回栈。
+ */
+@Serializable
+internal sealed interface SettingsRoute : NavKey {
+    @Serializable
+    data object Home : SettingsRoute
+
+    @Serializable
+    data class SubPage(val page: SettingsSubPage) : SettingsRoute
+}
+
+/** 一级页里的入口所指向的二级设置页，标题同时用作二级页标题栏文案。 */
+@Serializable
+internal enum class SettingsSubPage(val title: String) {
+    COLORS("颜色"),
+    CORNER_BLUR("圆角与模糊"),
+    CANDIDATE_TOOLBAR("候选词与工具栏"),
+    MATERIAL("高级材质"),
+    CLIPBOARD("剪贴板"),
+    KEYBOARD_LOGO("键盘 Logo")
+}
+
+/** 「界面美化」下暴露实时预览的二级页；剪贴板属于「功能增强」，不涉及外观。 */
+private val APPEARANCE_PREVIEW_SUB_PAGES = setOf(
+    SettingsSubPage.COLORS,
+    SettingsSubPage.CORNER_BLUR,
+    SettingsSubPage.CANDIDATE_TOOLBAR,
+    SettingsSubPage.MATERIAL,
+    SettingsSubPage.KEYBOARD_LOGO
+)
 
 @Composable
 private fun WeTypeSettingsScreen(
@@ -616,7 +685,7 @@ private fun WeTypeSettingsScreen(
     var logoCustomColorInput by rememberSaveable {
         mutableStateOf(formatRgb(snapshot.logoCustomColor))
     }
-    // 自定义图片 Logo 由二级页编辑；主页面只透传保存，用普通 remember 避免大字符串进 savedState。
+    // 自定义图片 Logo 由「键盘 Logo」二级页编辑；主页面只透传保存，用普通 remember 避免大字符串进 savedState。
     var logoImageEnabled by rememberSaveable { mutableStateOf(snapshot.logoImageEnabled) }
     var logoImageType by rememberSaveable {
         mutableStateOf(WeTypeSettings.normalizeLogoImageType(snapshot.logoImageType))
@@ -626,9 +695,8 @@ private fun WeTypeSettingsScreen(
     var logoImageSvgText by remember { mutableStateOf(snapshot.logoImageSvgText) }
     var logoImageName by rememberSaveable { mutableStateOf(snapshot.logoImageName) }
     var logoImageUpdatedAt by rememberSaveable { mutableStateOf(snapshot.logoImageUpdatedAt) }
-    var logoImageSummary by rememberSaveable {
-        mutableStateOf(WeTypeSettings.logoImageSummary(snapshot))
-    }
+    var logoImageMessage by remember { mutableStateOf("") }
+    var logoImageImporting by remember { mutableStateOf(false) }
     DisposableEffect(preferencesContext) {
         fun refreshFromLocal() {
             val fresh = WeTypeSettings.readLocalSnapshot(preferencesContext)
@@ -639,7 +707,6 @@ private fun WeTypeSettingsScreen(
             logoImageSvgText = fresh.logoImageSvgText
             logoImageName = fresh.logoImageName
             logoImageUpdatedAt = fresh.logoImageUpdatedAt
-            logoImageSummary = WeTypeSettings.logoImageSummary(fresh)
         }
         // 二级页在同一进程直接写本地偏好，回来时刷新摘要与透传值（主页面不编辑这些字段）。
         refreshFromLocal()
@@ -695,9 +762,45 @@ private fun WeTypeSettingsScreen(
         )
     }
     var currentModeIsDark by rememberSaveable { mutableStateOf(systemDarkMode) }
+    // 一级页是返回栈的根，二级页逐个压栈。返回栈交给 miuix-nav 托管：进出场动画、
+    // 预测性返回、边缘圆角裁剪与遮罩统一由 NavDisplay 处理。
+    val navBackStack = rememberNavBackStack<SettingsRoute>(SettingsRoute.Home)
     val categoryTabs = remember { listOf("界面美化", "按键手势", "功能增强") }
     val categoryPagerState = rememberPagerState(pageCount = { categoryTabs.size })
     val coroutineScope = rememberCoroutineScope()
+
+    val openSubPage: (SettingsSubPage) -> Unit = { targetSubPage ->
+        // 现有二级页只有一个返回按钮，深度恒为 1。
+        if (navBackStack.size == 1) {
+            navBackStack.add(SettingsRoute.SubPage(targetSubPage))
+        }
+    }
+
+    // 实时预览固定在标题栏下方，跨二级页共享；只在界面美化的二级页里生效。
+    var appearancePreviewPinned by rememberSaveable { mutableStateOf(false) }
+    // 真机键盘预览：设置页展示偏好，独立落库、不进 Snapshot。
+    var keyboardPreviewEnabled by rememberSaveable {
+        mutableStateOf(WeTypeSettings.isAppearanceStagePreviewEnabled(context))
+    }
+
+    fun setAppearanceStagePreview(enabled: Boolean) {
+        keyboardPreviewEnabled = enabled
+        WeTypeSettings.setAppearanceStagePreviewEnabled(context, enabled)
+    }
+    // 圆角对齐参考线默认关闭：只调效果时那两条弧是纯噪声。
+    var appearanceStageGuidesEnabled by rememberSaveable {
+        mutableStateOf(WeTypeSettings.isAppearanceStageGuidesEnabled(context))
+    }
+
+    // 预览底图（那层「手机壁纸」）：只是设置页的展示偏好，独立落库、不进 Snapshot。
+    var previewWallpaperName by rememberSaveable {
+        mutableStateOf(PreviewWallpaper.displayName(context))
+    }
+
+    fun setAppearanceStageGuides(enabled: Boolean) {
+        appearanceStageGuidesEnabled = enabled
+        WeTypeSettings.setAppearanceStageGuidesEnabled(context, enabled)
+    }
     var colorInput by rememberSaveable {
         mutableStateOf(formatRgb(if (currentModeIsDark) darkColor else lightColor))
     }
@@ -714,6 +817,19 @@ private fun WeTypeSettingsScreen(
 
     fun updateColorFromArgb(argb: Int) {
         if (currentModeIsDark) darkColor = argb else lightColor = argb
+    }
+
+    /**
+     * 预览右上角那个浅色/深色按钮。
+     *
+     * 切的是「预览按哪一档配色渲染」，与颜色页的「浅色/深色」Tab 共用同一份状态；切完把颜色
+     * 编辑框同步过去，免得颜色页里编辑的档位和预览显示的不是一回事。它不写任何设置，也不改
+     * 宿主键盘的实际深浅色 —— 那个由宿主按运行时 uiMode 自己决定。
+     */
+    fun setPreviewDarkMode(dark: Boolean) {
+        if (dark == currentModeIsDark) return
+        currentModeIsDark = dark
+        syncEditorFromState()
     }
 
     fun currentAppearanceColors(): Map<String, Int> = appearanceGroups.mapIndexed { index, group ->
@@ -734,6 +850,154 @@ private fun WeTypeSettingsScreen(
     fun keyColorValue(isDark: Boolean): Int {
         val group = keyColorGroup(isDark)
         return appearanceGroupColors[groupIndex(group.id)]
+    }
+
+    /**
+     * 唤起文件选择器。嵌入设置跑在 `ComponentDialog` 里，没有 `ActivityResultRegistryOwner`，
+     * 只能走 [WeTypeHostActivityResultBridge]；而该桥在派发时会消费掉回调，
+     * 所以必须每次唤起前重新注册，否则第二次选文件不会有任何反应。
+     */
+    fun launchLogoImagePicker(requestCode: Int, intent: Intent, onUri: (Uri) -> Unit) {
+        val hostActivity = settingsContext as? Activity
+        if (hostActivity == null) {
+            logoImageMessage = "无法获取宿主窗口，请重试"
+            return
+        }
+        WeTypeHostActivityResultBridge.register(requestCode) { resultCode, data ->
+            val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+            if (uri != null) onUri(uri)
+        }
+        runCatching {
+            hostActivity.startActivityForResult(intent, requestCode)
+        }.onFailure {
+            WeTypeHostActivityResultBridge.unregister(requestCode)
+            logoImageMessage = "无法打开文件选择器"
+        }
+    }
+
+    fun pickLogoPng() {
+        launchLogoImagePicker(
+            requestCode = WeTypeHostActivityResultBridge.REQUEST_PICK_LOGO_PNG,
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/png"
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        ) { uri ->
+            if (logoImageImporting) return@launchLogoImagePicker
+            logoImageImporting = true
+            logoImageMessage = "正在导入 PNG…"
+            coroutineScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    LogoImageStore.importPng(settingsContext.contentResolver, uri)
+                }
+                result.onSuccess { png ->
+                    // 最后上传者胜：导入即成为待生效类型。
+                    logoImagePngBase64 = png.base64
+                    logoImageName = png.name
+                    logoImageType = WeTypeSettings.LOGO_IMAGE_TYPE_PNG
+                    logoImageUpdatedAt = System.currentTimeMillis()
+                    logoImageMessage = "PNG 已就绪：${png.name}，点「保存」后生效"
+                }.onFailure { error ->
+                    logoImageMessage = "导入失败：${error.message ?: "未知错误"}"
+                }
+                logoImageImporting = false
+            }
+        }
+    }
+
+    fun pickLogoSvg() {
+        launchLogoImagePicker(
+            requestCode = WeTypeHostActivityResultBridge.REQUEST_PICK_LOGO_SVG,
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/svg+xml"
+                putExtra(
+                    Intent.EXTRA_MIME_TYPES,
+                    arrayOf("image/svg+xml", "image/svg", "text/xml")
+                )
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        ) { uri ->
+            if (logoImageImporting) return@launchLogoImagePicker
+            logoImageImporting = true
+            logoImageMessage = "正在导入 SVG…"
+            coroutineScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    LogoImageStore.importSvg(settingsContext.contentResolver, uri)
+                }
+                result.onSuccess { svg ->
+                    logoImageSvgText = svg.text
+                    logoImageName = svg.name
+                    logoImageType = WeTypeSettings.LOGO_IMAGE_TYPE_SVG
+                    logoImageUpdatedAt = System.currentTimeMillis()
+                    logoImageMessage = "SVG 已就绪：${svg.name}，点「保存」后生效"
+                }.onFailure { error ->
+                    logoImageMessage = "导入失败：${error.message ?: "未知错误"}"
+                }
+                logoImageImporting = false
+            }
+        }
+    }
+
+    fun clearLogoImages() {
+        logoImagePngBase64 = ""
+        logoImageSvgText = ""
+        logoImageName = ""
+        logoImageUpdatedAt = 0L
+        logoImageMessage = "已清除自定义图片，点「保存」后恢复矢量 Logo"
+    }
+
+    /**
+     * 换预览里那层「手机壁纸」。
+     *
+     * 跟 logo 选图同一条桥（嵌入设置没有 `ActivityResultRegistryOwner`），但落库方式不同：
+     * 图片缩放后直接存进模块自己的 prefs，不记 URI —— 预览只在设置进程里画，不需要跨进程授权。
+     */
+    fun pickPreviewWallpaper() {
+        val hostActivity = settingsContext as? Activity
+        if (hostActivity == null) {
+            Toast.makeText(context, "无法获取宿主窗口，请重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val requestCode = WeTypeHostActivityResultBridge.REQUEST_PICK_PREVIEW_WALLPAPER
+        WeTypeHostActivityResultBridge.register(requestCode) { resultCode, data ->
+            val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+            if (uri != null) {
+                coroutineScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        PreviewWallpaper.import(settingsContext, uri)
+                    }
+                    result.onSuccess { name ->
+                        previewWallpaperName = name
+                    }.onFailure { error ->
+                        Toast.makeText(
+                            context,
+                            "导入失败：${error.message ?: "未知错误"}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        }
+        runCatching {
+            hostActivity.startActivityForResult(
+                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+                requestCode
+            )
+        }.onFailure {
+            WeTypeHostActivityResultBridge.unregister(requestCode)
+            Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun clearPreviewWallpaper() {
+        PreviewWallpaper.clear(settingsContext)
+        previewWallpaperName = ""
     }
 
     fun saveSettings(
@@ -929,248 +1193,523 @@ private fun WeTypeSettingsScreen(
         }
     }
 
-    Scaffold(
+    /**
+     * 「界面美化」二级页的实时预览。键盘 Logo 页看的是 Logo 本身（与 hook 侧同一份渲染），
+     * 其余页面看的是键盘外观。
+     */
+    @Composable
+    fun renderAppearancePreview(
+        subPage: SettingsSubPage,
+        pinned: Boolean,
+        onTogglePin: () -> Unit
+    ) {
+        if (subPage == SettingsSubPage.KEYBOARD_LOGO) {
+            LogoImagePreviewCard(
+                lightBackgroundColor = lightColor,
+                darkBackgroundColor = darkColor,
+                lightKeyColor = keyColorValue(false),
+                darkKeyColor = keyColorValue(true),
+                logoColorMode = logoColorMode,
+                brandColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
+                    ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR,
+                logoCustomColor = parseLogoCustomColor(logoCustomColorInput),
+                toolbarIconBgOpacity = toolbarIconBgOpacity,
+                imageEnabled = logoImageEnabled,
+                imageType = logoImageType,
+                svgRecolor = logoSvgRecolorEnabled,
+                pngBase64 = logoImagePngBase64,
+                svgText = logoImageSvgText,
+                footerText = if (logoImageEnabled) {
+                    "主体颜色跟随本页设置实时预览"
+                } else {
+                    null
+                },
+                pinned = pinned,
+                onTogglePin = onTogglePin
+            )
+        } else {
+            PreviewSection(
+                color = currentColor(),
+                blurRadius = blurRadius,
+                cornerRadius = cornerRadius,
+                bottomCornerRadius = bottomCornerRadius,
+                keyCornerRadius = keyCornerRadius,
+                edgeHighlightEnabled = edgeHighlightEnabled,
+                edgeHighlightIntensity = edgeHighlightIntensity,
+                lightKeyColor = keyColorValue(false),
+                darkKeyColor = keyColorValue(true),
+                isDark = currentModeIsDark,
+                hyperMaterialEnabled = hyperMaterialEnabled,
+                pinned = pinned,
+                onTogglePin = onTogglePin,
+                keyboardPreviewEnabled = keyboardPreviewEnabled,
+                onToggleKeyboardPreview = {
+                    setAppearanceStagePreview(!keyboardPreviewEnabled)
+                },
+                onToggleDarkMode = { setPreviewDarkMode(!currentModeIsDark) }
+            )
+        }
+    }
+
+    fun renderSubPageContent(subPage: SettingsSubPage, listScope: LazyListScope) {
+        with(listScope) {
+            // 实时预览常驻每个「界面美化」二级页的首位；固定时改由标题栏承担。
+            if (subPage in APPEARANCE_PREVIEW_SUB_PAGES && !appearancePreviewPinned) {
+                item(key = "appearance_preview") {
+                    renderAppearancePreview(
+                        subPage = subPage,
+                        pinned = false,
+                        onTogglePin = { appearancePreviewPinned = true }
+                    )
+                }
+            }
+            when (subPage) {
+                SettingsSubPage.COLORS -> ColorsSubPageContent(
+                    currentModeIsDark = currentModeIsDark,
+                    onModeChange = ::setPreviewDarkMode,
+                    currentColor = currentColor(),
+                    alphaValue = alphaValue,
+                    onAlphaChange = {
+                        alphaValue = it
+                        val rgb = currentColor() and 0xFFFFFF
+                        updateColorFromArgb((alphaValue shl 24) or rgb)
+                        colorInput = formatRgb(currentColor())
+                    },
+                    colorInput = colorInput,
+                    onColorInputChange = { input ->
+                        val trimmed = input.trim()
+                        val hasPrefix = trimmed.startsWith("#")
+                        val body = trimmed.removePrefix("#")
+                        if (body.length <= 6 && body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                            colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
+
+                            if (body.length == 6) {
+                                runCatching {
+                                    val opaque = Color.parseColor("#$body")
+                                    val argb = Color.argb(
+                                        alphaValue.coerceIn(0, 255),
+                                        Color.red(opaque),
+                                        Color.green(opaque),
+                                        Color.blue(opaque)
+                                    )
+                                    updateColorFromArgb(argb)
+                                }
+                            }
+                        }
+                    },
+                    onColorSelect = { presetRgb ->
+                        val rgb = presetRgb and 0xFFFFFF
+                        val argb = (alphaValue.coerceIn(0, 255) shl 24) or rgb
+                        updateColorFromArgb(argb)
+                        colorInput = formatRgb(rgb)
+                    },
+                    appearanceSectionGroups = appearanceSectionGroups,
+                    appearanceGroupColors = appearanceGroupColors,
+                    groupIndex = ::groupIndex,
+                    currentKeyGroup = keyColorGroup(currentModeIsDark),
+                    currentKeyGroupIndex = groupIndex(keyColorGroup(currentModeIsDark).id),
+                    onKeyColorChange = {
+                        appearanceGroupColors[groupIndex(keyColorGroup(currentModeIsDark).id)] = it
+                    }
+                )
+
+                SettingsSubPage.CORNER_BLUR -> CornerBlurSubPageContent(
+                    hyperMaterialEnabled = hyperMaterialEnabled,
+                    blurRadius = blurRadius,
+                    onBlurRadiusChange = { blurRadius = it },
+                    cornerRadius = cornerRadius,
+                    onCornerRadiusChange = { cornerRadius = it },
+                    bottomCornerRadius = bottomCornerRadius,
+                    onBottomCornerRadiusChange = { bottomCornerRadius = it },
+                    keyCornerRadius = keyCornerRadius,
+                    onKeyCornerRadiusChange = { keyCornerRadius = it },
+                    candidateBackgroundCorner = candidateBackgroundCorner,
+                    onCandidateBackgroundCornerChange = { candidateBackgroundCorner = it }
+                )
+
+                SettingsSubPage.CANDIDATE_TOOLBAR -> CandidateToolbarSubPageContent(
+                    candidateBackgroundAlpha = candidateBackgroundAlpha,
+                    onCandidateBackgroundAlphaChange = { candidateBackgroundAlpha = it },
+                    candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
+                    onCandidateBackgroundLeftMarginDpChange = { candidateBackgroundLeftMarginDp = it },
+                    candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
+                    onCandidatePinyinLeftMarginDpChange = { candidatePinyinLeftMarginDp = it },
+                    toolbarIconBgOpacity = toolbarIconBgOpacity,
+                    onToolbarIconBgOpacityChange = { toolbarIconBgOpacity = it }
+                )
+
+                SettingsSubPage.MATERIAL -> MaterialSubPageContent(
+                    hyperMaterialEnabled = hyperMaterialEnabled,
+                    onHyperMaterialEnabledChange = { hyperMaterialEnabled = it },
+                    hyperMaterialAvailable = hyperMaterialAvailable,
+                    glassSupported = glassSupported,
+                    glassInput = glassInput,
+                    onGlassInputChange = { index, value -> glassInput[index] = value },
+                    onGlassReset = {
+                        val defaults = GlassMaterialOverrides().withGlassEnabled(true)
+                        GlassOverrideField.entries.forEach { glassInput[it.ordinal] = defaults.text(it) }
+                    },
+                    onOpenColorOsLight = {
+                        WeTypeHostLauncher.launchColorOsLightPage(settingsContext as? Activity)
+                    }
+                )
+
+                SettingsSubPage.CLIPBOARD -> ClipboardSubPageContent(
+                    showCrossDeviceClipboard = showCrossDeviceClipboard,
+                    onShowCrossDeviceClipboardChange = { showCrossDeviceClipboard = it },
+                    removeClipboardRetentionLimit = removeClipboardRetentionLimit,
+                    onRemoveClipboardRetentionLimitChange = { removeClipboardRetentionLimit = it },
+                    removeClipboardTextLimit = removeClipboardTextLimit,
+                    onRemoveClipboardTextLimitChange = { removeClipboardTextLimit = it },
+                    clipboardSearchEnabled = clipboardSearchEnabled,
+                    onClipboardSearchEnabledChange = { clipboardSearchEnabled = it },
+                    clipboardSearchClearOnBack = clipboardSearchClearOnBack,
+                    onClipboardSearchClearOnBackChange = { clipboardSearchClearOnBack = it },
+                    clipboardImageAdjustRatio = clipboardImageAdjustRatio,
+                    onClipboardImageAdjustRatioChange = { clipboardImageAdjustRatio = it },
+                    clipboardImageCrop = clipboardImageCrop,
+                    onClipboardImageCropChange = { clipboardImageCrop = it },
+                    clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
+                    onClipboardImageUniformRowHeightChange = { clipboardImageUniformRowHeight = it },
+                    clipboardImageMaxCount = clipboardImageMaxCount,
+                    onClipboardImageMaxCountChange = { clipboardImageMaxCount = it },
+                    clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
+                    onClipboardImageMaxSizeMbChange = { clipboardImageMaxSizeMb = it },
+                    onOpenClipboardBackup = {
+                        WeTypeHostLauncher.launchBackupPage(settingsContext as? Activity)
+                    }
+                )
+
+                SettingsSubPage.KEYBOARD_LOGO -> KeyboardLogoSubPageContent(
+                    logoEnabled = logoEnabled,
+                    onLogoEnabledChange = { logoEnabled = it },
+                    logoShowEnabled = logoShowEnabled,
+                    onLogoShowEnabledChange = { logoShowEnabled = it },
+                    logoColorMode = logoColorMode,
+                    onLogoColorModeChange = { logoColorMode = it },
+                    logoCustomColorInput = logoCustomColorInput,
+                    onLogoCustomColorInputChange = { logoCustomColorInput = it },
+                    logoImageEnabled = logoImageEnabled,
+                    onLogoImageEnabledChange = { logoImageEnabled = it },
+                    logoImageType = logoImageType,
+                    logoSvgRecolorEnabled = logoSvgRecolorEnabled,
+                    onLogoSvgRecolorEnabledChange = { logoSvgRecolorEnabled = it },
+                    logoImagePngBase64 = logoImagePngBase64,
+                    logoImageSvgText = logoImageSvgText,
+                    logoImageName = logoImageName,
+                    logoImageMessage = logoImageMessage,
+                    logoImageImporting = logoImageImporting,
+                    onPickLogoPng = { pickLogoPng() },
+                    onPickLogoSvg = { pickLogoSvg() },
+                    onActivateLogoImageType = { logoImageType = it },
+                    onClearLogoImages = { clearLogoImages() },
+                    onResetLogo = {
+                        logoEnabled = WeTypeSettings.DEFAULT_LOGO_ENABLED
+                        logoShowEnabled = WeTypeSettings.DEFAULT_LOGO_SHOW_ENABLED
+                        logoColorMode = WeTypeSettings.DEFAULT_LOGO_COLOR_MODE
+                        logoCustomColorInput = formatRgb(WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR)
+                        logoImageEnabled = WeTypeSettings.DEFAULT_LOGO_IMAGE_ENABLED
+                        logoImageType = WeTypeSettings.DEFAULT_LOGO_IMAGE_TYPE
+                        logoSvgRecolorEnabled = WeTypeSettings.DEFAULT_LOGO_SVG_RECOLOR_ENABLED
+                        logoImageMessage = ""
+                    }
+                )
+            }
+        }
+    }
+
+    NavDisplay(
+        backStack = navBackStack,
         modifier = Modifier
             .fillMaxSize()
             .background(MiuixTheme.colorScheme.background),
-        topBar = {
-            TopAppBar(
-                title = stringResource(R.string.settings_title),
-                scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    ModuleActivationTag(
-                        status = activationStatus,
-                    )
-                },
-                actions = {
-                    IconButton(
-                        onClick = { saveSettings(restartIme = true) }
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Ok,
-                            contentDescription = stringResource(R.string.settings_save_restart_title)
-                        )
-                    }
-                },
-                bottomContent = {
-                    TabRowWithContour(
-                        tabs = categoryTabs,
-                        selectedTabIndex = categoryPagerState.currentPage,
-                        onTabSelected = { index ->
-                            coroutineScope.launch {
-                                categoryPagerState.animateScrollToPage(index)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-            )
-        }
-    ) { paddingValues ->
-        HorizontalPager(
-            state = categoryPagerState,
-            modifier = Modifier.fillMaxSize()
-        ) { page ->
-            LazyColumn(
+        transition = NavTransitions.MiuixDefault,
+        effects = NavDisplayEffects(
+            cornerClipRadius = rememberNavSystemCornerRadius(),
+            blockInputDuringTransition = true
+        )
+    ) {
+        entry<SettingsRoute.Home> {
+            Scaffold(
                 modifier = Modifier
                     .fillMaxSize()
-                    .overScrollVertical()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(
-                    top = paddingValues.calculateTopPadding(),
-                    bottom = 40.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                when (page) {
-                0 -> {
-                    AppearanceTabContent(
-                        currentModeIsDark = currentModeIsDark,
-                        onModeChange = { newDarkMode ->
-                            if (newDarkMode != currentModeIsDark) {
-                                currentModeIsDark = newDarkMode
-                                syncEditorFromState()
-                            }
+                    .background(MiuixTheme.colorScheme.background),
+                topBar = {
+                    TopAppBar(
+                        title = stringResource(R.string.settings_title),
+                        scrollBehavior = scrollBehavior,
+                        navigationIcon = {
+                            ModuleActivationTag(
+                                status = activationStatus,
+                            )
                         },
-                        currentColor = currentColor(),
-                        alphaValue = alphaValue,
-                        onAlphaChange = {
-                            alphaValue = it
-                            val rgb = currentColor() and 0xFFFFFF
-                            updateColorFromArgb((alphaValue shl 24) or rgb)
-                            colorInput = formatRgb(currentColor())
+                        actions = {
+                            SettingsRefreshButton(
+                                onClick = { saveSettings(restartIme = true) }
+                            )
                         },
-                        colorInput = colorInput,
-                        onColorInputChange = { input ->
-                            val trimmed = input.trim()
-                            val hasPrefix = trimmed.startsWith("#")
-                            val body = trimmed.removePrefix("#")
-                            if (body.length <= 6 && body.matches(Regex("^[0-9a-fA-F]*$"))) {
-                                colorInput = if (hasPrefix || body.isNotEmpty()) "#$body" else ""
-
-                                if (body.length == 6) {
-                                    runCatching {
-                                        val opaque = Color.parseColor("#$body")
-                                        val argb = Color.argb(
-                                            alphaValue.coerceIn(0, 255),
-                                            Color.red(opaque),
-                                            Color.green(opaque),
-                                            Color.blue(opaque)
-                                        )
-                                        updateColorFromArgb(argb)
+                        bottomContent = {
+                            TabRowWithContour(
+                                tabs = categoryTabs,
+                                selectedTabIndex = categoryPagerState.currentPage,
+                                onTabSelected = { index ->
+                                    coroutineScope.launch {
+                                        categoryPagerState.animateScrollToPage(index)
                                     }
-                                }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+                    )
+                }
+            ) { paddingValues ->
+                HorizontalPager(
+                    state = categoryPagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .overScrollVertical()
+                            .nestedScroll(scrollBehavior.nestedScrollConnection),
+                        contentPadding = PaddingValues(
+                            top = paddingValues.calculateTopPadding(),
+                            bottom = 40.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        when (page) {
+                            0 -> {
+                                AppearanceTabContent(
+                                    currentModeIsDark = currentModeIsDark,
+                                    onModeChange = ::setPreviewDarkMode,
+                                    currentColor = currentColor(),
+                                    blurRadius = blurRadius,
+                                    cornerRadius = cornerRadius,
+                                    bottomCornerRadius = bottomCornerRadius,
+                                    keyCornerRadius = keyCornerRadius,
+                                    edgeHighlightEnabled = edgeHighlightEnabled,
+                                    edgeHighlightIntensity = edgeHighlightIntensity,
+                                    hyperMaterialEnabled = hyperMaterialEnabled,
+                                    keyboardPreviewEnabled = keyboardPreviewEnabled,
+                                    onKeyboardPreviewChange = ::setAppearanceStagePreview,
+                                    stageGuidesEnabled = appearanceStageGuidesEnabled,
+                                    onStageGuidesChange = ::setAppearanceStageGuides,
+                                    wallpaperName = previewWallpaperName,
+                                    onPickWallpaper = ::pickPreviewWallpaper,
+                                    onClearWallpaper = ::clearPreviewWallpaper,
+                                    onOpenSubPage = openSubPage,
+                                    lightKeyColor = keyColorValue(false),
+                                    darkKeyColor = keyColorValue(true),
+                                    fontMode = fontMode,
+                                    onFontModeChange = { fontMode = it },
+                                    onResetFont = {
+                                        fontMode = WeTypeSettings.DEFAULT_FONT_MODE
+                                    }
+                                )
                             }
-                        },
-                        onColorSelect = { presetRgb ->
-                            val rgb = presetRgb and 0xFFFFFF
-                            val argb = (alphaValue.coerceIn(0, 255) shl 24) or rgb
-                            updateColorFromArgb(argb)
-                            colorInput = formatRgb(rgb)
-                        },
-                        blurRadius = blurRadius,
-                        onBlurRadiusChange = { blurRadius = it },
-                        cornerRadius = cornerRadius,
-                        onCornerRadiusChange = { cornerRadius = it },
-                        bottomCornerRadius = bottomCornerRadius,
-                        onBottomCornerRadiusChange = { bottomCornerRadius = it },
-                        keyCornerRadius = keyCornerRadius,
-                        onKeyCornerRadiusChange = { keyCornerRadius = it },
-                        edgeHighlightEnabled = edgeHighlightEnabled,
-                        onEdgeHighlightEnabledChange = { edgeHighlightEnabled = it },
-                        edgeHighlightIntensity = edgeHighlightIntensity,
-                        onEdgeHighlightIntensityChange = { edgeHighlightIntensity = it },
-                        onOpenColorOsLight = {
-                            WeTypeHostLauncher.launchColorOsLightPage(settingsContext as? Activity)
-                        },
-                        hyperMaterialEnabled = hyperMaterialEnabled,
-                        onHyperMaterialEnabledChange = { hyperMaterialEnabled = it },
-                        hyperMaterialAvailable = hyperMaterialAvailable,
-                        glassSupported = glassSupported,
-                        glassInput = glassInput,
-                        onGlassInputChange = { index, value -> glassInput[index] = value },
-                        onGlassReset = {
-                            val defaults = GlassMaterialOverrides().withGlassEnabled(true)
-                            GlassOverrideField.entries.forEach { glassInput[it.ordinal] = defaults.text(it) }
-                        },
-                        toolbarIconBgOpacity = toolbarIconBgOpacity,
-                        onToolbarIconBgOpacityChange = { toolbarIconBgOpacity = it },
-                        iconEdgeLightEnabled = iconEdgeLightEnabled,
-                        onIconEdgeLightEnabledChange = { iconEdgeLightEnabled = it },
-                        appearanceSectionGroups = appearanceSectionGroups,
-                        appearanceGroupColors = appearanceGroupColors,
-                        groupIndex = ::groupIndex,
-                        currentKeyGroup = keyColorGroup(currentModeIsDark),
-                        currentKeyGroupIndex = groupIndex(keyColorGroup(currentModeIsDark).id),
-                        onKeyColorChange = { appearanceGroupColors[groupIndex(keyColorGroup(currentModeIsDark).id)] = it },
-                        lightKeyColor = keyColorValue(false),
-                        darkKeyColor = keyColorValue(true),
-                        candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
-                        onCandidateBackgroundLeftMarginDpChange = { candidateBackgroundLeftMarginDp = it },
-                        candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
-                        onCandidatePinyinLeftMarginDpChange = { candidatePinyinLeftMarginDp = it },
-                        candidateBackgroundAlpha = candidateBackgroundAlpha,
-                        onCandidateBackgroundAlphaChange = { candidateBackgroundAlpha = it },
-                        candidateBackgroundCorner = candidateBackgroundCorner,
-                        onCandidateBackgroundCornerChange = { candidateBackgroundCorner = it }
-                    )
-                }
 
-                1 -> {
-                    GestureTabContent(
-                        qwertyGestureEnabled = qwertyGestureEnabled,
-                        onQwertyGestureEnabledChange = { qwertyGestureEnabled = it },
-                        t9GestureEnabled = t9GestureEnabled,
-                        onT9GestureEnabledChange = { t9GestureEnabled = it },
-                        gestureVibration = gestureVibration,
-                        onGestureVibrationChange = { gestureVibration = it },
-                        t9GestureVibration = t9GestureVibration,
-                        onT9GestureVibrationChange = { t9GestureVibration = it },
-                        gestureThreshold = gestureThreshold,
-                        onGestureThresholdChange = { gestureThreshold = it },
-                        t9GestureThreshold = t9GestureThreshold,
-                        onT9GestureThresholdChange = { t9GestureThreshold = it },
-                        showGestureKeyLabels = showGestureKeyLabels,
-                        onShowGestureKeyLabelsChange = { showGestureKeyLabels = it },
-                        gestureLabelTextSizeSp = gestureLabelTextSizeSp,
-                        onGestureLabelTextSizeSpChange = { gestureLabelTextSizeSp = it },
-                        gestureLabelAlpha = gestureLabelAlpha,
-                        onGestureLabelAlphaChange = { gestureLabelAlpha = it },
-                        gestureLabelPosition = gestureLabelPosition,
-                        onGestureLabelPositionChange = { gestureLabelPosition = it },
-                        gestureLabelMarginTopDp = gestureLabelMarginTopDp,
-                        onGestureLabelMarginTopDpChange = { gestureLabelMarginTopDp = it },
-                        gestureLabelMarginBottomDp = gestureLabelMarginBottomDp,
-                        onGestureLabelMarginBottomDpChange = { gestureLabelMarginBottomDp = it },
-                        gestureLabelMarginLeftDp = gestureLabelMarginLeftDp,
-                        onGestureLabelMarginLeftDpChange = { gestureLabelMarginLeftDp = it },
-                        gestureLabelMarginRightDp = gestureLabelMarginRightDp,
-                        onGestureLabelMarginRightDpChange = { gestureLabelMarginRightDp = it },
-                        gestureBindingsJson = gestureBindingsJson,
-                        onGestureBindingsJsonChange = { gestureBindingsJson = it }
-                    )
-                }
+                            1 -> {
+                                GestureTabContent(
+                                    qwertyGestureEnabled = qwertyGestureEnabled,
+                                    onQwertyGestureEnabledChange = { qwertyGestureEnabled = it },
+                                    t9GestureEnabled = t9GestureEnabled,
+                                    onT9GestureEnabledChange = { t9GestureEnabled = it },
+                                    gestureVibration = gestureVibration,
+                                    onGestureVibrationChange = { gestureVibration = it },
+                                    t9GestureVibration = t9GestureVibration,
+                                    onT9GestureVibrationChange = { t9GestureVibration = it },
+                                    gestureThreshold = gestureThreshold,
+                                    onGestureThresholdChange = { gestureThreshold = it },
+                                    t9GestureThreshold = t9GestureThreshold,
+                                    onT9GestureThresholdChange = { t9GestureThreshold = it },
+                                    showGestureKeyLabels = showGestureKeyLabels,
+                                    onShowGestureKeyLabelsChange = { showGestureKeyLabels = it },
+                                    gestureLabelTextSizeSp = gestureLabelTextSizeSp,
+                                    onGestureLabelTextSizeSpChange = { gestureLabelTextSizeSp = it },
+                                    gestureLabelAlpha = gestureLabelAlpha,
+                                    onGestureLabelAlphaChange = { gestureLabelAlpha = it },
+                                    gestureLabelPosition = gestureLabelPosition,
+                                    onGestureLabelPositionChange = { gestureLabelPosition = it },
+                                    gestureLabelMarginTopDp = gestureLabelMarginTopDp,
+                                    onGestureLabelMarginTopDpChange = { gestureLabelMarginTopDp = it },
+                                    gestureLabelMarginBottomDp = gestureLabelMarginBottomDp,
+                                    onGestureLabelMarginBottomDpChange = { gestureLabelMarginBottomDp = it },
+                                    gestureLabelMarginLeftDp = gestureLabelMarginLeftDp,
+                                    onGestureLabelMarginLeftDpChange = { gestureLabelMarginLeftDp = it },
+                                    gestureLabelMarginRightDp = gestureLabelMarginRightDp,
+                                    onGestureLabelMarginRightDpChange = { gestureLabelMarginRightDp = it },
+                                    gestureBindingsJson = gestureBindingsJson,
+                                    onGestureBindingsJsonChange = { gestureBindingsJson = it }
+                                )
+                            }
 
-                2 -> {
-                    FeatureTabContent(
-                        logoEnabled = logoEnabled,
-                        onLogoEnabledChange = { logoEnabled = it },
-                        logoShowEnabled = logoShowEnabled,
-                        onLogoShowEnabledChange = { logoShowEnabled = it },
+                            2 -> {
+                                FeatureTabContent(
+                                    onOpenSubPage = openSubPage,
+                                    disableHotUpdate = disableHotUpdate,
+                                    onDisableHotUpdateChange = { disableHotUpdate = it },
+                                    activationStatus = activationStatus,
+                                    onRestoreDefaults = ::restoreDefaults
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        entry<SettingsRoute.SubPage> { route ->
+            val subPage = route.page
+            val pinnedPreview: (@Composable () -> Unit)? =
+                if (appearancePreviewPinned && subPage in APPEARANCE_PREVIEW_SUB_PAGES) {
+                    {
+                        renderAppearancePreview(
+                            subPage = subPage,
+                            pinned = true,
+                            onTogglePin = { appearancePreviewPinned = false }
+                        )
+                    }
+                } else {
+                    null
+                }
+            // 底部键盘复刻件：只在「界面美化」二级页、且预览开关打开时挂。
+            val replicaStage: (@Composable () -> Unit)?
+            val replicaBottomInset: Dp
+            if (subPage in APPEARANCE_PREVIEW_SUB_PAGES && keyboardPreviewEnabled) {
+                val replicaDensity = LocalDensity.current
+                val replicaView = LocalView.current
+                val replicaConfiguration = LocalConfiguration.current
+                var navBarInsetPx by remember(replicaView) {
+                    mutableIntStateOf(resolveNavigationBarInsetPx(replicaView))
+                }
+                LaunchedEffect(replicaView) {
+                    // 首次组合时窗口 insets 可能还没下发，等一帧补读一次。
+                    if (navBarInsetPx == 0) {
+                        delay(120L)
+                        navBarInsetPx = resolveNavigationBarInsetPx(replicaView)
+                    }
+                }
+                val replicaWidthPx = with(replicaDensity) {
+                    replicaConfiguration.screenWidthDp.dp.roundToPx()
+                }
+                val screenHeightPx = with(replicaDensity) {
+                    replicaConfiguration.screenHeightDp.dp.roundToPx()
+                }
+                // 宿主实测过键盘高度就用实测值；没测过按屏幕高的固定比例兜底。
+                val replicaTotalHeightPx = remember(screenHeightPx) {
+                    WeTypeKeyboardMetrics.keyboardHeightForWindow(settingsContext, screenHeightPx)
+                        ?: resolveReplicaFallbackHeightPx(screenHeightPx)
+                }
+                val replicaGeometry = resolveReplicaGeometry(
+                    widthPx = replicaWidthPx,
+                    totalHeightPx = replicaTotalHeightPx,
+                    systemInsetPx = navBarInsetPx
+                )
+                // 条带是真机工具栏那一行的截图，进页读一次指纹即可，不必每帧比对。
+                val stripStamp = remember(subPage, screenHeightPx) {
+                    KeyboardToolbarStrip.stamp(settingsContext)
+                }
+                val toolbarStrip = remember(stripStamp) {
+                    stripStamp?.let { KeyboardToolbarStrip.read(settingsContext) }
+                }
+                val toolbarLogo = remember(
+                    logoColorMode,
+                    logoCustomColorInput,
+                    toolbarIconBgOpacity,
+                    logoImageEnabled,
+                    logoImageType,
+                    logoSvgRecolorEnabled,
+                    logoImagePngBase64,
+                    logoImageSvgText,
+                    currentModeIsDark
+                ) {
+                    renderPreviewBitmap(
                         logoColorMode = logoColorMode,
-                        onLogoColorModeChange = { logoColorMode = it },
-                        logoCustomColorInput = logoCustomColorInput,
-                        onLogoCustomColorInputChange = { logoCustomColorInput = it },
-                        logoImageSummary = logoImageSummary,
-                        onOpenLogoImage = {
-                            WeTypeHostLauncher.launchLogoImagePage(settingsContext as? Activity)
-                        },
-                        onResetLogo = {
-                            logoEnabled = WeTypeSettings.DEFAULT_LOGO_ENABLED
-                            logoShowEnabled = WeTypeSettings.DEFAULT_LOGO_SHOW_ENABLED
-                            logoColorMode = WeTypeSettings.DEFAULT_LOGO_COLOR_MODE
-                            logoCustomColorInput = formatRgb(WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR)
-                            logoImageEnabled = WeTypeSettings.DEFAULT_LOGO_IMAGE_ENABLED
-                            logoImageType = WeTypeSettings.DEFAULT_LOGO_IMAGE_TYPE
-                            logoSvgRecolorEnabled = WeTypeSettings.DEFAULT_LOGO_SVG_RECOLOR_ENABLED
-                        },
-                        fontMode = fontMode,
-                        onFontModeChange = { fontMode = it },
-                        onResetFont = {
-                            fontMode = WeTypeSettings.DEFAULT_FONT_MODE
-                        },
-                        showCrossDeviceClipboard = showCrossDeviceClipboard,
-                        onShowCrossDeviceClipboardChange = { showCrossDeviceClipboard = it },
-                        removeClipboardRetentionLimit = removeClipboardRetentionLimit,
-                        onRemoveClipboardRetentionLimitChange = { removeClipboardRetentionLimit = it },
-                        removeClipboardTextLimit = removeClipboardTextLimit,
-                        onRemoveClipboardTextLimitChange = { removeClipboardTextLimit = it },
-                        clipboardSearchEnabled = clipboardSearchEnabled,
-                        onClipboardSearchEnabledChange = { clipboardSearchEnabled = it },
-                        clipboardSearchClearOnBack = clipboardSearchClearOnBack,
-                        onClipboardSearchClearOnBackChange = { clipboardSearchClearOnBack = it },
-                        clipboardImageAdjustRatio = clipboardImageAdjustRatio,
-                        onClipboardImageAdjustRatioChange = { clipboardImageAdjustRatio = it },
-                        clipboardImageCrop = clipboardImageCrop,
-                        onClipboardImageCropChange = { clipboardImageCrop = it },
-                        clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
-                        onClipboardImageUniformRowHeightChange = { clipboardImageUniformRowHeight = it },
-                        clipboardImageMaxCount = clipboardImageMaxCount,
-                        onClipboardImageMaxCountChange = { clipboardImageMaxCount = it },
-                        clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
-                        onClipboardImageMaxSizeMbChange = { clipboardImageMaxSizeMb = it },
-                        onOpenClipboardBackup = {
-                            WeTypeHostLauncher.launchBackupPage(settingsContext as? Activity)
-                        },
-                        disableHotUpdate = disableHotUpdate,
-                        onDisableHotUpdateChange = { disableHotUpdate = it },
-                        activationStatus = activationStatus,
-                        onRestoreDefaults = ::restoreDefaults
+                        brandColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
+                            ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR,
+                        logoCustomColor = parseLogoCustomColor(logoCustomColorInput),
+                        toolbarIconBgOpacity = toolbarIconBgOpacity,
+                        enabled = logoImageEnabled,
+                        imageType = logoImageType,
+                        recolor = logoSvgRecolorEnabled,
+                        pngBase64 = logoImagePngBase64,
+                        svgText = logoImageSvgText,
+                        isNight = currentModeIsDark
                     )
                 }
+                // 总开关关掉时真机显示的是宿主原生 Logo，预览用同一个矢量回退路径以品牌强调色画一遍。
+                val nativeLogo = remember(
+                    toolbarIconBgOpacity,
+                    currentModeIsDark,
+                    appearanceGroupColors.getOrNull(groupIndex("theme_color"))
+                ) {
+                    renderNativePreviewBitmap(
+                        brandColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
+                            ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR,
+                        toolbarIconBgOpacity = toolbarIconBgOpacity,
+                        isNight = currentModeIsDark
+                    )
                 }
+                val logoMode = replicaLogoMode(
+                    logoEnabled = logoEnabled,
+                    logoShowEnabled = logoShowEnabled
+                )
+                // 预览底图：换一次图要重读一次，所以拿文件名当键。
+                val previewWallpaper = remember(previewWallpaperName) {
+                    PreviewWallpaper.load(settingsContext)
+                }
+                if (replicaGeometry != null) {
+                    replicaStage = {
+                        KeyboardReplica(
+                            geometry = replicaGeometry,
+                            color = currentColor(),
+                            blurRadius = blurRadius,
+                            cornerRadius = cornerRadius,
+                            bottomCornerRadius = bottomCornerRadius,
+                            keyCornerRadius = keyCornerRadius,
+                            candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
+                            candidateBackgroundAlpha = candidateBackgroundAlpha,
+                            candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp
+                                .toIntOrNull()
+                                ?: WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
+                            edgeHighlightEnabled = edgeHighlightEnabled,
+                            edgeHighlightIntensity = edgeHighlightIntensity,
+                            keyColor = keyColorValue(currentModeIsDark),
+                            isDark = currentModeIsDark,
+                            hyperMaterialEnabled = hyperMaterialEnabled,
+                            showCornerGuide = appearanceStageGuidesEnabled,
+                            accentColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
+                                ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR,
+                            toolbarStrip = toolbarStrip,
+                            toolbarLogo = toolbarLogo,
+                            nativeLogo = nativeLogo,
+                            logoMode = logoMode,
+                            wallpaper = previewWallpaper
+                        )
+                    }
+                    replicaBottomInset = with(replicaDensity) {
+                        replicaGeometry.totalHeightPx.toDp()
+                    }
+                } else {
+                    replicaStage = null
+                    replicaBottomInset = 0.dp
+                }
+            } else {
+                replicaStage = null
+                replicaBottomInset = 0.dp
+            }
+            SettingsSubPageScaffold(
+                title = subPage.title,
+                onBack = { navBackStack.removeLastOrNull() },
+                onRefresh = { saveSettings(restartIme = true) },
+                pinnedContent = pinnedPreview,
+                stageContent = replicaStage,
+                stageBottomInset = replicaBottomInset
+            ) {
+                renderSubPageContent(subPage, this)
             }
         }
     }
@@ -1179,57 +1718,149 @@ private fun WeTypeSettingsScreen(
         WindowBottomSheet(
             show = showUpdateSheet,
             title = stringResource(R.string.update_dialog_title),
-            startAction = {
-                Text(
-                    text = stringResource(R.string.update_dialog_cancel),
-                    style = MiuixTheme.textStyles.main,
-                    color = MiuixTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .clip(ContinuousRoundedRectangle(999.dp))
-                        .clickable { showUpdateSheet = false }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            },
-            endAction = {
-                Text(
-                    text = stringResource(R.string.update_dialog_confirm),
-                    style = MiuixTheme.textStyles.main,
-                    color = MiuixTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(ContinuousRoundedRectangle(999.dp))
-                        .clickable {
-                            showUpdateSheet = false
-                            openModuleUpdatePage(context, info)
-                        }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            },
             onDismissRequest = { showUpdateSheet = false }
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = stringResource(R.string.update_dialog_version, info.versionName),
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(16.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = stringResource(R.string.update_dialog_version, info.versionName),
+                            style = MiuixTheme.textStyles.main,
+                            fontWeight = FontWeight.Medium
+                        )
+                        if (info.changelog.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = stringResource(R.string.update_dialog_changelog),
+                                style = MiuixTheme.textStyles.body2,
+                                fontWeight = FontWeight.Medium,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = info.changelog,
+                                style = MiuixTheme.textStyles.body2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 360.dp)
+                                    .verticalScroll(rememberScrollState())
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = { showUpdateSheet = false },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors()
+                    ) {
+                        Text(text = stringResource(R.string.update_dialog_cancel))
+                    }
+                    Button(
+                        onClick = {
+                            showUpdateSheet = false
+                            openModuleUpdatePage(context, info)
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColorsPrimary()
+                    ) {
+                        Text(text = stringResource(R.string.update_dialog_confirm))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 二级设置页的通用外壳：返回按钮回到一级页，右上角「刷新」让输入法进程重读配置。
+ *
+ * 标题栏固定不随列表滚动（`SmallTopAppBar` 一旦挂上 `MiuixScrollBehavior`，滚动时整条会被推出屏幕），
+ * [pinnedContent] 因此直接排进 `topBar` 槽位，成为标题栏的一部分常驻其正下方。
+ * 列表内容会从它下方穿过，所以 [pinnedContent] 需要自带不透明背景。
+ *
+ * [stageContent] 贴窗口底边、排在列表之外，滚动不带走 —— 键盘复刻件靠它常驻屏幕下半部。
+ * 列表底部要按 [stageBottomInset] 预留同等高度，否则最后几项会被压在键盘下面。
+ */
+@Composable
+private fun SettingsSubPageScaffold(
+    title: String,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    pinnedContent: (@Composable () -> Unit)? = null,
+    stageContent: (@Composable () -> Unit)? = null,
+    stageBottomInset: Dp = 0.dp,
+    content: LazyListScope.() -> Unit
+) {
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MiuixTheme.colorScheme.background),
+        topBar = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MiuixTheme.colorScheme.background)
+            ) {
+                SmallTopAppBar(
+                    title = title,
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = MiuixIcons.Back,
+                                contentDescription = "返回"
+                            )
+                        }
+                    },
+                    actions = {
+                        SettingsRefreshButton(onClick = onRefresh)
+                    }
                 )
-                if (info.changelog.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = stringResource(R.string.update_dialog_changelog),
-                        style = MiuixTheme.textStyles.main,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = info.changelog,
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                if (pinnedContent != null) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 360.dp)
-                            .verticalScroll(rememberScrollState())
-                    )
+                            .padding(bottom = 12.dp)
+                    ) {
+                        pinnedContent()
+                    }
+                }
+            }
+        }
+    ) { paddingValues ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // 宿主输入法自己升起时（键盘栏上的设置入口），靠这条把列表压到键盘之上。
+                .imePadding()
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .overScrollVertical(),
+                contentPadding = PaddingValues(
+                    top = paddingValues.calculateTopPadding(),
+                    bottom = 40.dp + stageBottomInset
+                ),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                content()
+            }
+            if (stageContent != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                ) {
+                    stageContent()
                 }
             }
         }
@@ -1405,55 +2036,49 @@ private fun ColorPresetPalette(
     }
 }
 
+/**
+ * 下拉项：主文案只放短标签，解释下沉为 [DropdownItem.summary] 的 14sp 小字。
+ *
+ * Miuix 把下拉项的文本列写死在 216dp（`DropdownDefaults.MaxItemTextWidth`，外部改不了），16sp
+ * 下一行只放得下约 13 个汉字；长标签折行后末行可能只剩一个字，孤字由此而来。
+ */
+private fun labeledDropdownItems(
+    options: List<Pair<String, String>>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit
+): List<DropdownItem> = options.mapIndexed { index, (text, summary) ->
+    DropdownItem(
+        text = text,
+        summary = summary,
+        selected = index == selectedIndex,
+        onClick = { onSelect(index) }
+    )
+}
+
 private fun LazyListScope.AppearanceTabContent(
     currentModeIsDark: Boolean,
     onModeChange: (Boolean) -> Unit,
     currentColor: Int,
-    alphaValue: Int,
-    onAlphaChange: (Int) -> Unit,
-    colorInput: String,
-    onColorInputChange: (String) -> Unit,
-    onColorSelect: (Int) -> Unit,
     blurRadius: Int,
-    onBlurRadiusChange: (Int) -> Unit,
     cornerRadius: Int,
-    onCornerRadiusChange: (Int) -> Unit,
     bottomCornerRadius: Int,
-    onBottomCornerRadiusChange: (Int) -> Unit,
     keyCornerRadius: Int,
-    onKeyCornerRadiusChange: (Int) -> Unit,
     edgeHighlightEnabled: Boolean,
-    onEdgeHighlightEnabledChange: (Boolean) -> Unit,
     edgeHighlightIntensity: Int,
-    onEdgeHighlightIntensityChange: (Int) -> Unit,
     hyperMaterialEnabled: Boolean,
-    onHyperMaterialEnabledChange: (Boolean) -> Unit,
-    hyperMaterialAvailable: Boolean,
-    glassSupported: Boolean,
-    glassInput: List<String>,
-    onGlassInputChange: (Int, String) -> Unit,
-    onGlassReset: () -> Unit,
-    toolbarIconBgOpacity: Int,
-    onToolbarIconBgOpacityChange: (Int) -> Unit,
-    iconEdgeLightEnabled: Boolean,
-    onIconEdgeLightEnabledChange: (Boolean) -> Unit,
-    onOpenColorOsLight: () -> Unit,
-    appearanceSectionGroups: List<WeTypeAppearanceColorGroup>,
-    appearanceGroupColors: MutableList<Int>,
-    groupIndex: (String) -> Int,
-    currentKeyGroup: WeTypeAppearanceColorGroup,
-    currentKeyGroupIndex: Int,
-    onKeyColorChange: (Int) -> Unit,
+    keyboardPreviewEnabled: Boolean,
+    onKeyboardPreviewChange: (Boolean) -> Unit,
+    stageGuidesEnabled: Boolean,
+    onStageGuidesChange: (Boolean) -> Unit,
+    wallpaperName: String,
+    onPickWallpaper: () -> Unit,
+    onClearWallpaper: () -> Unit,
+    onOpenSubPage: (SettingsSubPage) -> Unit,
     lightKeyColor: Int,
     darkKeyColor: Int,
-    candidateBackgroundLeftMarginDp: String,
-    onCandidateBackgroundLeftMarginDpChange: (String) -> Unit,
-    candidatePinyinLeftMarginDp: String,
-    onCandidatePinyinLeftMarginDpChange: (String) -> Unit,
-    candidateBackgroundAlpha: Int,
-    onCandidateBackgroundAlphaChange: (Int) -> Unit,
-    candidateBackgroundCorner: Int,
-    onCandidateBackgroundCornerChange: (Int) -> Unit
+    fontMode: Int,
+    onFontModeChange: (Int) -> Unit,
+    onResetFont: () -> Unit
 ) {
     // 1. 效果预览折叠卡片（默认收起，平滑展开）
     item {
@@ -1465,12 +2090,37 @@ private fun LazyListScope.AppearanceTabContent(
                 modifier = Modifier.padding(horizontal = 16.dp),
                 insideMargin = PaddingValues(0.dp)
             ) {
-                MiuixSwitchWidget(
+                SwitchPreference(
                     title = "实时效果预览",
-                    description = "展开查看键盘背景与毛玻璃渲染效果",
+                    summary = "展开查看键盘背景与毛玻璃渲染效果",
                     checked = isPreviewExpanded,
                     onCheckedChange = { isPreviewExpanded = it }
                 )
+                HorizontalDivider()
+                SwitchPreference(
+                    title = "圆角对齐参考线",
+                    summary = "在真机键盘底部两角叠上屏幕圆角与当前配置圆角的参考弧，需先打开真机键盘预览",
+                    checked = stageGuidesEnabled,
+                    onCheckedChange = onStageGuidesChange
+                )
+                // 面板是半透明的，底下不铺一层图就看不出透明度生效没有；这层图跟真机一样由用户挑。
+                if (keyboardPreviewEnabled) {
+                    HorizontalDivider()
+                    BasicComponent(
+                        title = "预览背景",
+                        summary = wallpaperName.takeIf { it.isNotEmpty() }
+                            ?.let { "已设置：$it，点击可换一张" }
+                            ?: "未设置，键盘面板下面只有设置页底色，看不出透明度",
+                        onClick = onPickWallpaper
+                    )
+                    if (wallpaperName.isNotEmpty()) {
+                        BasicComponent(
+                            title = "清除预览背景",
+                            summary = "去掉这层壁纸，预览恢复成纯色底",
+                            onClick = onClearWallpaper
+                        )
+                    }
+                }
             }
 
             AnimatedVisibility(
@@ -1494,49 +2144,145 @@ private fun LazyListScope.AppearanceTabContent(
                         lightKeyColor = lightKeyColor,
                         darkKeyColor = darkKeyColor,
                         isDark = currentModeIsDark,
-                        hyperMaterialEnabled = hyperMaterialEnabled
+                        hyperMaterialEnabled = hyperMaterialEnabled,
+                        keyboardPreviewEnabled = keyboardPreviewEnabled,
+                        onToggleKeyboardPreview = { onKeyboardPreviewChange(!keyboardPreviewEnabled) },
+                        onToggleDarkMode = { onModeChange(!currentModeIsDark) }
                     )
                 }
             }
         }
     }
 
-    // 2. 颜色与模式
+    // 2. 外观设置入口
     item {
         SmallTitle(
-            text = stringResource(R.string.settings_group_color)
+            text = stringResource(R.string.settings_group_appearance)
         )
         Card(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                // 模式切换 - 使用 TabRow
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.settings_section_mode),
-                        style = MiuixTheme.textStyles.main
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    val tabs = listOf(
-                        stringResource(R.string.settings_light_mode),
-                        stringResource(R.string.settings_dark_mode)
-                    )
-                    TabRowWithContour(
-                        tabs = tabs,
-                        selectedTabIndex = if (currentModeIsDark) 1 else 0,
-                        onTabSelected = { index ->
-                            onModeChange(index == 1)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                ArrowPreference(
+                    title = SettingsSubPage.COLORS.title,
+                    summary = "背景颜色与不透明度、按键颜色、品牌强调色",
+                    onClick = { onOpenSubPage(SettingsSubPage.COLORS) }
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = SettingsSubPage.KEYBOARD_LOGO.title,
+                    summary = "替换 Logo 显示、主体颜色与自定义图片",
+                    onClick = { onOpenSubPage(SettingsSubPage.KEYBOARD_LOGO) }
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = SettingsSubPage.MATERIAL.title,
+                    summary = "系统材质开关、毛玻璃参数与 ColorOS 光感",
+                    onClick = { onOpenSubPage(SettingsSubPage.MATERIAL) }
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = SettingsSubPage.CORNER_BLUR.title,
+                    summary = "键盘模糊强度与顶部、底部、按键圆角",
+                    onClick = { onOpenSubPage(SettingsSubPage.CORNER_BLUR) }
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = SettingsSubPage.CANDIDATE_TOOLBAR.title,
+                    summary = "候选词背景、候选栏边距与工具栏图标",
+                    onClick = { onOpenSubPage(SettingsSubPage.CANDIDATE_TOOLBAR) }
+                )
+            }
+        }
+    }
 
+    // 3. 字体替换卡片
+    item {
+        val context = LocalContext.current
+        val fontModeOptions = listOf(
+            WeTypeSettings.FONT_MODE_OFFICIAL,
+            WeTypeSettings.FONT_MODE_MODULE,
+            WeTypeSettings.FONT_MODE_SYSTEM
+        )
+        SmallTitle(text = "字体替换")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                OverlayDropdownPreference(
+                    title = "字体来源",
+                    entry = DropdownEntry(
+                        items = labeledDropdownItems(
+                            options = listOf(
+                                "微信官方" to "放行宿主原生字体",
+                                "模块内置" to "WE-Regular 优化字体",
+                                "跟随系统" to "系统默认字体"
+                            ),
+                            selectedIndex = fontModeOptions.indexOf(fontMode).coerceAtLeast(0),
+                            onSelect = { index -> onFontModeChange(fontModeOptions[index]) }
+                        )
+                    )
+                )
+                HorizontalDivider()
+                ArrowPreference(
+                    title = "重置字体设置",
+                    summary = "恢复跟随系统默认字体",
+                    onClick = {
+                        onResetFont()
+                        Toast.makeText(context, "字体设置已重置", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
+    }
+}
 
+private fun LazyListScope.ColorsSubPageContent(
+    currentModeIsDark: Boolean,
+    onModeChange: (Boolean) -> Unit,
+    currentColor: Int,
+    alphaValue: Int,
+    onAlphaChange: (Int) -> Unit,
+    colorInput: String,
+    onColorInputChange: (String) -> Unit,
+    onColorSelect: (Int) -> Unit,
+    appearanceSectionGroups: List<WeTypeAppearanceColorGroup>,
+    appearanceGroupColors: MutableList<Int>,
+    groupIndex: (String) -> Int,
+    currentKeyGroup: WeTypeAppearanceColorGroup,
+    currentKeyGroupIndex: Int,
+    onKeyColorChange: (Int) -> Unit
+) {
+    item {
+        SmallTitle(text = stringResource(R.string.settings_section_mode))
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(16.dp)
+        ) {
+            val tabs = listOf(
+                stringResource(R.string.settings_light_mode),
+                stringResource(R.string.settings_dark_mode)
+            )
+            TabRowWithContour(
+                tabs = tabs,
+                selectedTabIndex = if (currentModeIsDark) 1 else 0,
+                onTabSelected = { index ->
+                    onModeChange(index == 1)
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+
+    item {
+        SmallTitle(text = stringResource(R.string.settings_group_color))
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
                 // 预设色卡快速选择器
                 ColorPresetPalette(
                     isDark = currentModeIsDark,
@@ -1544,8 +2290,9 @@ private fun LazyListScope.AppearanceTabContent(
                     onSelectColor = onColorSelect
                 )
 
+                HorizontalDivider()
 
-                // 自定义 HEX 颜色输入与取色器入口
+                // 自定义 HEX 颜色输入
                 Column(
                     modifier = Modifier.padding(16.dp)
                 ) {
@@ -1586,108 +2333,48 @@ private fun LazyListScope.AppearanceTabContent(
                     }
                 }
 
+                HorizontalDivider()
 
-                // 透明度滑块
                 SliderPreferenceItem(
                     title = stringResource(R.string.settings_alpha_title),
                     value = alphaValue,
                     max = 255,
                     onValueChange = onAlphaChange
                 )
-
-
-                KeyColorEditor(
-                    title = if (currentModeIsDark) {
-                        stringResource(R.string.settings_dark_key_color_title)
-                    } else {
-                        stringResource(R.string.settings_light_key_color_title)
-                    },
-                    summary = stringResource(
-                        R.string.settings_key_color_group_summary,
-                        Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
-                        currentKeyGroup.entryCount
-                    ),
-                    color = appearanceGroupColors[currentKeyGroupIndex],
-                    onColorChange = onKeyColorChange
-                )
             }
         }
     }
 
-    // 3. 外观与特效
     item {
-        SmallTitle(
-            text = stringResource(R.string.settings_group_appearance)
-        )
+        SmallTitle(text = "按键颜色")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            KeyColorEditor(
+                title = if (currentModeIsDark) {
+                    stringResource(R.string.settings_dark_key_color_title)
+                } else {
+                    stringResource(R.string.settings_light_key_color_title)
+                },
+                summary = stringResource(
+                    R.string.settings_key_color_group_summary,
+                    Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
+                    currentKeyGroup.entryCount
+                ),
+                color = appearanceGroupColors[currentKeyGroupIndex],
+                onColorChange = onKeyColorChange
+            )
+        }
+    }
+
+    item {
+        SmallTitle(text = "品牌强调色")
         Card(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                MiuixSwitchWidget(
-                    title = stringResource(R.string.settings_hyper_material_title),
-                    description = stringResource(
-                        if (hyperMaterialAvailable) R.string.settings_hyper_material_desc
-                        else R.string.settings_hyper_material_unavailable
-                    ),
-                    checked = hyperMaterialEnabled,
-                    enabled = hyperMaterialAvailable,
-                    onCheckedChange = onHyperMaterialEnabledChange
-                )
-                if (hyperMaterialEnabled) {
-                    HorizontalDivider()
-                    GlassOverrideEditor(
-                        values = glassInput,
-                        enabled = hyperMaterialAvailable && glassSupported,
-                        onValueChange = onGlassInputChange,
-                        onReset = onGlassReset
-                    )
-                }
-                HorizontalDivider()
-                ArrowPreference(
-                    title = stringResource(R.string.settings_coloros_light_title),
-                    summary = stringResource(R.string.settings_coloros_light_desc),
-                    onClick = onOpenColorOsLight
-                )
-
-                // 模糊滑块
-                SliderPreferenceItem(
-                    title = stringResource(R.string.settings_blur_title),
-                    value = blurRadius,
-                    max = 100,
-                    enabled = !hyperMaterialEnabled,
-                    onValueChange = onBlurRadiusChange
-                )
-
-                // 圆角滑块
-                SliderPreferenceItem(
-                    title = stringResource(R.string.settings_corner_title),
-                    value = cornerRadius,
-                    max = WeTypeSettings.MAX_CORNER_RADIUS,
-                    onValueChange = onCornerRadiusChange
-                )
-
-                SliderPreferenceItem(
-                    title = stringResource(R.string.settings_bottom_corner_title),
-                    value = bottomCornerRadius,
-                    max = WeTypeSettings.MAX_BOTTOM_CORNER_RADIUS,
-                    onValueChange = onBottomCornerRadiusChange
-                )
-
-                SliderPreferenceItem(
-                    title = stringResource(R.string.settings_key_corner_title),
-                    value = keyCornerRadius,
-                    max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
-                    onValueChange = onKeyCornerRadiusChange
-                )
-
-                SliderPreferenceItem(
-                    title = stringResource(R.string.settings_toolbar_icon_bg_opacity_title),
-                    value = toolbarIconBgOpacity,
-                    max = 255,
-                    onValueChange = onToolbarIconBgOpacityChange
-                )
-
                 appearanceSectionGroups.forEach { group ->
                     val index = groupIndex(group.id)
                     AppearanceColorGroupEditor(
@@ -1701,44 +2388,721 @@ private fun LazyListScope.AppearanceTabContent(
                         onColorChange = { appearanceGroupColors[index] = it }
                     )
                 }
+            }
+        }
+    }
+}
 
-                NumericTextSettingItem(
-                    title = stringResource(R.string.settings_candidate_background_left_margin_title),
-                    summary = stringResource(R.string.settings_candidate_background_left_margin_desc),
-                    value = candidateBackgroundLeftMarginDp,
-                    onValueChange = { input ->
-                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
-                            onCandidateBackgroundLeftMarginDpChange(input)
-                        }
+private fun LazyListScope.CornerBlurSubPageContent(
+    hyperMaterialEnabled: Boolean,
+    blurRadius: Int,
+    onBlurRadiusChange: (Int) -> Unit,
+    cornerRadius: Int,
+    onCornerRadiusChange: (Int) -> Unit,
+    bottomCornerRadius: Int,
+    onBottomCornerRadiusChange: (Int) -> Unit,
+    keyCornerRadius: Int,
+    onKeyCornerRadiusChange: (Int) -> Unit,
+    candidateBackgroundCorner: Int,
+    onCandidateBackgroundCornerChange: (Int) -> Unit
+) {
+    item {
+        SmallTitle(text = "模糊")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SliderPreferenceItem(
+                title = stringResource(R.string.settings_blur_title),
+                value = blurRadius,
+                max = 100,
+                enabled = !hyperMaterialEnabled,
+                onValueChange = onBlurRadiusChange
+            )
+        }
+    }
+
+    item {
+        SmallTitle(text = "圆角")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SliderPreferenceItem(
+                title = stringResource(R.string.settings_corner_title),
+                value = cornerRadius,
+                max = WeTypeSettings.MAX_CORNER_RADIUS,
+                onValueChange = onCornerRadiusChange
+            )
+            SliderPreferenceItem(
+                title = stringResource(R.string.settings_bottom_corner_title),
+                value = bottomCornerRadius,
+                max = WeTypeSettings.MAX_BOTTOM_CORNER_RADIUS,
+                onValueChange = onBottomCornerRadiusChange
+            )
+            SliderPreferenceItem(
+                title = stringResource(R.string.settings_key_corner_title),
+                value = keyCornerRadius,
+                max = WeTypeSettings.MAX_KEY_CORNER_RADIUS,
+                onValueChange = onKeyCornerRadiusChange
+            )
+            SliderPreferenceItem(
+                title = stringResource(R.string.settings_candidate_corner_title),
+                value = candidateBackgroundCorner,
+                max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
+                onValueChange = onCandidateBackgroundCornerChange
+            )
+        }
+    }
+}
+
+private fun LazyListScope.CandidateToolbarSubPageContent(
+    candidateBackgroundAlpha: Int,
+    onCandidateBackgroundAlphaChange: (Int) -> Unit,
+    candidateBackgroundLeftMarginDp: String,
+    onCandidateBackgroundLeftMarginDpChange: (String) -> Unit,
+    candidatePinyinLeftMarginDp: String,
+    onCandidatePinyinLeftMarginDpChange: (String) -> Unit,
+    toolbarIconBgOpacity: Int,
+    onToolbarIconBgOpacityChange: (Int) -> Unit
+) {
+    item {
+        SmallTitle(text = "候选词")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SliderPreferenceItem(
+                title = stringResource(R.string.settings_key_color_hook_alpha_title),
+                value = candidateBackgroundAlpha,
+                max = 255,
+                onValueChange = onCandidateBackgroundAlphaChange
+            )
+            NumericTextSettingItem(
+                title = stringResource(R.string.settings_candidate_background_left_margin_title),
+                summary = stringResource(R.string.settings_candidate_background_left_margin_desc),
+                value = candidateBackgroundLeftMarginDp,
+                onValueChange = { input ->
+                    if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                        onCandidateBackgroundLeftMarginDpChange(input)
                     }
-                )
-
-                NumericTextSettingItem(
-                    title = stringResource(R.string.settings_candidate_pinyin_margin_title),
-                    summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
-                    value = candidatePinyinLeftMarginDp,
-                    onValueChange = { input ->
-                        if (sanitizeIntegerInput(input, maxLength = 2) != null) {
-                            onCandidatePinyinLeftMarginDpChange(input)
-                        }
+                }
+            )
+            NumericTextSettingItem(
+                title = stringResource(R.string.settings_candidate_pinyin_margin_title),
+                summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
+                value = candidatePinyinLeftMarginDp,
+                onValueChange = { input ->
+                    if (sanitizeIntegerInput(input, maxLength = 2) != null) {
+                        onCandidatePinyinLeftMarginDpChange(input)
                     }
-                )
+                }
+            )
+        }
+    }
 
-                SliderPreferenceItem(
-                    title = stringResource(R.string.settings_key_color_hook_alpha_title),
-                    value = candidateBackgroundAlpha,
-                    max = 255,
-                    onValueChange = onCandidateBackgroundAlphaChange
-                )
+    item {
+        SmallTitle(text = "工具栏")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SliderPreferenceItem(
+                title = stringResource(R.string.settings_toolbar_icon_bg_opacity_title),
+                value = toolbarIconBgOpacity,
+                max = 255,
+                onValueChange = onToolbarIconBgOpacityChange
+            )
+        }
+    }
+}
 
-                SliderPreferenceItem(
-                    title = stringResource(R.string.settings_candidate_corner_title),
-                    value = candidateBackgroundCorner,
-                    max = WeTypeSettings.MAX_CANDIDATE_BACKGROUND_CORNER,
-                    onValueChange = onCandidateBackgroundCornerChange
+private fun LazyListScope.MaterialSubPageContent(
+    hyperMaterialEnabled: Boolean,
+    onHyperMaterialEnabledChange: (Boolean) -> Unit,
+    hyperMaterialAvailable: Boolean,
+    glassSupported: Boolean,
+    glassInput: List<String>,
+    onGlassInputChange: (Int, String) -> Unit,
+    onGlassReset: () -> Unit,
+    onOpenColorOsLight: () -> Unit
+) {
+    item {
+        SmallTitle(text = "材质")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SwitchPreference(
+                title = stringResource(R.string.settings_hyper_material_title),
+                summary = stringResource(
+                    if (hyperMaterialAvailable) R.string.settings_hyper_material_desc
+                    else R.string.settings_hyper_material_unavailable
+                ),
+                checked = hyperMaterialEnabled,
+                enabled = hyperMaterialAvailable,
+                onCheckedChange = onHyperMaterialEnabledChange
+            )
+            if (hyperMaterialEnabled) {
+                HorizontalDivider()
+                GlassOverrideEditor(
+                    values = glassInput,
+                    enabled = hyperMaterialAvailable && glassSupported,
+                    onValueChange = onGlassInputChange,
+                    onReset = onGlassReset
                 )
             }
         }
+    }
+
+    item {
+        SmallTitle(text = "ColorOS 光感")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            ArrowPreference(
+                title = stringResource(R.string.settings_coloros_light_title),
+                summary = stringResource(R.string.settings_coloros_light_desc),
+                enabled = hyperMaterialEnabled,
+                onClick = onOpenColorOsLight
+            )
+        }
+    }
+}
+
+/** 复刻件 ⇧ 的归一化顶点（顶点 → 左肩 → 左竖杠 → 底边 → 右竖杠 → 右肩），真机键帽实测。 */
+private val REPLICA_SHIFT_OUTLINE = listOf(
+    0.5f to 0f,
+    0f to 0.584f,
+    0.278f to 0.584f,
+    0.278f to 0.987f,
+    0.722f to 0.987f,
+    0.722f to 0.584f,
+    1f to 0.584f
+)
+
+/** 复刻件 ⌫ 的归一化五边形（左尖 → 右上 → 右下），真机键帽实测。 */
+private val REPLICA_BACKSPACE_OUTLINE = listOf(
+    0f to 0.54f,
+    0.3f to 0f,
+    1f to 0f,
+    1f to 1f,
+    0.3f to 1f
+)
+
+/** ⌫ 内部那个 ×：两笔分开画，张开不闭合。 */
+private val REPLICA_BACKSPACE_CROSS = listOf(
+    listOf(0.476f to 0.324f, 0.728f to 0.703f),
+    listOf(0.728f to 0.324f, 0.476f to 0.703f)
+)
+
+/** 把归一化顶点映射进 [left]/[top]/[width]/[height] 框出的矩形。 */
+private fun replicaGlyphPath(
+    points: List<Pair<Float, Float>>,
+    left: Float,
+    top: Float,
+    width: Float,
+    height: Float,
+    close: Boolean = true
+): Path = Path().apply {
+    points.forEachIndexed { index, (nx, ny) ->
+        val x = left + nx * width
+        val y = top + ny * height
+        if (index == 0) moveTo(x, y) else lineTo(x, y)
+    }
+    if (close) close()
+}
+
+/**
+ * 描边空心画一个归一化顶点集，尺寸与笔画都取自 [ReplicaGeometry] 里的真机实测值。
+ *
+ * 接头固定用 [StrokeJoin.Round]：⇧ 两肩是尖角，斜接会把外沿顶出去，字形就比真机胖。
+ */
+@Composable
+private fun ReplicaGlyph(
+    points: List<Pair<Float, Float>>,
+    color: ComposeColor,
+    pathWidthPx: Float,
+    pathHeightPx: Float,
+    strokePx: Float
+) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val left = (size.width - pathWidthPx) / 2f
+        val top = (size.height - pathHeightPx) / 2f
+        drawPath(
+            path = replicaGlyphPath(points, left, top, pathWidthPx, pathHeightPx),
+            color = color,
+            style = Stroke(width = strokePx, join = StrokeJoin.Round)
+        )
+    }
+}
+
+/** 候选条末尾的展开箭头 ⌄：真机墨迹框 44×26、笔画 6、圆角接头。 */
+@Composable
+private fun ReplicaMoreGlyph(color: ComposeColor, geometry: ReplicaGeometry) {
+    val density = LocalDensity.current
+    Canvas(
+        modifier = Modifier.size(
+            width = with(density) { geometry.candidateMoreWidthPx.toDp() },
+            height = with(density) { geometry.candidateMoreHeightPx.toDp() }
+        )
+    ) {
+        val stroke = geometry.candidateMoreStrokePx
+        val half = stroke / 2f
+        // 路径盒就是墨迹框每边内缩半个描边，外沿才正好落在 44×26 上。
+        val path = Path().apply {
+            moveTo(half, half)
+            lineTo(size.width / 2f, size.height - half)
+            lineTo(size.width - half, half)
+        }
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+    }
+}
+
+/** 真机 ⇧ 键帽字形。 */
+@Composable
+private fun ReplicaShiftGlyph(color: ComposeColor, geometry: ReplicaGeometry) {
+    ReplicaGlyph(
+        points = REPLICA_SHIFT_OUTLINE,
+        color = color,
+        pathWidthPx = geometry.shiftPathWidthPx,
+        pathHeightPx = geometry.shiftPathHeightPx,
+        strokePx = geometry.shiftStrokePx
+    )
+}
+
+/** 真机 ⌫ 键帽字形：左侧五边形外框加内部一个 ×。 */
+@Composable
+private fun ReplicaBackspaceGlyph(color: ComposeColor, geometry: ReplicaGeometry) {
+    ReplicaGlyph(
+        points = REPLICA_BACKSPACE_OUTLINE,
+        color = color,
+        pathWidthPx = geometry.backspacePathWidthPx,
+        pathHeightPx = geometry.backspacePathHeightPx,
+        strokePx = geometry.backspaceStrokePx
+    )
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val left = (size.width - geometry.backspacePathWidthPx) / 2f
+        val top = (size.height - geometry.backspacePathHeightPx) / 2f
+        val stroke = Stroke(width = geometry.backspaceCrossStrokePx)
+        REPLICA_BACKSPACE_CROSS.forEach { crossLine ->
+            drawPath(
+                path = replicaGlyphPath(
+                    crossLine,
+                    left,
+                    top,
+                    geometry.backspacePathWidthPx,
+                    geometry.backspacePathHeightPx,
+                    close = false
+                ),
+                color = color,
+                style = stroke
+            )
+        }
+    }
+}
+
+/**
+ * 二级页底部那块手绘键盘复刻件。
+ *
+ * 用途只有一个：对着这台机器的真实屏幕圆角比 [cornerRadius] / [bottomCornerRadius]。所以它跟
+ * 真机同尺寸、同材质、同圆角绘制路径 —— 面板走 [weTypePreviewBloom] 与 [WeTypeSmoothRoundedShape]，
+ * 材质与按键色的取法与 [PreviewCard] 完全同源，改「键盘外观」这里每个像素都跟着变。
+ *
+ * 竖直按 [geometry] 缩放，横向按窗口宽度缩放。面板铺满整个 IME 窗口高（含底部那条系统抬高），
+ * 与真机一致：真机背板也是从键盘内容顶端一直铺到窗口底边（见 `resolveWeTypeBackgroundBounds`）；
+ * 按键只排在键盘本体区域内，系统抬高那条不放任何键。
+ *
+ * 分两层画，跟真机一样：底下是 [wallpaper]（用户自己挑的「手机壁纸」，用来验面板透明度），
+ * 上面才是半透明的键盘面板。
+ *
+ * 工具栏那一行跟真机一样是**二选一**的：没组词时画 [toolbarStrip]（真机工具栏那一行的原样截图，
+ * 见 `KeyboardToolbarStrip`）加 [toolbarLogo]；一进组词整行换成候选词，logo 不画 —— 真机上这两个
+ * 状态共用同一个宿主视图 `ImeCandidateView`，第一个候选的选中底正好压在 logo 那一格上。
+ * 条带是快照，换 logo、改深浅色都得等下次弹键盘才刷新。
+ *
+ * 点任意键会往前推一格 [demoClickCount]，在两组候选词之间来回切，模拟真机候选条的排版与选中高亮；
+ * 点 ⌫ 则是「退出组词」，直接退回工具栏条带那一态。
+ * 第四行键帽画得出来但键面留空：真机上那一行没能可靠辨认，宁可留空也不画错。
+ */
+@Composable
+private fun KeyboardReplica(
+    geometry: ReplicaGeometry,
+    color: Int,
+    blurRadius: Int,
+    cornerRadius: Int,
+    bottomCornerRadius: Int,
+    keyCornerRadius: Int,
+    candidateBackgroundCorner: Float,
+    candidateBackgroundAlpha: Int,
+    candidateBackgroundLeftMarginDp: Int,
+    edgeHighlightEnabled: Boolean,
+    edgeHighlightIntensity: Int,
+    keyColor: Int,
+    isDark: Boolean,
+    hyperMaterialEnabled: Boolean,
+    showCornerGuide: Boolean,
+    accentColor: Int,
+    toolbarStrip: Bitmap?,
+    toolbarLogo: Bitmap?,
+    nativeLogo: Bitmap?,
+    logoMode: ReplicaLogoMode,
+    wallpaper: Bitmap?
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    // 系统材质开时预览显示 fallback 底色，与 PreviewCard 同口径。
+    val displayColor = if (hyperMaterialEnabled) WeTypeSystemMaterials.fallbackColor(isDark) else color
+    val topCornerDp = cornerRadius.coerceIn(0, WeTypeSettings.MAX_CORNER_RADIUS).dp
+    val bottomCornerDp = bottomCornerRadius.coerceIn(0, WeTypeSettings.MAX_BOTTOM_CORNER_RADIUS).dp
+    val topCornerPx = with(density) { topCornerDp.toPx() }
+    val bottomCornerPx = with(density) { bottomCornerDp.toPx() }
+    val panelShape = WeTypeSmoothRoundedShape(
+        WeTypeCornerRadii(
+            topLeft = topCornerPx,
+            topRight = topCornerPx,
+            bottomRight = bottomCornerPx,
+            bottomLeft = bottomCornerPx
+        )
+    )
+    val weTypeFontFamily = remember(context) {
+        FontFamily(
+            Font(
+                path = "WE-Regular.ttf",
+                assetManager = context.assets
+            )
+        )
+    }
+    val keyLabelSize = with(density) { geometry.keyLabelPx.roundToInt().toSp() }
+    // 键面字形压在键帽上，所以按键帽色取可读色，而不是按面板色。
+    val keyTextColor = previewTextColor(keyColor)
+    // 预览里真正画哪颗 Logo。总开关关 → 宿主那颗原生的（颜色就是品牌强调色）；
+    // 显示关 → 一颗都不画。
+    val displayedLogo = when (logoMode) {
+        ReplicaLogoMode.Custom -> toolbarLogo
+        ReplicaLogoMode.Native -> nativeLogo
+        ReplicaLogoMode.Hidden -> null
+    }
+    // 裁掉条带里 Logo 那一格的路径：四周各外扩 2px，免得快照里那颗 Logo 的抗锯齿边剩一圈毛边。
+    // 三档都要裁：条带是快照，里面那颗是上一轮弹键盘时宿主/模块画上去的，不裁掉就会从叠加图
+    // 的透明边（矢量回退的字面比 90px 的格子小）或者空白底下透出来。实测裁 94px 见方能盖住它。
+    val stripLogoHole = remember(geometry) {
+        val left = (geometry.toolbarLogoLeftPx - 2).toFloat()
+        val top = (geometry.toolbarLogoTopPx - geometry.toolbarTopPx - 2).toFloat()
+        Path().apply {
+            addRect(
+                Rect(
+                    left = left,
+                    top = top,
+                    right = left + geometry.toolbarLogoSizePx + 4f,
+                    bottom = top + geometry.toolbarLogoSizePx + 4f
+                )
+            )
+        }
+    }
+    // 点一下键往前推一格：0 是还没点过（照常显示真机工具栏条带），之后在两组候选词之间来回切。
+    var demoClickCount by remember { mutableIntStateOf(0) }
+    val candidateLabels = replicaCandidateLabels(demoClickCount)
+    val candidateLabelSize = with(density) { geometry.candidateLabelPx.roundToInt().toSp() }
+    // 选中态：底用键帽色（实测 240，与键帽 242 同源），字直接用品牌强调色本身
+    // —— 真机实测那条「吃」就是 (47,128,237)，不是按底算出来的可读色。
+    val candidateHighlightTextColor = ComposeColor(accentColor)
+    val candidateIdleTextColor = previewTextColor(displayColor)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(with(density) { geometry.totalHeightPx.toDp() })
+            .clearAndSetSemantics {}
+    ) {
+        // 第一层：手机壁纸。真机键盘面板是半透明的，底下不铺点东西就完全看不出透明度生效没有。
+        if (wallpaper != null) {
+            Image(
+                bitmap = wallpaper.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize()
+            )
+        }
+        // 第二层：键盘面板本体，铺满整个 IME 窗口高（含底部那条系统抬高）。
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .weTypePreviewBloom(
+                    color = displayColor,
+                    topCornerRadius = topCornerDp,
+                    bottomCornerRadius = bottomCornerDp,
+                    edgeHighlightEnabled = edgeHighlightEnabled &&
+                        (!hyperMaterialEnabled || WeTypeSystemMaterials.isColorOsBackend()),
+                    edgeHighlightIntensity = edgeHighlightIntensity,
+                    isDark = isDark
+                )
+                .clip(panelShape)
+        ) {
+            if (hyperMaterialEnabled) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(ComposeColor(displayColor))
+                )
+            } else {
+                // 磨砂背板。真机的毛玻璃模糊的是键盘底下那层东西，所以有壁纸时模糊的就是壁纸本身；
+                // 没设壁纸才退回内置纹理。纹理是不透明 JPG，拿它当背板会把壁纸整片盖死，
+                // 底下的不透明度滑块也就白调了。
+                val backdrop: Painter = wallpaper
+                    ?.let { BitmapPainter(it.asImageBitmap()) }
+                    ?: painterResource(R.drawable.natural_texture_004)
+                Image(
+                    painter = backdrop,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .blur((blurRadius / 3f).coerceAtLeast(0f).dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(ComposeColor(color))
+                )
+            }
+            val toolbarTopDp = with(density) { geometry.toolbarTopPx.toDp() }
+            val toolbarHeightDp = with(density) { geometry.toolbarHeightPx.toDp() }
+            // 开始点键模拟候选词之后就把真机条带撤掉，免得它那排图标跟候选词叠在一起。
+            if (toolbarStrip != null && candidateLabels.isEmpty()) {
+                Image(
+                    bitmap = toolbarStrip.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier
+                        .offset(y = toolbarTopDp)
+                        .fillMaxWidth()
+                        .height(toolbarHeightDp)
+                        .drawWithContent {
+                            val hole = stripLogoHole
+                            if (hole == null) {
+                                this@drawWithContent.drawContent()
+                            } else {
+                                clipPath(hole, clipOp = ClipOp.Difference) {
+                                    this@drawWithContent.drawContent()
+                                }
+                            }
+                        }
+                )
+            }
+            // logo 只在没组词时画在真机 logo 位上：真机一进组词，候选条整行接管，
+            // 第一个候选的选中底正好压在 logo 那一格上（条带是快照，换 logo、改深浅色要等下次弹键盘才刷新）。
+            if (displayedLogo != null && candidateLabels.isEmpty()) {
+                Image(
+                    bitmap = displayedLogo.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .offset(
+                            x = with(density) { geometry.toolbarLogoLeftPx.toDp() },
+                            y = with(density) { geometry.toolbarLogoTopPx.toDp() }
+                        )
+                        .size(with(density) { geometry.toolbarLogoSizePx.toDp() })
+                )
+            }
+            if (candidateLabels.isNotEmpty()) {
+                val itemPaddingDp = with(density) { geometry.candidateItemPaddingPx.toDp() }
+                val highlightHeightDp = with(density) { geometry.candidateHighlightHeightPx.toDp() }
+                // 第一项左沿：行基础左沿 + 「候选背景左边距」× density（宿主就是 applyDimension(DIP, …)）。
+                val candidateRowLeftDp = with(density) {
+                    replicaCandidateRowLeftPx(
+                        baseLeftPx = geometry.candidateRowLeftPx,
+                        marginDp = candidateBackgroundLeftMarginDp,
+                        density = this.density
+                    ).toDp()
+                }
+                // 选中底：正圆弧角（宿主自己 drawRoundRect），半径口径见 replicaCandidateCornerPx。
+                val highlightShape = RoundedCornerShape(
+                    with(density) {
+                        replicaCandidateCornerPx(
+                            cornerSetting = candidateBackgroundCorner,
+                            highlightHeightPx = geometry.candidateHighlightHeightPx
+                        ).toDp()
+                    }
+                )
+                // 基色是宿主自己的候选底颜色（模块只压 alpha），不是键帽色。
+                val highlightFill = ComposeColor(replicaCandidateBaseColor(isDark)).copy(
+                    alpha = replicaCandidateFillAlpha(candidateBackgroundAlpha)
+                )
+                // 候选词自己摆基线画，不交给 Text 居中 —— CJK 回退字体的行盒上下不对称，
+                // 居中会把 CJK 墨迹压到真机位置下方 0.17em。先量好排版盒，才知道选中底要拉多宽。
+                val candidateTextStyle = remember(candidateLabelSize, weTypeFontFamily) {
+                    TextStyle(fontSize = candidateLabelSize, fontFamily = weTypeFontFamily)
+                }
+                val candidateMeasurer = rememberTextMeasurer()
+                val candidateLayouts = remember(candidateLabels, candidateTextStyle) {
+                    candidateLabels.map {
+                        candidateMeasurer.measure(AnnotatedString(it), candidateTextStyle)
+                    }
+                }
+                val candidateBaselinePx = with(density) { geometry.candidateBaselineOffsetPx }
+                Row(
+                    modifier = Modifier
+                        .offset(
+                            x = candidateRowLeftDp,
+                            y = toolbarTopDp + with(density) { geometry.candidateContentDropPx.toDp() }
+                        )
+                        .height(with(density) { geometry.candidateRowHeightPx.toDp() }),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(
+                            with(density) { geometry.candidateItemGapPx.toDp() }
+                        )
+                    ) {
+                        candidateLayouts.forEachIndexed { index, layout ->
+                            // 真机候选条：只有第一个候选坐在一块方底上、字用强调色；其余是纯文字。
+                            val highlighted = index == 0
+                            Box(
+                                modifier = Modifier
+                                    .height(highlightHeightDp)
+                                    .then(
+                                        if (highlighted) {
+                                            Modifier
+                                                .clip(highlightShape)
+                                                .background(highlightFill)
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .padding(horizontal = itemPaddingDp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Canvas(
+                                    modifier = Modifier.size(
+                                        width = with(density) { layout.size.width.toDp() },
+                                        height = with(density) { layout.size.height.toDp() }
+                                    )
+                                ) {
+                                    // 画布竖直居中，所以基线 = 画布中线再往下 candidateBaselinePx。
+                                    val baselineY = size.height / 2f + candidateBaselinePx
+                                    drawText(
+                                        textLayoutResult = layout,
+                                        color = if (highlighted) {
+                                            candidateHighlightTextColor
+                                        } else {
+                                            candidateIdleTextColor
+                                        },
+                                        topLeft = Offset(0f, baselineY - layout.firstBaseline)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(
+                        Modifier.width(with(density) { geometry.candidateDividerGapPx.toDp() })
+                    )
+                    Box(
+                        modifier = Modifier
+                            .width(with(density) { geometry.candidateDividerWidthPx.toDp() })
+                            .height(with(density) { geometry.candidateDividerHeightPx.toDp() })
+                            .background(candidateIdleTextColor.copy(alpha = 0.2f))
+                    )
+                    Spacer(Modifier.width(with(density) { geometry.candidateMoreGapPx.toDp() }))
+                    ReplicaMoreGlyph(
+                        color = candidateIdleTextColor.copy(alpha = 0.6f),
+                        geometry = geometry
+                    )
+                }
+            }
+            geometry.rows.forEachIndexed { rowIndex, row ->
+                val faces = REPLICA_KEY_FACES.getOrNull(rowIndex).orEmpty()
+                val rowTopDp = with(density) { row.topPx.toDp() }
+                val keyHeightDp = with(density) { row.heightPx.toDp() }
+                row.keys.forEachIndexed { keyIndex, key ->
+                    val face = faces.getOrNull(keyIndex) ?: ReplicaKeyFace.Blank
+                    // 真机键帽是正圆弧角矩形（宿主自己 drawRoundRect 画的），不是连续圆角，
+                    // 半径口径见 replicaKeyCornerPx：像素值 = min(设置 + 10, 键宽 / 2)。
+                    val keyShape = RoundedCornerShape(
+                        with(density) { replicaKeyCornerPx(keyCornerRadius, key.widthPx).toDp() }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = with(density) { key.leftPx.toDp() },
+                                y = rowTopDp
+                            )
+                            .size(
+                                width = with(density) { key.widthPx.toDp() },
+                                height = keyHeightDp
+                            )
+                            .clip(keyShape)
+                            .background(ComposeColor(keyColor))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {
+                                    demoClickCount = replicaClickCountAfter(face, demoClickCount)
+                                }
+                            )
+                    ) {
+                        when (face) {
+                            is ReplicaKeyFace.Letter -> Text(
+                                text = face.text,
+                                color = keyTextColor,
+                                fontSize = keyLabelSize,
+                                fontFamily = weTypeFontFamily,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                            ReplicaKeyFace.Shift -> ReplicaShiftGlyph(keyTextColor, geometry)
+                            ReplicaKeyFace.Backspace -> ReplicaBackspaceGlyph(keyTextColor, geometry)
+                            ReplicaKeyFace.Blank -> Unit
+                        }
+                    }
+                }
+            }
+            if (showCornerGuide) {
+                KeyboardCornerGuide(
+                    screenCornerRadiusPx = resolveScreenCornerRadiusPx(LocalView.current),
+                    panelBottomCornerPx = bottomCornerPx
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 底部两角的参考弧：蓝线是这台机器屏幕自己的圆角，红线是当前配置的
+ * [bottomCornerRadius]。两条贴合即说明配置跟屏幕对了。
+ */
+@Composable
+private fun KeyboardCornerGuide(screenCornerRadiusPx: Float?, panelBottomCornerPx: Float) {
+    val strokeWidth = with(LocalDensity.current) { 2.dp.toPx() }
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val bottom = size.height
+        fun drawCornerPair(radius: Float, color: ComposeColor) {
+            if (radius <= 0f || radius > size.width / 2f || radius > bottom) return
+            drawArc(
+                color = color,
+                startAngle = 90f,
+                sweepAngle = 90f,
+                useCenter = false,
+                topLeft = Offset(0f, bottom - radius),
+                size = Size(radius, radius),
+                style = Stroke(width = strokeWidth)
+            )
+            drawArc(
+                color = color,
+                startAngle = 0f,
+                sweepAngle = 90f,
+                useCenter = false,
+                topLeft = Offset(size.width - radius, bottom - radius),
+                size = Size(radius, radius),
+                style = Stroke(width = strokeWidth)
+            )
+        }
+        screenCornerRadiusPx?.let { drawCornerPair(it, ComposeColor(0xFF2196F3)) }
+        drawCornerPair(panelBottomCornerPx, ComposeColor(0xFFE53935))
     }
 }
 
@@ -1754,40 +3118,46 @@ private fun PreviewSection(
     lightKeyColor: Int,
     darkKeyColor: Int,
     isDark: Boolean,
-    hyperMaterialEnabled: Boolean = false
+    hyperMaterialEnabled: Boolean = false,
+    pinned: Boolean = false,
+    onTogglePin: (() -> Unit)? = null,
+    keyboardPreviewEnabled: Boolean = false,
+    onToggleKeyboardPreview: (() -> Unit)? = null,
+    onToggleDarkMode: (() -> Unit)? = null
 ) {
-    Card(
-        modifier = Modifier.padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(0.dp),
-        colors = CardDefaults.defaultColors(
-            color = ComposeColor.Transparent
+    val pinToggleModifier = if (onTogglePin != null) {
+        Modifier.clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = onTogglePin
         )
+    } else {
+        Modifier
+    }
+    Card(
+        modifier = Modifier
+            .padding(horizontal = 16.dp)
+            .then(pinToggleModifier),
+        insideMargin = PaddingValues(0.dp)
     ) {
-        Box(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Image(
-                painter = painterResource(R.drawable.natural_texture_004),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.matchParentSize()
-            )
-            Column {
-                PreviewCard(
-                    color = color,
-                    blurRadius = blurRadius,
-                    cornerRadius = cornerRadius,
-                    bottomCornerRadius = bottomCornerRadius,
-                    keyCornerRadius = keyCornerRadius,
-                    edgeHighlightEnabled = edgeHighlightEnabled,
-                    edgeHighlightIntensity = edgeHighlightIntensity,
-                    lightKeyColor = lightKeyColor,
-                    darkKeyColor = darkKeyColor,
-                    isDark = isDark,
-                    hyperMaterialEnabled = hyperMaterialEnabled
-                )
-            }
-        }
+        PreviewCard(
+            color = color,
+            blurRadius = blurRadius,
+            cornerRadius = cornerRadius,
+            bottomCornerRadius = bottomCornerRadius,
+            keyCornerRadius = keyCornerRadius,
+            edgeHighlightEnabled = edgeHighlightEnabled,
+            edgeHighlightIntensity = edgeHighlightIntensity,
+            lightKeyColor = lightKeyColor,
+            darkKeyColor = darkKeyColor,
+            isDark = isDark,
+            hyperMaterialEnabled = hyperMaterialEnabled,
+            showPinToggle = onTogglePin != null,
+            pinned = pinned,
+            keyboardPreviewEnabled = keyboardPreviewEnabled,
+            onToggleKeyboardPreview = onToggleKeyboardPreview,
+            onToggleDarkMode = onToggleDarkMode
+        )
     }
 }
 
@@ -1803,7 +3173,12 @@ private fun PreviewCard(
     lightKeyColor: Int,
     darkKeyColor: Int,
     isDark: Boolean,
-    hyperMaterialEnabled: Boolean = false
+    hyperMaterialEnabled: Boolean = false,
+    showPinToggle: Boolean = false,
+    pinned: Boolean = false,
+    keyboardPreviewEnabled: Boolean = false,
+    onToggleKeyboardPreview: (() -> Unit)? = null,
+    onToggleDarkMode: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     // 系统材质开时预览显示 fallback 底色（真机材质在受支持的 ROM 上生效）。
@@ -1833,6 +3208,28 @@ private fun PreviewCard(
     )
     val previewKeyColor = if (isDark) darkKeyColor else lightKeyColor
     val previewKeyShape = ContinuousRoundedRectangle(keyCornerRadius.dp)
+    // 真机键盘预览的读数：屏幕圆角与宿主实测键盘高度，都是「配置跟这台机器贴不贴」的依据。
+    val previewView = LocalView.current
+    val previewDensity = LocalDensity.current
+    var screenCornerRadiusPx by remember(previewView) {
+        mutableStateOf(resolveScreenCornerRadiusPx(previewView))
+    }
+    LaunchedEffect(previewView) {
+        // 首次组合时窗口 insets 可能还没下发，等一帧补读一次。
+        if (screenCornerRadiusPx == null) {
+            delay(120L)
+            screenCornerRadiusPx = resolveScreenCornerRadiusPx(previewView)
+        }
+    }
+    val screenCornerRadiusDp = screenCornerRadiusPx?.let { with(previewDensity) { it.toDp().value } }
+    val hostKeyboardHeightPx = if (keyboardPreviewEnabled) {
+        val windowHeightPx = with(previewDensity) {
+            LocalConfiguration.current.screenHeightDp.dp.roundToPx()
+        }
+        WeTypeKeyboardMetrics.keyboardHeightForWindow(context, windowHeightPx)
+    } else {
+        null
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1882,7 +3279,7 @@ private fun PreviewCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -1934,6 +3331,81 @@ private fun PreviewCard(
                             color = previewTextColor(displayColor).copy(alpha = 0.7f),
                             style = MiuixTheme.textStyles.body2
                         )
+                        if (keyboardPreviewEnabled) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = buildString {
+                                    append(
+                                        hostKeyboardHeightPx?.let { "键盘高度 ${it}px" }
+                                            ?: "键盘高度 未测到"
+                                    )
+                                    append(" · ")
+                                    append(
+                                        screenCornerRadiusDp?.let { "屏幕圆角 ${it.roundToInt()}dp" }
+                                            ?: "屏幕圆角 未知"
+                                    )
+                                },
+                                color = previewTextColor(displayColor).copy(alpha = 0.7f),
+                                style = MiuixTheme.textStyles.body2
+                            )
+                        }
+                    }
+                    // 三个图标顶到键盘背景右上角，与模式标签同一行：切浅色/深色、召唤真机键盘、固定预览。
+                    Row(
+                        modifier = Modifier.padding(start = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (onToggleDarkMode != null) {
+                            Icon(
+                                imageVector = MiuixIcons.Theme,
+                                contentDescription = if (isDark) {
+                                    "切换到浅色预览"
+                                } else {
+                                    "切换到深色预览"
+                                },
+                                tint = previewTextColor(displayColor).copy(alpha = 0.85f),
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = onToggleDarkMode
+                                    )
+                            )
+                        }
+                        if (onToggleKeyboardPreview != null) {
+                            Icon(
+                                imageVector = MiuixIcons.GridView,
+                                contentDescription = if (keyboardPreviewEnabled) {
+                                    "收起真机键盘预览"
+                                } else {
+                                    "召唤真机键盘预览"
+                                },
+                                tint = previewTextColor(displayColor).copy(
+                                    alpha = if (keyboardPreviewEnabled) 0.9f else 0.45f
+                                ),
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = onToggleKeyboardPreview
+                                    )
+                            )
+                        }
+                        if (showPinToggle) {
+                            Icon(
+                                imageVector = if (pinned) MiuixIcons.Unpin else MiuixIcons.Pin,
+                                contentDescription = if (pinned) {
+                                    "取消固定预览"
+                                } else {
+                                    "把预览固定在标题栏下方"
+                                },
+                                tint = previewTextColor(displayColor).copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -2184,14 +3656,14 @@ private fun SliderPreferenceItem(
     max: Int,
     enabled: Boolean = true,
     onValueChange: (Int) -> Unit
-) = SliderPreferenceItem(
-    title = title,
+) = SliderPreference(
     value = value.toFloat(),
-    range = 0f..max.toFloat(),
-    step = 1f,
+    onValueChange = { onValueChange(it.roundToInt()) },
+    title = title,
+    valueText = value.toString(),
     enabled = enabled,
-    format = { it.roundToInt().toString() },
-    onValueChange = { onValueChange(it.roundToInt()) }
+    valueRange = 0f..max.toFloat(),
+    steps = (max - 1).coerceAtLeast(0)
 )
 
 @Composable
@@ -2203,38 +3675,15 @@ private fun SliderPreferenceItem(
     enabled: Boolean = true,
     format: (Float) -> String,
     onValueChange: (Float) -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(if (enabled) 1f else 0.38f)
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = title,
-                style = MiuixTheme.textStyles.main,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = format(value),
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.main
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Slider(
-            enabled = enabled,
-            value = value.coerceIn(range),
-            onValueChange = { onValueChange(((it / step).roundToInt() * step).coerceIn(range)) },
-            valueRange = range,
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = title }
-        )
-    }
-}
+) = SliderPreference(
+    value = value.coerceIn(range),
+    onValueChange = { onValueChange(((it / step).roundToInt() * step).coerceIn(range)) },
+    title = title,
+    valueText = format(value),
+    enabled = enabled,
+    valueRange = range,
+    steps = (((range.endInclusive - range.start) / step).roundToInt() - 1).coerceAtLeast(0)
+)
 
 @Composable
 private fun GlassOverrideEditor(
@@ -2250,9 +3699,9 @@ private fun GlassOverrideEditor(
     val radii = read(GlassOverrideField.BLUR_RADII)?.blurRadii ?: GlassSliderParameter.startingBlurRadii()
     val bloom = read(GlassOverrideField.BLOOM)?.bloom ?: GlassSliderParameter.startingBloom()
     val valid = GlassOverrideField.entries.all { read(it) != null }
-    MiuixSwitchWidget(
+    SwitchPreference(
         title = stringResource(R.string.settings_glass_custom),
-        description = stringResource(
+        summary = stringResource(
             if (enabled) R.string.settings_glass_custom_desc else R.string.settings_glass_unavailable
         ),
         checked = glass != null,
@@ -2404,115 +3853,11 @@ private fun GlassRawOverrideEditor(
     }
 }
 
-@Composable
-private fun MiuixSwitchWidget(
-    title: String,
-    description: String? = null,
-    checked: Boolean,
-    enabled: Boolean = true,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    val toggleAction = {
-        if (enabled) onCheckedChange(!checked)
-    }
-
-    BasicComponent(
-        title = title,
-        modifier = Modifier.alpha(if (enabled) 1f else 0.38f),
-        enabled = enabled,
-        summary = description,
-        onClick = toggleAction,
-        endActions = {
-            Switch(
-                enabled = enabled,
-                checked = checked,
-                onCheckedChange = onCheckedChange
-            )
-        }
-    )
-}
-
 private fun previewTextColor(color: Int): ComposeColor =
     if (isLightColor(color)) ComposeColor.Black else ComposeColor.White
 
 private fun parseLogoCustomColor(input: String): Int {
     return parseRgbColor(input) ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR
-}
-
-@Composable
-private fun MiuixDropdownPreference(
-    title: String,
-    items: List<String>,
-    selectedIndex: Int,
-    onSelectedIndexChange: (Int) -> Unit,
-    modifier: Modifier = Modifier,
-    valueMaxWidth: Dp = 132.dp
-) {
-    var expanded by remember { mutableStateOf(false) }
-    var holdDown by remember { mutableStateOf(false) }
-    val hapticFeedback = LocalHapticFeedback.current
-    val entry = remember(items, selectedIndex) {
-        DropdownEntry(
-            items = items.mapIndexed { index, text ->
-                DropdownItem(
-                    text = text,
-                    selected = index == selectedIndex,
-                    onClick = { onSelectedIndexChange(index) }
-                )
-            }
-        )
-    }
-    val actionColor = MiuixTheme.colorScheme.onSurfaceVariantActions
-    val selectedText = entry.items.firstOrNull { it.selected }?.text.orEmpty()
-
-    BasicComponent(
-        modifier = modifier,
-        endActions = {
-            Text(
-                text = selectedText,
-                modifier = Modifier
-                    .padding(end = 8.dp)
-                    .widthIn(max = valueMaxWidth)
-                    .align(Alignment.CenterVertically)
-                    .basicMarquee(),
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Clip,
-                fontSize = MiuixTheme.textStyles.body2.fontSize,
-                color = actionColor,
-                textAlign = TextAlign.End
-            )
-            DropdownArrowEndAction(actionColor = actionColor)
-            OverlayDropdownPopup(
-                entry = entry,
-                show = expanded,
-                onDismiss = { expanded = false },
-                onDismissFinished = { holdDown = false },
-                maxHeight = null,
-                dropdownColors = DropdownDefaults.dropdownColors(),
-                renderInRootScaffold = true,
-                collapseOnSelection = true
-            )
-        },
-        onClick = {
-            expanded = !expanded
-            if (expanded) {
-                holdDown = true
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.ContextClick)
-            }
-        },
-        role = Role.DropdownList,
-        holdDownState = holdDown
-    ) {
-        Text(
-            text = title,
-            fontSize = MiuixTheme.textStyles.headline1.fontSize,
-            fontWeight = FontWeight.Medium,
-            color = MiuixTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
 }
 
 private fun formatRgb(color: Int): String = String.format("#%06X", color and 0xFFFFFF)
@@ -2606,27 +3951,27 @@ private fun LazyListScope.GestureTabContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                MiuixSwitchWidget(
+                SwitchPreference(
                     title = "启用 26 键 QWERTY 下滑手势",
-                    description = "全键盘按键向下滑动触发绑定动作 (默认 Z/X/C/V)",
+                    summary = "全键盘按键向下滑动触发绑定动作 (默认 Z/X/C/V)",
                     checked = qwertyGestureEnabled,
                     onCheckedChange = onQwertyGestureEnabledChange
                 )
-                MiuixSwitchWidget(
+                SwitchPreference(
                     title = "启用九宫格 T9 下滑手势",
-                    description = "支持 1~9 号键位向下滑动触发绑定动作",
+                    summary = "支持 1~9 号键位向下滑动触发绑定动作",
                     checked = t9GestureEnabled,
                     onCheckedChange = onT9GestureEnabledChange
                 )
-                MiuixSwitchWidget(
+                SwitchPreference(
                     title = "QWERTY 手势触觉反馈",
-                    description = "26 键手势触发时调用键盘触觉振动",
+                    summary = "26 键手势触发时调用键盘触觉振动",
                     checked = gestureVibration,
                     onCheckedChange = onGestureVibrationChange
                 )
-                MiuixSwitchWidget(
+                SwitchPreference(
                     title = "T9 九宫格手势触觉反馈",
-                    description = "九宫格手势触发时调用键盘触觉振动",
+                    summary = "九宫格手势触发时调用键盘触觉振动",
                     checked = t9GestureVibration,
                     onCheckedChange = onT9GestureVibrationChange
                 )
@@ -2666,9 +4011,9 @@ private fun LazyListScope.GestureTabContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                MiuixSwitchWidget(
+                SwitchPreference(
                     title = "显示按键手势标签",
-                    description = "在已绑定手势的按键上显示动作名称角标",
+                    summary = "在已绑定手势的按键上显示动作名称角标",
                     checked = showGestureKeyLabels,
                     onCheckedChange = onShowGestureKeyLabelsChange
                 )
@@ -2684,7 +4029,7 @@ private fun LazyListScope.GestureTabContent(
                     max = 255,
                     onValueChange = { onGestureLabelAlphaChange(it.coerceIn(0, 255)) }
                 )
-                MiuixDropdownPreference(
+                OverlayDropdownPreference(
                     title = "标签位置",
                     items = listOf("底部", "顶部"),
                     selectedIndex = when (gestureLabelPosition) {
@@ -2990,101 +4335,79 @@ private fun GestureKeyBindingEditor(
         val keyName = if (targetChar == ' ') "空格 (Space)" else targetChar.uppercaseChar().toString()
         val scrollState = rememberScrollState()
 
-        Dialog(onDismissRequest = { editingKey = null }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                insideMargin = PaddingValues(16.dp)
-            ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "设置按键 [$keyName] 下滑动作",
-                        style = MiuixTheme.textStyles.title4,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "选择下滑此按键时触发的操作 (共 25 种动作)",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 400.dp)
-                            .verticalScroll(scrollState)
-                    ) {
-                        GestureAction.entries.forEach { action ->
-                            val isSelected = action == currentAction
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (isSelected) MiuixTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                        else ComposeColor.Transparent
-                                    )
-                                    .clickable {
-                                        val newMap = bindings.toMutableMap()
-                                        if (action == GestureAction.None) {
-                                            newMap.remove(targetChar)
-                                        } else {
-                                            newMap[targetChar] = action
-                                        }
-                                        onBindingsChange(WeTypeGestureSettings.serializeBindings(newMap))
-                                        editingKey = null
-                                        Toast.makeText(context, "[$keyName] 已绑定: ${action.title}", Toast.LENGTH_SHORT).show()
+        OverlayDialog(
+            show = true,
+            title = "设置按键 [$keyName] 下滑动作",
+            summary = "选择下滑此按键时触发的操作 (共 25 种动作)",
+            onDismissRequest = { editingKey = null }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(scrollState)
+                ) {
+                    GestureAction.entries.forEach { action ->
+                        val isSelected = action == currentAction
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (isSelected) MiuixTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                    else ComposeColor.Transparent
+                                )
+                                .clickable {
+                                    val newMap = bindings.toMutableMap()
+                                    if (action == GestureAction.None) {
+                                        newMap.remove(targetChar)
+                                    } else {
+                                        newMap[targetChar] = action
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "${action.id}. ${action.title}",
-                                        style = MiuixTheme.textStyles.main,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface
-                                    )
-                                    if (action.shortTitle.isNotEmpty() && action.shortTitle != "\\") {
-                                        Text(
-                                            text = "按键标签: ${action.shortTitle}",
-                                            style = MiuixTheme.textStyles.body2,
-                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
-                                        )
-                                    }
+                                    onBindingsChange(WeTypeGestureSettings.serializeBindings(newMap))
+                                    editingKey = null
+                                    Toast.makeText(context, "[$keyName] 已绑定: ${action.title}", Toast.LENGTH_SHORT).show()
                                 }
-                                if (isSelected) {
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${action.id}. ${action.title}",
+                                    style = MiuixTheme.textStyles.main,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface
+                                )
+                                if (action.shortTitle.isNotEmpty() && action.shortTitle != "\\") {
                                     Text(
-                                        text = "✓",
-                                        style = MiuixTheme.textStyles.title4,
-                                        color = MiuixTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
+                                        text = "按键标签: ${action.shortTitle}",
+                                        style = MiuixTheme.textStyles.body2,
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
                                     )
                                 }
                             }
+                            if (isSelected) {
+                                Text(
+                                    text = "✓",
+                                    style = MiuixTheme.textStyles.title4,
+                                    color = MiuixTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { editingKey = null }
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = "取消",
-                                style = MiuixTheme.textStyles.main,
-                                color = MiuixTheme.colorScheme.primary
-                            )
-                        }
-                    }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        text = "取消",
+                        onClick = { editingKey = null }
+                    )
                 }
             }
         }
@@ -3159,262 +4482,27 @@ private fun GestureKeyButton(
 }
 
 private fun LazyListScope.FeatureTabContent(
-    logoEnabled: Boolean,
-    onLogoEnabledChange: (Boolean) -> Unit,
-    logoShowEnabled: Boolean,
-    onLogoShowEnabledChange: (Boolean) -> Unit,
-    logoColorMode: String,
-    onLogoColorModeChange: (String) -> Unit,
-    logoCustomColorInput: String,
-    onLogoCustomColorInputChange: (String) -> Unit,
-    logoImageSummary: String,
-    onOpenLogoImage: () -> Unit,
-    onResetLogo: () -> Unit,
-    fontMode: Int,
-    onFontModeChange: (Int) -> Unit,
-    onResetFont: () -> Unit,
-    showCrossDeviceClipboard: Boolean,
-    onShowCrossDeviceClipboardChange: (Boolean) -> Unit,
-    removeClipboardRetentionLimit: Boolean,
-    onRemoveClipboardRetentionLimitChange: (Boolean) -> Unit,
-    removeClipboardTextLimit: Boolean,
-    onRemoveClipboardTextLimitChange: (Boolean) -> Unit,
-    clipboardSearchEnabled: Boolean,
-    onClipboardSearchEnabledChange: (Boolean) -> Unit,
-    clipboardSearchClearOnBack: Boolean,
-    onClipboardSearchClearOnBackChange: (Boolean) -> Unit,
-    clipboardImageAdjustRatio: Boolean,
-    onClipboardImageAdjustRatioChange: (Boolean) -> Unit,
-    clipboardImageCrop: Boolean,
-    onClipboardImageCropChange: (Boolean) -> Unit,
-    clipboardImageUniformRowHeight: Boolean,
-    onClipboardImageUniformRowHeightChange: (Boolean) -> Unit,
-    clipboardImageMaxCount: Int,
-    onClipboardImageMaxCountChange: (Int) -> Unit,
-    clipboardImageMaxSizeMb: Int,
-    onClipboardImageMaxSizeMbChange: (Int) -> Unit,
-    onOpenClipboardBackup: () -> Unit,
+    onOpenSubPage: (SettingsSubPage) -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
     onRestoreDefaults: () -> Unit
 ) {
-    // 1. 键盘 Logo 卡片
+    // 1. 剪贴板增强卡片
     item {
-        val context = LocalContext.current
-        val logoColorModeOptions = listOf(
-            WeTypeSettings.LOGO_COLOR_MODE_BRAND,
-            WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
-            WeTypeSettings.LOGO_COLOR_MODE_CUSTOM
-        )
-        SmallTitle(text = "键盘 Logo")
         Card(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
-            Column {
-                MiuixSwitchWidget(
-                    title = "启用 Logo 替换",
-                    description = "关闭则显示输入法原生 Logo",
-                    checked = logoEnabled,
-                    onCheckedChange = onLogoEnabledChange
-                )
-                MiuixSwitchWidget(
-                    title = "显示 Logo",
-                    description = "关闭则隐藏键盘上的 Logo",
-                    checked = logoShowEnabled,
-                    onCheckedChange = onLogoShowEnabledChange
-                )
-                MiuixDropdownPreference(
-                    title = "Logo 主体颜色",
-                    items = listOf(
-                        "跟随品牌色 (官方彩色)",
-                        "跟随系统 (自适应黑白)",
-                        "自定义颜色"
-                    ),
-                    selectedIndex = logoColorModeOptions.indexOf(logoColorMode).coerceAtLeast(0),
-                    onSelectedIndexChange = { index ->
-                        onLogoColorModeChange(logoColorModeOptions[index])
-                    }
-                )
-                if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Text(
-                            text = "自定义颜色",
-                            style = MiuixTheme.textStyles.main
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "输入 #RRGGBB，例如 #23C891",
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            style = MiuixTheme.textStyles.body2
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        TextField(
-                            value = logoCustomColorInput,
-                            onValueChange = { input ->
-                                val trimmed = input.trim()
-                                val hasPrefix = trimmed.startsWith("#")
-                                val body = trimmed.removePrefix("#")
-                                if (body.length <= 6 && body.matches(Regex("^[0-9a-fA-F]*$"))) {
-                                    onLogoCustomColorInputChange(if (hasPrefix || body.isNotEmpty()) "#$body" else "")
-                                }
-                            },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            label = "#RRGGBB"
-                        )
-                    }
-                }
-                BasicComponent(
-                    title = "自定义图片 Logo",
-                    summary = logoImageSummary,
-                    onClick = onOpenLogoImage
-                )
-                ArrowPreference(
-                    title = "重置 Logo 设置",
-                    summary = "恢复 Logo 默认开启、品牌色状态",
-                    onClick = {
-                        onResetLogo()
-                        Toast.makeText(context, "Logo 设置已重置", Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
+            ArrowPreference(
+                title = "剪贴板增强",
+                summary = "条目保留、搜索与图片缩略图，以及备份与恢复",
+                onClick = { onOpenSubPage(SettingsSubPage.CLIPBOARD) }
+            )
         }
     }
 
-    // 2. 字体替换卡片
-    item {
-        val context = LocalContext.current
-        val fontModeOptions = listOf(
-            WeTypeSettings.FONT_MODE_OFFICIAL,
-            WeTypeSettings.FONT_MODE_MODULE,
-            WeTypeSettings.FONT_MODE_SYSTEM
-        )
-        SmallTitle(text = "字体替换")
-        Card(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(0.dp)
-        ) {
-            Column {
-                MiuixDropdownPreference(
-                    title = "字体来源",
-                    items = listOf(
-                        "微信官方 (放行宿主原生字体)",
-                        "模块内置 (WE-Regular 优化字体)",
-                        "跟随系统 (系统默认字体 Typeface.DEFAULT)"
-                    ),
-                    selectedIndex = fontModeOptions.indexOf(fontMode).coerceAtLeast(0),
-                    onSelectedIndexChange = { index ->
-                        onFontModeChange(fontModeOptions[index])
-                    }
-                )
-                ArrowPreference(
-                    title = "重置字体设置",
-                    summary = "恢复跟随系统默认字体",
-                    onClick = {
-                        onResetFont()
-                        Toast.makeText(context, "字体设置已重置", Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
-        }
-    }
-
-    // 3. 剪贴板增强卡片
-    item {
-        SmallTitle(text = "剪贴板增强")
-        Card(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(0.dp)
-        ) {
-            Column {
-                MiuixSwitchWidget(
-                    title = "跨设备条目可见化持久保存",
-                    description = "自动将多端同步的剪贴板远程条目转换为本地可见条目保存",
-                    checked = showCrossDeviceClipboard,
-                    onCheckedChange = onShowCrossDeviceClipboardChange
-                )
-                MiuixSwitchWidget(
-                    title = "解除保留上限与时长限制",
-                    description = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
-                    checked = removeClipboardRetentionLimit,
-                    onCheckedChange = onRemoveClipboardRetentionLimitChange
-                )
-                MiuixSwitchWidget(
-                    title = "解除单条文本长度限制",
-                    description = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
-                    checked = removeClipboardTextLimit,
-                    onCheckedChange = onRemoveClipboardTextLimitChange
-                )
-                MiuixSwitchWidget(
-                    title = "剪贴板搜索",
-                    description = "在剪贴板页面显示搜索框，按文本拼音分词过滤",
-                    checked = clipboardSearchEnabled,
-                    onCheckedChange = onClipboardSearchEnabledChange
-                )
-                MiuixSwitchWidget(
-                    title = "返回时清理搜索关键词",
-                    description = "在剪贴板页面点击返回键时清理搜索关键词，恢复完整列表；关闭则保留上次搜索结果",
-                    checked = clipboardSearchClearOnBack,
-                    onCheckedChange = onClipboardSearchClearOnBackChange
-                )
-                MiuixSwitchWidget(
-                    title = "图片缩略图保持原比例",
-                    description = "宽度按原图比例缩放，最长不超过行宽；关闭后缩略图统一为正方形",
-                    checked = clipboardImageAdjustRatio,
-                    onCheckedChange = onClipboardImageAdjustRatioChange
-                )
-                MiuixSwitchWidget(
-                    title = "图片缩略图裁剪填满",
-                    description = "在缩略图框内居中裁剪填满，可能裁掉图片边缘；关闭则完整显示",
-                    checked = clipboardImageCrop,
-                    onCheckedChange = onClipboardImageCropChange
-                )
-                MiuixSwitchWidget(
-                    title = "图片缩略图统一行高",
-                    description = "所有图片条目统一为两行高度；关闭后图片按单行高度显示",
-                    checked = clipboardImageUniformRowHeight,
-                    onCheckedChange = onClipboardImageUniformRowHeightChange
-                )
-                val imageCountOptions = listOf(0, 20, 50, 100, 200, 500)
-                val imageSizeOptions = listOf(0, 128, 256, 512, 1024, 2048)
-                MiuixDropdownPreference(
-                    title = "图片数量上限",
-                    items = imageCountOptions.map { if (it == 0) "无上限" else "$it 张" },
-                    selectedIndex = imageCountOptions.indexOf(clipboardImageMaxCount).coerceAtLeast(0),
-                    onSelectedIndexChange = { index ->
-                        onClipboardImageMaxCountChange(imageCountOptions[index])
-                    }
-                )
-                MiuixDropdownPreference(
-                    title = "图片容量上限",
-                    items = imageSizeOptions.map {
-                        when {
-                            it == 0 -> "无上限"
-                            it >= 1024 -> "${it / 1024} GB"
-                            else -> "$it MB"
-                        }
-                    },
-                    selectedIndex = imageSizeOptions.indexOf(clipboardImageMaxSizeMb).coerceAtLeast(0),
-                    onSelectedIndexChange = { index ->
-                        onClipboardImageMaxSizeMbChange(imageSizeOptions[index])
-                    }
-                )
-                BasicComponent(
-                    title = "剪贴板备份与恢复",
-                    summary = "导出 zip / WebDAV 备份 / 导入还原",
-                    onClick = onOpenClipboardBackup
-                )
-            }
-        }
-    }
-
-    // 4. 进阶系统防护卡片
+    // 2. 进阶系统防护卡片
     item {
         SmallTitle(text = "进阶系统防护")
         Card(
@@ -3422,9 +4510,9 @@ private fun LazyListScope.FeatureTabContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                MiuixSwitchWidget(
+                SwitchPreference(
                     title = stringResource(R.string.settings_disable_hot_update_title),
-                    description = stringResource(R.string.settings_disable_hot_update_desc),
+                    summary = stringResource(R.string.settings_disable_hot_update_desc),
                     checked = disableHotUpdate,
                     onCheckedChange = onDisableHotUpdateChange
                 )
@@ -3445,25 +4533,15 @@ private fun LazyListScope.FeatureTabContent(
                     title = "模块版本",
                     summary = "v${BuildConfig.VERSION_NAME} (Code ${BuildConfig.VERSION_CODE})",
                     endActions = {
-                        val statusText = if (activationStatus.isActive) "已激活" else "未激活"
-                        val statusBg = if (activationStatus.isActive) ComposeColor(0xFF4F9A71) else ComposeColor(0xFFC86F67)
-                        Box(
-                            modifier = Modifier
-                                .clip(ContinuousRoundedRectangle(999.dp))
-                                .background(statusBg)
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                            contentAlignment = Alignment.Center
+                        Badge(
+                            containerColor = if (activationStatus.isActive) ComposeColor(0xFF4F9A71) else ComposeColor(0xFFC86F67),
+                            contentColor = ComposeColor.White
                         ) {
-                            Text(
-                                text = statusText,
-                                color = ComposeColor.White,
-                                style = MiuixTheme.textStyles.body2,
-                                fontSize = 11.sp
-                            )
+                            Text(text = if (activationStatus.isActive) "已激活" else "未激活")
                         }
                     }
                 )
-                BasicComponent(
+                ArrowPreference(
                     title = stringResource(R.string.settings_visit_github_title),
                     summary = "https://github.com/Costben/WeType-Enhance",
                     titleColor = BasicComponentDefaults.titleColor(
@@ -3482,6 +4560,344 @@ private fun LazyListScope.FeatureTabContent(
                     summary = stringResource(R.string.settings_reset_desc),
                     onClick = onRestoreDefaults
                 )
+            }
+        }
+    }
+}
+
+private fun LazyListScope.ClipboardSubPageContent(
+    showCrossDeviceClipboard: Boolean,
+    onShowCrossDeviceClipboardChange: (Boolean) -> Unit,
+    removeClipboardRetentionLimit: Boolean,
+    onRemoveClipboardRetentionLimitChange: (Boolean) -> Unit,
+    removeClipboardTextLimit: Boolean,
+    onRemoveClipboardTextLimitChange: (Boolean) -> Unit,
+    clipboardSearchEnabled: Boolean,
+    onClipboardSearchEnabledChange: (Boolean) -> Unit,
+    clipboardSearchClearOnBack: Boolean,
+    onClipboardSearchClearOnBackChange: (Boolean) -> Unit,
+    clipboardImageAdjustRatio: Boolean,
+    onClipboardImageAdjustRatioChange: (Boolean) -> Unit,
+    clipboardImageCrop: Boolean,
+    onClipboardImageCropChange: (Boolean) -> Unit,
+    clipboardImageUniformRowHeight: Boolean,
+    onClipboardImageUniformRowHeightChange: (Boolean) -> Unit,
+    clipboardImageMaxCount: Int,
+    onClipboardImageMaxCountChange: (Int) -> Unit,
+    clipboardImageMaxSizeMb: Int,
+    onClipboardImageMaxSizeMbChange: (Int) -> Unit,
+    onOpenClipboardBackup: () -> Unit
+) {
+    item {
+        SmallTitle(text = "基础增强")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SwitchPreference(
+                title = "跨设备条目可见化持久保存",
+                summary = "自动将多端同步的剪贴板远程条目转换为本地可见条目保存",
+                checked = showCrossDeviceClipboard,
+                onCheckedChange = onShowCrossDeviceClipboardChange
+            )
+            SwitchPreference(
+                title = "解除保留上限与时长限制",
+                summary = "剪贴板保存条数上限提升至 100,000 条，留存时长永久",
+                checked = removeClipboardRetentionLimit,
+                onCheckedChange = onRemoveClipboardRetentionLimitChange
+            )
+            SwitchPreference(
+                title = "解除单条文本长度限制",
+                summary = "剪贴板文本长度上限提升至 1 亿字符，抑制超限提示",
+                checked = removeClipboardTextLimit,
+                onCheckedChange = onRemoveClipboardTextLimitChange
+            )
+        }
+    }
+
+    item {
+        SmallTitle(text = "搜索")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SwitchPreference(
+                title = "剪贴板搜索",
+                summary = "在剪贴板页面显示搜索框，按文本拼音分词过滤",
+                checked = clipboardSearchEnabled,
+                onCheckedChange = onClipboardSearchEnabledChange
+            )
+            SwitchPreference(
+                title = "返回时清理搜索关键词",
+                summary = "在剪贴板页面点击返回键时清理搜索关键词，恢复完整列表；关闭则保留上次搜索结果",
+                checked = clipboardSearchClearOnBack,
+                onCheckedChange = onClipboardSearchClearOnBackChange
+            )
+        }
+    }
+
+    item {
+        SmallTitle(text = "图片缩略图")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SwitchPreference(
+                title = "图片缩略图保持原比例",
+                summary = "宽度按原图比例缩放，最长不超过行宽；关闭后缩略图统一为正方形",
+                checked = clipboardImageAdjustRatio,
+                onCheckedChange = onClipboardImageAdjustRatioChange
+            )
+            SwitchPreference(
+                title = "图片缩略图裁剪填满",
+                summary = "在缩略图框内居中裁剪填满，可能裁掉图片边缘；关闭则完整显示",
+                checked = clipboardImageCrop,
+                onCheckedChange = onClipboardImageCropChange
+            )
+            SwitchPreference(
+                title = "图片缩略图统一行高",
+                summary = "所有图片条目统一为两行高度；关闭后图片按单行高度显示",
+                checked = clipboardImageUniformRowHeight,
+                onCheckedChange = onClipboardImageUniformRowHeightChange
+            )
+            val imageCountOptions = listOf(0, 20, 50, 100, 200, 500)
+            val imageSizeOptions = listOf(0, 128, 256, 512, 1024, 2048)
+            OverlayDropdownPreference(
+                title = "图片数量上限",
+                items = imageCountOptions.map { if (it == 0) "无上限" else "$it 张" },
+                selectedIndex = imageCountOptions.indexOf(clipboardImageMaxCount).coerceAtLeast(0),
+                onSelectedIndexChange = { index ->
+                    onClipboardImageMaxCountChange(imageCountOptions[index])
+                }
+            )
+            OverlayDropdownPreference(
+                title = "图片容量上限",
+                items = imageSizeOptions.map {
+                    when {
+                        it == 0 -> "无上限"
+                        it >= 1024 -> "${it / 1024} GB"
+                        else -> "$it MB"
+                    }
+                },
+                selectedIndex = imageSizeOptions.indexOf(clipboardImageMaxSizeMb).coerceAtLeast(0),
+                onSelectedIndexChange = { index ->
+                    onClipboardImageMaxSizeMbChange(imageSizeOptions[index])
+                }
+            )
+        }
+    }
+
+    item {
+        SmallTitle(text = "备份与恢复")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            ArrowPreference(
+                title = "剪贴板备份与恢复",
+                summary = "导出 zip / WebDAV 备份 / 导入还原",
+                onClick = onOpenClipboardBackup
+            )
+        }
+    }
+}
+
+private fun LazyListScope.KeyboardLogoSubPageContent(
+    logoEnabled: Boolean,
+    onLogoEnabledChange: (Boolean) -> Unit,
+    logoShowEnabled: Boolean,
+    onLogoShowEnabledChange: (Boolean) -> Unit,
+    logoColorMode: String,
+    onLogoColorModeChange: (String) -> Unit,
+    logoCustomColorInput: String,
+    onLogoCustomColorInputChange: (String) -> Unit,
+    logoImageEnabled: Boolean,
+    onLogoImageEnabledChange: (Boolean) -> Unit,
+    logoImageType: String,
+    logoSvgRecolorEnabled: Boolean,
+    onLogoSvgRecolorEnabledChange: (Boolean) -> Unit,
+    logoImagePngBase64: String,
+    logoImageSvgText: String,
+    logoImageName: String,
+    logoImageMessage: String,
+    logoImageImporting: Boolean,
+    onPickLogoPng: () -> Unit,
+    onPickLogoSvg: () -> Unit,
+    onActivateLogoImageType: (String) -> Unit,
+    onClearLogoImages: () -> Unit,
+    onResetLogo: () -> Unit
+) {
+    item {
+        val context = LocalContext.current
+        val isPng = logoImageType == WeTypeSettings.LOGO_IMAGE_TYPE_PNG
+        val nameSuffix = logoImageName.takeIf { it.isNotEmpty() }?.let { "：$it" }.orEmpty()
+        val pngSummary = when {
+            logoImagePngBase64.isEmpty() -> "未上传，点击选择 PNG 图片（原色显示）"
+            isPng -> "生效中$nameSuffix，点击重新选择"
+            else -> "已上传，点击切换为 PNG 生效"
+        }
+        val svgSummary = when {
+            logoImageSvgText.isEmpty() -> "未上传，点击选择 SVG 图片"
+            !isPng -> "生效中$nameSuffix，点击重新选择"
+            else -> "已上传，点击切换为 SVG 生效"
+        }
+        val logoColorModeOptions = listOf(
+            WeTypeSettings.LOGO_COLOR_MODE_BRAND,
+            WeTypeSettings.LOGO_COLOR_MODE_SYSTEM,
+            WeTypeSettings.LOGO_COLOR_MODE_CUSTOM
+        )
+        val cardModifier = Modifier.padding(horizontal = 16.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // 1. 总开关
+            Card(modifier = cardModifier, insideMargin = PaddingValues(0.dp)) {
+                SwitchPreference(
+                    title = "启用 Logo 替换",
+                    summary = "关闭则显示输入法的原生 Logo",
+                    checked = logoEnabled,
+                    onCheckedChange = onLogoEnabledChange
+                )
+            }
+            AnimatedVisibility(
+                visible = logoEnabled,
+                enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    // 2. 显示与主体颜色
+                    Card(modifier = cardModifier, insideMargin = PaddingValues(0.dp)) {
+                        SwitchPreference(
+                            title = "显示 Logo",
+                            summary = "关闭则隐藏键盘上的 Logo",
+                            checked = logoShowEnabled,
+                            onCheckedChange = onLogoShowEnabledChange
+                        )
+                        OverlayDropdownPreference(
+                            title = "Logo 主体颜色",
+                            entry = DropdownEntry(
+                                items = labeledDropdownItems(
+                                    options = listOf(
+                                        "跟随品牌色" to "官方彩色",
+                                        "跟随系统" to "自适应黑白",
+                                        "自定义颜色" to "手动指定颜色"
+                                    ),
+                                    selectedIndex = logoColorModeOptions.indexOf(logoColorMode)
+                                        .coerceAtLeast(0),
+                                    onSelect = { index ->
+                                        onLogoColorModeChange(logoColorModeOptions[index])
+                                    }
+                                )
+                            )
+                        )
+                        if (logoColorMode == WeTypeSettings.LOGO_COLOR_MODE_CUSTOM) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
+                            ) {
+                                Text(
+                                    text = "自定义颜色",
+                                    style = MiuixTheme.textStyles.main
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "输入 #RRGGBB，例如 #23C891",
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    style = MiuixTheme.textStyles.body2
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                TextField(
+                                    value = logoCustomColorInput,
+                                    onValueChange = { input ->
+                                        val trimmed = input.trim()
+                                        val hasPrefix = trimmed.startsWith("#")
+                                        val body = trimmed.removePrefix("#")
+                                        if (body.length <= 6 && body.matches(Regex("^[0-9a-fA-F]*$"))) {
+                                            onLogoCustomColorInputChange(if (hasPrefix || body.isNotEmpty()) "#$body" else "")
+                                        }
+                                    },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = "#RRGGBB"
+                                )
+                            }
+                        }
+                    }
+                    // 3. 图片替换：开启后才展开后面的上传与生效选项
+                    Card(modifier = cardModifier, insideMargin = PaddingValues(0.dp)) {
+                        SwitchPreference(
+                            title = "替换为图片",
+                            summary = "关闭则用回矢量 Logo，已上传文件保留",
+                            checked = logoImageEnabled,
+                            onCheckedChange = onLogoImageEnabledChange
+                        )
+                        AnimatedVisibility(
+                            visible = logoImageEnabled,
+                            enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+                            exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top)
+                        ) {
+                            Column {
+                                ArrowPreference(
+                                    title = "替换为 PNG",
+                                    summary = pngSummary,
+                                    onClick = {
+                                        // 已上传但未生效时点一下就直接切过去，否则重新选文件。
+                                        if (logoImagePngBase64.isNotEmpty() && !isPng) {
+                                            onActivateLogoImageType(WeTypeSettings.LOGO_IMAGE_TYPE_PNG)
+                                        } else {
+                                            onPickLogoPng()
+                                        }
+                                    }
+                                )
+                                ArrowPreference(
+                                    title = "替换为 SVG",
+                                    summary = svgSummary,
+                                    onClick = {
+                                        if (logoImageSvgText.isNotEmpty() && isPng) {
+                                            onActivateLogoImageType(WeTypeSettings.LOGO_IMAGE_TYPE_SVG)
+                                        } else {
+                                            onPickLogoSvg()
+                                        }
+                                    }
+                                )
+                                SwitchPreference(
+                                    title = "替换 SVG 颜色",
+                                    summary = "仅对 SVG 生效，染色为 Logo 主体颜色；PNG 始终原色",
+                                    checked = logoSvgRecolorEnabled,
+                                    onCheckedChange = onLogoSvgRecolorEnabledChange
+                                )
+                                ArrowPreference(
+                                    title = "清除已上传图片",
+                                    summary = "删除 PNG 与 SVG，恢复矢量 Logo",
+                                    onClick = onClearLogoImages
+                                )
+                                if (logoImageImporting || logoImageMessage.isNotEmpty()) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp)
+                                    ) {
+                                        Text(
+                                            text = logoImageMessage,
+                                            style = MiuixTheme.textStyles.body2,
+                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 4. 重置
+                    Card(modifier = cardModifier, insideMargin = PaddingValues(0.dp)) {
+                        ArrowPreference(
+                            title = "重置 Logo 设置",
+                            summary = "恢复 Logo 默认开启、品牌色状态",
+                            onClick = {
+                                onResetLogo()
+                                Toast.makeText(context, "Logo 设置已重置", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                }
             }
         }
     }

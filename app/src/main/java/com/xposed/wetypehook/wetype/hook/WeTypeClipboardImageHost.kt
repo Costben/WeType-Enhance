@@ -3,6 +3,9 @@ package com.xposed.wetypehook.wetype.hook
 import android.os.Bundle
 import android.util.Log as AndroidLog
 import android.view.View
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.HostResources
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import java.lang.reflect.Field
@@ -19,7 +22,11 @@ import java.util.concurrent.ConcurrentHashMap
  * - 尺寸换算类 3.5.3=`...utils.m1`、3.5.4=`...utils.n1`（实例单例 + l0(Integer)）；
  *   原始设计 px 换算 3.5.3=`...utils.q1.e0`、3.5.4=`...utils.r1.e0`（静态）；
  * - 面板枚举二进制名一致 `...keyboard.t`（含 ImagePreview(509)）；
- * - S33 导航：优先 n3(enum, Bundle)，3.5.3 退 p3/k3，均为 (面板枚举, Bundle) -> void。
+ * - 面板导航：3.5.4 上 `(面板枚举, Bundle) -> void` 命中的是 `N#o3`
+ *   （`N#t3` 形状相同但语义是切键盘，不在候选表内、不能选它）；
+ *   按 int 值切面板的唯一入口是 `N#l3`。
+ * - 导航优先走 HostContract（`panel.enum` / `panel.manager` / `panel.manager.instance` /
+ *   `panel.switch.enum` / `panel.constant.clipboard`），下面的名字候选表 n3/p3/o3/k3/l3 只作兜底。
  */
 internal object WeTypeClipboardImageHost {
 
@@ -252,13 +259,15 @@ internal object WeTypeClipboardImageHost {
     }
 
     private fun resolveIds(classLoader: ClassLoader) {
-        val ids = Class.forName(IDS_CLASS, false, classLoader)
+        val ids = HostResources.rClass(IDS_CLASS, classLoader)
+            ?: Class.forName(IDS_CLASS, false, classLoader)
         contentTvId = ids.getField("clipboard_content_tv").getInt(null)
         moreBtnId = runCatching { ids.getField("clipboard_more_btn").getInt(null) }.getOrDefault(0)
         contentScrollId = ids.getField("clipboard_content_scrollview").getInt(null)
         line1Id = ids.getField("clipboard_item_line1").getInt(null)
         keyInfoId = ids.getField("clipboard_key_information_rv").getInt(null)
-        val dimen = Class.forName(DIMEN_CLASS, false, classLoader)
+        val dimen = HostResources.rClass(DIMEN_CLASS, classLoader)
+            ?: Class.forName(DIMEN_CLASS, false, classLoader)
         line1HeightRes = dimen.getField("keyboard_custom_phrase_item_line1_height").getInt(null)
         line2HeightRes = dimen.getField("keyboard_clipboard_item_line2_height").getInt(null)
         inputIndentRes = dimen.getField("keyboard_custom_phrase_item_input_code_margin_start").getInt(null)
@@ -296,29 +305,37 @@ internal object WeTypeClipboardImageHost {
     }
 
     private fun resolveNavigation(classLoader: ClassLoader) {
-        panelClass = Class.forName(PANEL_ENUM_CLASS, false, classLoader)
+        panelClass = WeTypeHostContracts.classOf(HostContractId.PANEL_ENUM)
+            ?: Class.forName(PANEL_ENUM_CLASS, false, classLoader)
         val panel = panelClass ?: return
         navPanel = panel.enumConstants?.firstOrNull { (it as? Enum<*>)?.name == PANEL_IMAGE_PREVIEW }
-        navClipboardPanel = panel.enumConstants?.firstOrNull { (it as? Enum<*>)?.name == PANEL_CLIPBOARD }
+        navClipboardPanel = WeTypeHostContracts.constantOf(HostContractId.PANEL_CLIPBOARD_CONSTANT)
+            ?: panel.enumConstants?.firstOrNull { (it as? Enum<*>)?.name == PANEL_CLIPBOARD }
         if (navPanel == null) {
             AndroidLog.e(TAG, "ImagePreview panel enum missing")
             return
         }
-        val n = runCatching { Class.forName(N_CLASS, false, classLoader) }.getOrNull() ?: return
-        navManager = staticSelfInstance(n)
-        val candidates = arrayOf("n3", "p3", "k3", "l3")
-        for (name in candidates) {
-            val m = n.declaredMethods.firstOrNull {
-                it.name == name && it.parameterTypes.size == 2 &&
-                    it.parameterTypes[0] == panel && it.parameterTypes[1] == Bundle::class.java &&
-                    it.returnType == Void.TYPE
-            } ?: continue
-            m.isAccessible = true
-            navMethod = m
-            break
+        val n = WeTypeHostContracts.classOf(HostContractId.PANEL_MANAGER)
+            ?: runCatching { Class.forName(N_CLASS, false, classLoader) }.getOrNull() ?: return
+        navManager = WeTypeHostContracts.fieldOf(HostContractId.PANEL_MANAGER_INSTANCE)
+            ?.let { field -> runCatching { field.get(null) }.getOrNull() }
+            ?: staticSelfInstance(n)
+        navMethod = WeTypeHostContracts.methodOf(HostContractId.PANEL_SWITCH_ENUM)
+        if (navMethod == null) {
+            val candidates = arrayOf("n3", "p3", "o3", "k3", "l3")
+            for (name in candidates) {
+                val m = n.declaredMethods.firstOrNull {
+                    it.name == name && it.parameterTypes.size == 2 &&
+                        it.parameterTypes[0] == panel && it.parameterTypes[1] == Bundle::class.java &&
+                        it.returnType == Void.TYPE
+                } ?: continue
+                m.isAccessible = true
+                navMethod = m
+                break
+            }
         }
         if (navMethod == null) {
-            AndroidLog.e(TAG, "S33 navigation method missing (n3/p3/k3)")
+            AndroidLog.e(TAG, "S33 navigation method missing (n3/p3/o3/k3)")
         }
     }
 
@@ -348,7 +365,7 @@ internal object WeTypeClipboardImageHost {
         }
     }
 
-    /** 用宿主原生导航切回剪贴板面板（与搜索提交 `N.p3/n3(CustomPhraseAndClipboard, …)` 同契约）。 */
+    /** 用宿主原生导航切回剪贴板面板（与搜索提交 `N#o3(CustomPhraseAndClipboard, …)` 同契约）。 */
     fun openClipboardPanel(): Boolean {
         return try {
             ensureRuntime()

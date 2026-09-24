@@ -27,6 +27,7 @@ import com.xposed.wetypehook.xposed.hookReturnConstant
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLight
 import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLightLayer
+import com.xposed.wetypehook.wetype.host.HostResources
 import com.xposed.wetypehook.wetype.logo.LogoImageRenderer
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorMode
@@ -167,7 +168,7 @@ internal object WeTypeResourceHooks {
         val unresolvedNames = nameToValueMap.keys.toMutableSet()
         for (className in classNames) {
             if (unresolvedNames.isEmpty()) break
-            val clazz = loadClassOrNull(className) ?: continue
+            val clazz = HostResources.rClass(className) ?: continue
             val iterator = unresolvedNames.iterator()
             while (iterator.hasNext()) {
                 val name = iterator.next()
@@ -728,7 +729,7 @@ internal object WeTypeResourceHooks {
         runCatching {
             val candidateViewClass = loadClassOrNull(CANDIDATE_VIEW_CLASS)
                 ?: error("Failed to load ImeCandidateView")
-            val containerId = loadClassOrNull(WETYPE_ID_R_CLASS)
+            val containerId = HostResources.rClass(WETYPE_ID_R_CLASS)
                 ?.getField(CANDIDATE_PINYIN_CONTAINER_ID_NAME)
                 ?.getInt(null)
                 ?: error("Failed to resolve $CANDIDATE_PINYIN_CONTAINER_ID_NAME")
@@ -747,7 +748,7 @@ internal object WeTypeResourceHooks {
 
     fun hookKeyboardLogo() {
         runCatching {
-            val sClass = loadClassOrNull("com.tencent.wetype.plugin.hld.s") ?: return
+            val sClass = HostResources.rClass("com.tencent.wetype.plugin.hld.s") ?: return
             val logoIvId = sClass.getField("logo_iv").getInt(null)
 
             // Resolve the resource IDs of the "dark" logo variants up-front from the host's R
@@ -842,10 +843,10 @@ internal object WeTypeResourceHooks {
 
     fun reconcileCurrentKeyboardLogos(rootViews: Collection<View>) {
         val logoIvId = runCatching {
-            loadClassOrNull(WETYPE_ID_R_CLASS)?.getField("logo_iv")?.getInt(null)
+            HostResources.rClass(WETYPE_ID_R_CLASS)?.getField("logo_iv")?.getInt(null)
         }.getOrNull() ?: return
         val candidatePinyinContainerId = runCatching {
-            loadClassOrNull(WETYPE_ID_R_CLASS)
+            HostResources.rClass(WETYPE_ID_R_CLASS)
                 ?.getField(CANDIDATE_PINYIN_CONTAINER_ID_NAME)
                 ?.getInt(null)
         }.getOrNull()
@@ -939,7 +940,7 @@ internal object WeTypeResourceHooks {
      * fields cannot be resolved, in which case the caller falls back to name/uiMode heuristics.
      */
     private fun resolveDarkLogoResIds(): Set<Int> {
-        val rClass = loadClassOrNull(WETYPE_DRAWABLE_R_CLASS) ?: return emptySet()
+        val rClass = HostResources.rClass(WETYPE_DRAWABLE_R_CLASS) ?: return emptySet()
         return rClass.declaredFields.asSequence()
             .filter { field ->
                 val name = field.name.lowercase()
@@ -1021,7 +1022,7 @@ internal object WeTypeResourceHooks {
 
     fun hookToolbarIconBackground() {
         runCatching {
-            val sClass = loadClassOrNull("com.tencent.wetype.plugin.hld.s") ?: return
+            val sClass = HostResources.rClass("com.tencent.wetype.plugin.hld.s") ?: return
             val containerId = sClass.getField("custom_toolbar_item_container_view").getInt(null)
 
             View::class.java.getMethod(

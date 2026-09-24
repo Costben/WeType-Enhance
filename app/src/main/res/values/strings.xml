@@ -83,7 +83,7 @@
     <string name="settings_candidate_pinyin_margin_desc">Edit the left padding of the pinyin area.</string>
 
     <string name="settings_save_title">Save settings</string>
-    <string name="settings_save_restart_title">Save and restart the input method</string>
+    <string name="settings_refresh_title">Refresh</string>
     <string name="settings_save_desc">Write the current configuration to the module</string>
     <string name="settings_reset_title">Restore defaults</string>
     <string name="settings_reset_desc">Reset all options to their default values</string>
@@ -105,9 +105,9 @@
     <string name="activation_active_title">Module is active</string>
     <string name="activation_active_summary">Tap the button below to enter the embedded WeType settings page.</string>
     <string name="activation_open_embedded_settings">Open WeType settings</string>
-    <string name="settings_hyper_material_title">Use HyperOS 4 advanced keyboard material</string>
-    <string name="settings_hyper_material_desc">Use the same tint, blur, shadow and highlights as XiaoAI IME. Keeps custom background corners; overrides background color, blur and highlight settings.</string>
-    <string name="settings_hyper_material_unavailable">Requires supported system material APIs and system advanced visual effects to be enabled.</string>
+    <string name="settings_hyper_material_title">Use system material</string>
+    <string name="settings_hyper_material_desc">Render the keyboard background and blur with the system material. The rest of this page applies with it.</string>
+    <string name="settings_hyper_material_unavailable">This system does not support the material.</string>
     <string name="settings_hyper_material_preview">Material</string>
     <string name="settings_glass_params">Glass effect parameters</string>
     <string name="settings_glass_params_desc">42 finite numbers, separated by commas; keeps the native parameter order and units.</string>

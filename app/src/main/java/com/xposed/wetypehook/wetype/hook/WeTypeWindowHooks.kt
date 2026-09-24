@@ -22,6 +22,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import androidx.core.graphics.drawable.toDrawable
+import com.xposed.wetypehook.WeTypeKeyboardMetrics
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.HookEnvironment
 import com.xposed.wetypehook.xposed.findMethodInHierarchy
@@ -45,6 +46,15 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 private const val WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX = 2
+
+/**
+ * 工具栏条带抓取的重试窗口。
+ *
+ * `onStartInputView` 回来时工具栏行还没量过尺寸，渲染出来是空的；250ms 一次、最多 6 次
+ * 覆盖了宿主的首帧布局与切换键盘语法后的重排。
+ */
+private const val TOOLBAR_STRIP_CAPTURE_RETRY_COUNT = 6
+private const val TOOLBAR_STRIP_CAPTURE_RETRY_DELAY_MS = 250L
 
 /**
  * ColorOS 原生材质边缘光生效时，背板面板的最低不透明度（0xC8 ≈ 78%）。
@@ -315,11 +325,19 @@ internal object WeTypeWindowHooks {
             runCatching {
                 val overlayClass = loadClassOrNull(className)
                     ?: error("Failed to resolve $className")
-                val showMethod = overlayClass.declaredMethods.single { method ->
+                val showMethodCandidates = overlayClass.declaredMethods.filter { method ->
                     method.returnType == Void.TYPE &&
                         method.parameterTypes.size == 2 &&
                         method.parameterTypes[1] == Bundle::class.java
-                }.apply { isAccessible = true }
+                }
+                val showMethod = showMethodCandidates.firstOrNull()?.apply { isAccessible = true }
+                    ?: error("Failed to resolve show method for $className")
+                if (showMethodCandidates.size > 1) {
+                    Log.i(
+                        "Multiple (void, Bundle) show methods on ${overlayClass.name}: " +
+                            "${showMethodCandidates.map { it.name }}; using ${showMethod.name}"
+                    )
+                }
                 overlayClass to showMethod
             }.onFailure { error ->
                 Log.i("Failed: Hook transparent overlay for $className")
@@ -1090,6 +1108,7 @@ internal object WeTypeWindowHooks {
             if (!state.windowVisible) return@runCatching
             if (visibleImeHeight > WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {
                 state.computedVisibleImeHeightPx = visibleImeHeight
+                WeTypeKeyboardMetrics.record(window.context, visibleImeHeight, rootHeight)
                 if (visibleImeHeight == previousVisibleImeHeight) return@runCatching
                 scheduleWindowBlur(inputMethodService, refreshStyle = false)
                 return@runCatching
@@ -1112,6 +1131,12 @@ internal object WeTypeWindowHooks {
     }
 
     private fun onWindowStage(inputMethodService: Any, stage: String) {
+        (inputMethodService as? InputMethodService)?.let { service ->
+            if (stage == "onStartInputView" || stage == "onWindowShown") {
+                KeyboardPreviewLiveReload.start(service)
+                scheduleToolbarStripCapture(service)
+            }
+        }
         runCatching {
             val state = getWindowState(inputMethodService)
             when (stage) {
@@ -1132,6 +1157,32 @@ internal object WeTypeWindowHooks {
             Log.i("Failed: Handle WeType window stage")
             Log.i(it)
         }
+    }
+
+    /**
+     * 键盘显示后把工具栏那一行抓成条带 PNG，供设置页的键盘复刻件当工具栏用。
+     *
+     * 必须等布局完成：`onStartInputView` 刚回来时工具栏行还没量过尺寸，直接渲染只会得到
+     * 一张空图。所以要重试几次，抓到就停；预览开关关着时一次都不排。
+     */
+    private fun scheduleToolbarStripCapture(inputMethodService: Any) {
+        val context = (inputMethodService as? InputMethodService)?.window?.window?.decorView?.context
+            ?: return
+        if (!WeTypeSettings.isAppearanceStagePreviewEnabled(context)) return
+        val decorView = (inputMethodService as InputMethodService).window?.window?.decorView as? ViewGroup
+            ?: return
+        val handler = Handler(Looper.getMainLooper())
+        var attempt = 0
+        val tick = object : Runnable {
+            override fun run() {
+                if (!decorView.isAttachedToWindow) return
+                if (KeyboardToolbarStripCapture.capture(context, decorView)) return
+                attempt++
+                if (attempt >= TOOLBAR_STRIP_CAPTURE_RETRY_COUNT) return
+                handler.postDelayed(this, TOOLBAR_STRIP_CAPTURE_RETRY_DELAY_MS)
+            }
+        }
+        handler.postDelayed(tick, TOOLBAR_STRIP_CAPTURE_RETRY_DELAY_MS)
     }
 
     private fun scheduleWindowBlur(inputMethodService: Any, refreshStyle: Boolean = true) {
@@ -1231,6 +1282,7 @@ internal object WeTypeWindowHooks {
         }
 
     private fun onWindowInactive(inputMethodService: Any, removeCarrier: Boolean) {
+        KeyboardPreviewLiveReload.stop()
         runCatching {
             val state = getWindowState(inputMethodService)
             state.windowVisible = false

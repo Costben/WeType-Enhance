@@ -1,6 +1,5 @@
 package com.xposed.wetypehook.wetype.hook
 
-import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -8,7 +7,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
-import android.view.View
 import androidx.annotation.FloatRange
 import androidx.core.graphics.PathParser
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -72,20 +70,18 @@ internal class WeTypeIconDrawable(
 
     private fun resolveAlpha(sourceAlpha: Int): Int = (sourceAlpha * drawableAlpha) / 255
 
-    private fun isNightMode(): Boolean {
-        val view = callback as? View
-        if (view != null) {
-            val uiMode = view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-            if (uiMode == Configuration.UI_MODE_NIGHT_YES) return true
-            if (uiMode == Configuration.UI_MODE_NIGHT_NO) return false
-            val bgColor: Int? = runCatching { WeTypeSettings.getCurrentBackgroundColorXposed(view.context) }.getOrNull()
-            if (bgColor != null && Color.alpha(bgColor) > 50) {
-                val luminance = (Color.red(bgColor) * 0.299 + Color.green(bgColor) * 0.587 + Color.blue(bgColor) * 0.114) / 255
-                return luminance < 0.5
-            }
-        }
-        return isDark
-    }
+    /**
+     * Logo 主体色必须和圆底 alpha 用同一个「键盘深浅」信号。
+     *
+     * [backgroundAlphaFraction] 由宿主自己选的 Logo 变体决定（`ime_logo_green` 与
+     * `ime_logo_green_dark`），构造参数 [isDark] 就是它的布尔形式，调用方在
+     * `WeTypeResourceHooks.hookKeyboardLogo` 里按 R 字段名判定后传入。
+     *
+     * 输入法主题不等于系统深色模式时（系统浅色 + 输入法深色，或反过来），若这里改看系统
+     * `uiMode`，就会在暗键盘上画纯黑字形配 alpha≈0.2 的近透明白圈，肉眼即「自适应黑白失效」。
+     * 所以主体色只认 [isDark]。
+     */
+    private fun isNightMode(): Boolean = isDark
 
     private fun resolveLogoAccentColor(): Int {
         accentOverride?.let { return it }

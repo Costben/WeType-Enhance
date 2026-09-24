@@ -2,6 +2,8 @@ package com.xposed.wetypehook.wetype.hook
 
 import android.os.Bundle
 import android.view.View
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.xposed.Log
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -10,22 +12,27 @@ import java.util.Locale
 /**
  * 宿主面板切换桥接（与宿主「＋面板」入口同契约）
  *
- * 面板枚举与切换入口在 3.5.3 / 3.5.4 之间**混淆名会漂移**，因此这里只按稳定的
- * 结构签名绑定，不再硬编码方法名：
+ * 面板枚举与切换入口在 3.5.3 / 3.5.4 之间**混淆名会漂移**，因此这里不再硬编码方法名：
+ * 先问宿主契约层（`WeTypeHostContracts`，字符串/枚举锚 → 形状锚 → 名字候选），
+ * 契约解析不到时再退回本文件的名字与结构签名查找，两级都保留原有日志与失败语义。
  * - 面板枚举 `...hld.keyboard.t`：常量名（`CustomPhraseAndClipboard` /
  *   `HandwriteFindWordT9` / `HandwriteFindWordT26`）与取值 getter `()I` 两版一致；
  * - 面板管理器 `...hld.model.N`：静态自引用单例字段两版一致；
- * - 切换入口：`N` 上**唯一**的 `(int, Bundle) -> void`（3.5.3=`h3`、3.5.4=`k3`），
+ * - 切换入口：`N` 上**唯一**的 `(int, Bundle) -> void`（3.5.3=`h3`、3.5.4=`l3`），
  *   语义等同宿主「＋面板」走的带展开动画切换。
  *
  * 实测对照（dexdump 二进制验证）：
  * ```
- *                        3.5.3          3.5.4
- * (int, Bundle) -> void  h3（唯一）     k3（唯一）
- * (enum, Bundle) -> void k3, p3         n3, s3
- * 宿主 ＋面板 入口        k3(enum)       n3(enum)   -> 都落到上面的 int 入口
- * 面板取值 getter         c(): int       c(): int
+ *                        3.5.3            3.5.4
+ * (int, Bundle) -> void  h3（唯一）       l3（唯一）
+ * (enum, Bundle) -> void k3, p3          o3（面板导航）、t3（切键盘）
+ * 宿主 ＋面板 入口        k3(enum)        o3(enum)   -> 都落到上面的 int 入口
+ * 面板取值 getter         c(): int        c(): int
  * ```
+ *
+ * 3.5.4 的 `o3`（面板导航）与 `t3`（切键盘，含字符串 `switchKeyboardNoAnimation`）**同形**，
+ * 都是 `(面板枚举, Bundle) -> void`；契约层靠该字符串锚把 `t3` 排除掉后才敢取 `o3`。
+ * 本文件只用 `(int, Bundle) -> void` 入口，不参与这条区分。
  *
  * 剪贴板与常用语共用 `CustomPhraseAndClipboard(501)`，靠 Bundle 的
  * `target_tab_index`（0=剪贴板，1=常用语）区分。
@@ -61,7 +68,7 @@ internal object WeTypePanelSwitcher {
     /** 面板枚举常量名 -> 枚举实例（复用宿主稳定的 `name()`）。 */
     private var panelConstants: Map<String, Any> = emptyMap()
 
-    /** `N` 上唯一的 `(int, Bundle) -> void`；3.5.3=h3 / 3.5.4=k3。 */
+    /** `N` 上唯一的 `(int, Bundle) -> void`；3.5.3=h3 / 3.5.4=l3。 */
     private var switchByInt: Method? = null
 
     fun openClipboard(classLoader: ClassLoader): Boolean =
@@ -117,13 +124,17 @@ internal object WeTypePanelSwitcher {
         return ok
     }
 
-    /** 读取面板枚举常量的 int 值：取唯一的无参 int 方法（`c()`）。 */
+    /**
+     * 读取面板枚举常量的 int 值：优先契约的取值 getter，取不到再取唯一的无参 int 方法（`c()`）。
+     */
     private fun panelValue(panelName: String): Int? {
         val constant = panelConstants[panelName] ?: return null
         return runCatching {
-            constant.javaClass.declaredMethods.firstOrNull {
-                it.parameterTypes.isEmpty() && it.returnType == Int::class.javaPrimitiveType
-            }?.apply { isAccessible = true }?.invoke(constant) as? Int
+            val getter = WeTypeHostContracts.methodOf(HostContractId.PANEL_VALUE)
+                ?: constant.javaClass.declaredMethods.firstOrNull {
+                    it.parameterTypes.isEmpty() && it.returnType == Int::class.javaPrimitiveType
+                }?.apply { isAccessible = true }
+            getter?.invoke(constant) as? Int
         }.getOrNull()
     }
 
@@ -136,7 +147,8 @@ internal object WeTypePanelSwitcher {
         panelConstants = emptyMap()
         switchByInt = null
 
-        val enumClass = runCatching { Class.forName(PANEL_ENUM_CLASS, false, classLoader) }.getOrNull()
+        val enumClass = WeTypeHostContracts.classOf(HostContractId.PANEL_ENUM)
+            ?: runCatching { Class.forName(PANEL_ENUM_CLASS, false, classLoader) }.getOrNull()
         if (enumClass == null) {
             Log.e("[$TAG] Panel enum $PANEL_ENUM_CLASS not found")
             return null
@@ -150,12 +162,15 @@ internal object WeTypePanelSwitcher {
             return null
         }
 
-        val managerClass = runCatching { Class.forName(MANAGER_CLASS, false, classLoader) }.getOrNull()
+        val managerClass = WeTypeHostContracts.classOf(HostContractId.PANEL_MANAGER)
+            ?: runCatching { Class.forName(MANAGER_CLASS, false, classLoader) }.getOrNull()
         if (managerClass == null) {
             Log.e("[$TAG] Panel manager $MANAGER_CLASS not found")
             return null
         }
-        val instance = staticSelfInstance(managerClass)
+        val instance = WeTypeHostContracts.fieldOf(HostContractId.PANEL_MANAGER_INSTANCE)
+            ?.let { runCatching { it.get(null) }.getOrNull() }
+            ?: staticSelfInstance(managerClass)
         if (instance == null) {
             Log.e("[$TAG] Panel manager singleton not found on $MANAGER_CLASS")
             return null
@@ -167,7 +182,8 @@ internal object WeTypePanelSwitcher {
                 it.parameterTypes[1] == Bundle::class.java &&
                 it.returnType == Void.TYPE
         }
-        switchByInt = intSwitches.firstOrNull()?.apply { isAccessible = true }
+        switchByInt = WeTypeHostContracts.methodOf(HostContractId.PANEL_SWITCH_INT)
+            ?: intSwitches.firstOrNull()?.apply { isAccessible = true }
         if (switchByInt == null) {
             Log.e("[$TAG] Panel switch entry missing ((int, Bundle) -> void) on $MANAGER_CLASS")
             return null

@@ -19,7 +19,7 @@ internal data class WeTypeBackgroundBounds(val top: Int, val height: Int)
  * 情况下被永久隐藏（实测键盘底色回落到 WeType 自身的 14.67 而不是模块的 5.87）。
  *
  * 因此这里只校验真正决定几何是否可用的 `isShown` / `isLaidOut` / 正值高度：
- * `isLayoutRequested` 仅用于跳过那些几何尚未成立的子视图，而不再一票否决整次采样。
+ * `isLayoutRequested` 不再参与判定，对 decor 与内容视图都是如此。
  */
 internal fun resolveWeTypeBackgroundBounds(
     decor: WeTypeBackgroundLayout,
