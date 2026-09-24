@@ -3,6 +3,7 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -13,8 +14,8 @@ android {
         applicationId = "com.xposed.wetypehook"
         minSdk = 31
         targetSdk = 37
-        versionCode = 43
-        versionName = "1.28.7"
+        versionCode = 44
+        versionName = "1.28.8"
     }
 
     buildTypes {
@@ -64,11 +65,12 @@ dependencies {
     implementation("androidx.compose.ui:ui-android:1.11.4")
     implementation("androidx.compose.ui:ui-graphics-android:1.11.4")
     implementation("androidx.compose.ui:ui-text-android:1.11.4")
-    implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.3")
-    implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.3")
-    implementation("top.yukonga.miuix.kmp:miuix-core-android:0.9.3")
+    implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
+    implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.4")
+    implementation("top.yukonga.miuix.kmp:miuix-core-android:0.9.4")
+    implementation("top.yukonga.miuix.kmp:miuix-nav-android:0.9.4")
     implementation("top.yukonga.miuix.kmp:miuix-shapes-android:0.9.0")
-    implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.9.0") {
+    implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.9.4") {
         exclude(group = "top.yukonga.miuix.kmp", module = "miuix-android")
     }
     implementation("io.github.kyant0:capsule:2.1.3")
