@@ -120,7 +120,10 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
         transition = NavTransitions.MiuixDefault,
         effects = NavDisplayEffects(
             cornerClipRadius = rememberNavSystemCornerRadius(),
-            blockInputDuringTransition = true
+            // 这个开关是按「页面深度是不是整数」来吃触摸的：返回到一半、手指还按着的时候
+            // 上下两层深度都是小数，整块屏幕都收不到触摸，松手后的回弹动画期间也一样，
+            // 于是既滑不动也抓不回来。跟手返回要的就是随时能接管，所以保持库默认的关闭。
+            blockInputDuringTransition = false
         )
     ) {
         entry<SettingsRoute.Home> {
