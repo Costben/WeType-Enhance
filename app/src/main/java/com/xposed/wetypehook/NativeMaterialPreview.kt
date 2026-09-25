@@ -431,5 +431,3 @@ internal fun createPreviewContext(baseContext: Context, isDark: Boolean): Contex
     }
     return baseContext.createConfigurationContext(configuration)
 }
-
-

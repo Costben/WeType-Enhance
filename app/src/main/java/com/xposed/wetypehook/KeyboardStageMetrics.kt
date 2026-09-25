@@ -110,4 +110,3 @@ internal fun resolveNavigationBarInsetPx(view: View): Int = runCatching {
         ?.bottom
         ?: 0
 }.getOrDefault(0)
-
