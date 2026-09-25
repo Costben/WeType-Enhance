@@ -334,6 +334,7 @@ class MainHook : XposedModule() {
         HookEnvironment.withHookScope("wetype.intent-entry") { hookWeTypeIntentEntry() }
         HookEnvironment.withHookScope("wetype.activity-result") { hookHostActivityResult() }
         HookEnvironment.withHookScope("wetype.activity-result") { hookHostBackPress() }
+        HookEnvironment.withHookScope("wetype.predictive-back") { hookPredictiveBackOptIn() }
         HookEnvironment.withHookScope("wetype.about-entry") { hookWeTypeAboutLogoEntry() }
         HookEnvironment.withHookScope("wetype.keyboard-logo") { WeTypeResourceHooks.hookKeyboardLogo() }
         HookEnvironment.withHookScope("wetype.toolbar-icon") { WeTypeResourceHooks.hookToolbarIconBackground() }
@@ -802,6 +803,40 @@ class MainHook : XposedModule() {
             Log.e("Failed:Hook host back press guard")
             Log.i(it)
         }
+    }
+
+    /**
+     * 宿主没有 opt-in 预测性返回时，框架只给每个窗口挂一个注入 KEYCODE_BACK 的兼容回调，
+     * androidx 的动画回调会被 `Checker.checkApplicationCallbackRegistration` 拒绝，二级页面
+     * 因此永远收不到手势进度。这里放宽该判定，实际作用范围由 [PredictiveBackOptIn] 收在内嵌
+     * 设置弹窗的生命周期内。
+     */
+    private fun hookPredictiveBackOptIn() {
+        val dispatcherClass = loadClassOrNull("android.window.WindowOnBackInvokedDispatcher")
+        if (dispatcherClass == null) {
+            Log.e("Failed:Resolve WindowOnBackInvokedDispatcher for predictive back")
+            return
+        }
+        var hooked = 0
+        dispatcherClass.declaredMethods
+            .filter {
+                it.name == "isOnBackInvokedCallbackEnabled" &&
+                    it.returnType == Boolean::class.javaPrimitiveType
+            }
+            .forEach { method ->
+                runCatching {
+                    method.hookBefore { param ->
+                        if (PredictiveBackOptIn.active) {
+                            param.result = true
+                        }
+                    }
+                    hooked++
+                }.onFailure {
+                    Log.e("Failed:Hook predictive back opt-in overload")
+                    Log.i(it)
+                }
+            }
+        Log.i("Predictive back opt-in hook installed on $hooked overload(s)")
     }
 
     private fun hookWeTypeAboutLogoEntry() {

@@ -60,6 +60,7 @@ object WeTypeHostLauncher {
 
         val moduleContext = resolveModuleContext(activity) ?: return
 
+        PredictiveBackOptIn.active = true
         val dialog = ComponentDialog(
             ModuleHostContext(activity, moduleContext),
             R.style.Theme_WeTypeHook_HostDialog
@@ -67,6 +68,7 @@ object WeTypeHostLauncher {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
             setCanceledOnTouchOutside(false)
             setOnDismissListener {
+                PredictiveBackOptIn.active = false
                 activeHostDialogs.remove(activity)
                 WeTypeSettings.bindModuleBridgePendingIntent(null)
             }
@@ -195,6 +197,7 @@ object WeTypeHostLauncher {
                 dialog.setOnDismissListener(null)
                 if (dialog.isShowing) dialog.dismiss()
             }
+            PredictiveBackOptIn.active = false
             synchronized(activeBackupPages) {
                 activeBackupPages.keys.toList().also {
                     activeBackupPages.clear()
