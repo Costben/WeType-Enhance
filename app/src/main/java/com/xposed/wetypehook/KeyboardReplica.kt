@@ -33,6 +33,28 @@ private const val TOOLBAR_LOGO_LEFT_PX = 36f
 private const val TOOLBAR_LOGO_TOP_PX = 31f
 private const val TOOLBAR_LOGO_SIZE_PX = 90f
 
+/**
+ * 工具栏右侧七个图标格的位置与尺寸（相对面板顶边）。
+ *
+ * 每个图标格 = 一个 90px 的圆形底 + 正中一颗 64px 的矢量图标，四周各内缩 13px。
+ * 第一格圆左沿 198，之后等距 126；七格正好顶到右边缘（198 + 126×6 + 90 = 1044，再加右内边距）。
+ */
+private const val TOOLBAR_ICON_CIRCLE_LEFT_PX = 198f
+private const val TOOLBAR_ICON_CIRCLE_PITCH_PX = 126f
+private const val TOOLBAR_ICON_INSET_PX = 13f
+private const val TOOLBAR_ICON_SIZE_PX = 64f
+
+/**
+ * 工具栏里「收起键盘」那一格的下标（最右一格，字形是一枚向下的折角）。
+ *
+ * 216 实测：工具栏正常显示图标时点这一格，键盘就收起来 —— 窗口回到无键盘态，与「键盘从未弹出」
+ * 的截图逐像素一致。它右边没有别的格（198 + 126×6 + 90 = 1044，离右边缘还剩 36）。
+ *
+ * 注意别把这一格跟「工具栏被剪贴板粘贴建议顶掉」的退化态混了：那种时候整行是建议内容、
+ * 没有图标，点哪一格都只是把建议消掉。
+ */
+internal const val TOOLBAR_COLLAPSE_SLOT_INDEX = 6
+
 /** 键面大字形占键宽的比例（em）。实测 'A' 字面高 43px、键宽 90px，WE-Regular 字面高/em = 0.7175 → 43 / 0.7175 / 90。 */
 private const val KEY_LABEL_RATIO = 0.666f
 
@@ -231,10 +253,23 @@ internal data class ReplicaGeometry(
     val backspaceStrokePx: Float get() = BACKSPACE_STROKE_PX * widthScale
     val backspaceCrossStrokePx: Float get() = BACKSPACE_CROSS_STROKE_PX * widthScale
 
-    /** 工具栏左侧 logo 的位置与边长（px），只在没抓到真机条带时用来摆 logo。 */
+    /** 工具栏左侧 logo 的位置与边长（px）。logo 那一格同时也是圆底那一格。 */
     val toolbarLogoLeftPx: Int get() = (TOOLBAR_LOGO_LEFT_PX * widthScale).roundToInt()
     val toolbarLogoTopPx: Int get() = toolbarTopPx + (TOOLBAR_LOGO_TOP_PX * heightScale).roundToInt()
     val toolbarLogoSizePx: Int get() = (TOOLBAR_LOGO_SIZE_PX * widthScale).roundToInt()
+
+    /** 工具栏圆形底的直径与顶边（px）；logo 格用 [toolbarLogoLeftPx]，图标格用 [toolbarIconCircleLeftPx]。 */
+    val toolbarCircleSizePx: Int get() = toolbarLogoSizePx
+    val toolbarCircleTopPx: Int get() = toolbarLogoTopPx
+
+    /** 第 [index] 个工具栏图标格的圆左沿（px）。 */
+    fun toolbarIconCircleLeftPx(index: Int): Int =
+        ((TOOLBAR_ICON_CIRCLE_LEFT_PX + TOOLBAR_ICON_CIRCLE_PITCH_PX * index) * widthScale)
+            .roundToInt()
+
+    /** 图标字形的边长，以及在圆形底里的内缩（px）。 */
+    val toolbarIconSizePx: Int get() = (TOOLBAR_ICON_SIZE_PX * widthScale).roundToInt()
+    val toolbarIconInsetPx: Int get() = (TOOLBAR_ICON_INSET_PX * widthScale).roundToInt()
 
     /** 候选条那一行的几何（px）。 */
     val candidateRowLeftPx: Int get() = (CANDIDATE_ROW_LEFT_PX * widthScale).roundToInt()
@@ -383,6 +418,31 @@ internal fun replicaCandidateBaseColor(isDark: Boolean): Int =
  */
 internal fun replicaCandidateFillAlpha(alphaSetting: Int): Float =
     alphaSetting.coerceIn(0, 255) / 255f
+
+/**
+ * 真机深色键盘的键面字色。
+ *
+ * 216 深色主题实测：一颗字母键里亮度最高的 546 个像素**全部**停在 (235,235,235)，
+ * 再往上一个都没有 —— 所以字色就是这个 235 灰，不是纯白。
+ */
+internal const val REPLICA_KEY_LABEL_DARK_ARGB = 0xFFEBEBEB.toInt()
+
+/**
+ * 把半透明色按 source-over 合成到背板上，返回不透明结果。
+ *
+ * 键帽色是半透明的（浅色 0x2BEDEDED / 深色 0x2BEEEEED），它的 RGB 分量本身是**浅**的，
+ * 直接按它判明暗会得出「黑字」；真正决定可读性的是它叠在面板上的合成色。216 深色主题实测
+ * 0x2BEEEEED 叠在面板 (10,10,13) 上 = (48,48,51)，与真机键帽实测 (49,49,51) 差 1。
+ */
+internal fun replicaCompositeOver(color: Int, backdrop: Int): Int {
+    val alpha = (color ushr 24) and 0xFF
+    val rest = 255 - alpha
+    fun blend(channel: Int, back: Int) = (channel * alpha + back * rest + 127) / 255
+    return (0xFF shl 24) or
+        (blend((color shr 16) and 0xFF, (backdrop shr 16) and 0xFF) shl 16) or
+        (blend((color shr 8) and 0xFF, (backdrop shr 8) and 0xFF) shl 8) or
+        blend(color and 0xFF, backdrop and 0xFF)
+}
 
 /**
  * 按宽度、宿主键盘总高与系统抬高算出复刻件几何；参数不合法返回 null。

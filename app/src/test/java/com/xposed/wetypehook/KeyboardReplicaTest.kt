@@ -112,6 +112,33 @@ class KeyboardReplicaTest {
         assertEquals(45, narrow.toolbarLogoSizePx)
     }
 
+    /**
+     * 工具栏七个图标格：第一格圆左沿 198、等距 126、圆 90、字形 64、四周内缩 13。
+     *
+     * 真机那一行总共 1080 宽，左边 logo 格 36..126，七个图标格 198..1044；这一条把这些数钉住，
+     * 免得日后改圆底尺寸或间距时又得重新对着截图量一遍。
+     */
+    @Test
+    fun toolbarIconSlotsMatchTheMeasuredRow() {
+        assertEquals(90, reference.toolbarCircleSizePx)
+        assertEquals(31, reference.toolbarCircleTopPx)
+        assertEquals(64, reference.toolbarIconSizePx)
+        assertEquals(13, reference.toolbarIconInsetPx)
+        assertEquals(listOf(198, 324, 450, 576, 702, 828, 954), (0..6).map { reference.toolbarIconCircleLeftPx(it) })
+        // 最后一格的圆右沿：954 + 90 = 1044，离右边缘还留 36，跟左边 logo 的 36 对称。
+        assertEquals(1080, reference.toolbarIconCircleLeftPx(6) + reference.toolbarCircleSizePx + 36)
+    }
+
+    @Test
+    fun toolbarIconSlotsScaleWithTheFrame() {
+        val narrow = resolveReplicaGeometry(widthPx = 540, totalHeightPx = 1010, systemInsetPx = 72)!!
+        assertEquals(99, narrow.toolbarIconCircleLeftPx(0))
+        assertEquals(99 + 63 * 6, narrow.toolbarIconCircleLeftPx(6))
+        assertEquals(45, narrow.toolbarCircleSizePx)
+        assertEquals(32, narrow.toolbarIconSizePx)
+        assertEquals(7, narrow.toolbarIconInsetPx)
+    }
+
     /** 点键模拟候选词：0 次不显示，奇数次出「test s」，偶数次出中文那组，来回循环。 */
     @Test
     fun candidateDemoAlternatesBetweenTwoStates() {
@@ -231,6 +258,52 @@ class KeyboardReplicaTest {
         assertEquals(0xFFFCFCFC.toInt(), replicaCandidateBaseColor(isDark = false))
         assertEquals(0xFF5F5F5F.toInt(), replicaCandidateBaseColor(isDark = true))
         assertTrue(replicaCandidateBaseColor(isDark = false) != 0xFFFFFFFF.toInt())
+    }
+
+    /**
+     * 深色档的键面字色必须从**合成后**的键帽色推出来。
+     *
+     * 216 深色主题实测：键帽色 0x2BEEEEED 叠在面板 (10,10,13) 上得到 (48,48,51)，
+     * 真机键帽实测 (49,49,51)。合成色是深的，所以字色该是浅的；改之前直接拿键帽色自身的
+     * RGB（浅）判明暗，得出了黑字，深色键盘上的字就一直是黑的。
+     */
+    @Test
+    fun compositeOverReproducesTheMeasuredDarkKeyCap() {
+        val composed = replicaCompositeOver(0x2BEEEEED.toInt(), 0xFF0A0A0D.toInt())
+        assertEquals(48, (composed shr 16) and 0xFF)
+        assertEquals(48, (composed shr 8) and 0xFF)
+        assertEquals(51, composed and 0xFF)
+        assertTrue(luminanceOf(composed) < 0.5)
+    }
+
+    /** 浅色档反过来：0x2BEDEDED 叠在浅色面板上仍是浅色，字色仍是黑的。 */
+    @Test
+    fun compositeOverKeepsTheLightKeyCapLight() {
+        val composed = replicaCompositeOver(0x2BEDEDED.toInt(), 0xFFD4D4D4.toInt())
+        assertTrue(luminanceOf(composed) > 0.5)
+    }
+
+    @Test
+    fun compositeOverIsIdentityForAnOpaqueSource() {
+        assertEquals(
+            0xFF123456.toInt(),
+            replicaCompositeOver(0xFF123456.toInt(), 0xFFFFFFFF.toInt())
+        )
+    }
+
+    @Test
+    fun compositeOverFallsBackToTheBackdropWhenFullyTransparent() {
+        assertEquals(
+            0xFF123456.toInt(),
+            replicaCompositeOver(0x00123456, 0xFF123456.toInt())
+        )
+    }
+
+    private fun luminanceOf(argb: Int): Double {
+        val r = (argb shr 16) and 0xFF
+        val g = (argb shr 8) and 0xFF
+        val b = argb and 0xFF
+        return (r * 0.299 + g * 0.587 + b * 0.114) / 255
     }
 
     /**
