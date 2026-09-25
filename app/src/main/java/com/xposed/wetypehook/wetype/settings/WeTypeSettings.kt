@@ -24,6 +24,7 @@ object WeTypeSettings {
     private const val KEY_LAST_IMPORTED_REVISION = "last_imported_revision"
     private const val KEY_LIGHT_COLOR = "light_color"
     private const val KEY_DARK_COLOR = "dark_color"
+    private const val KEY_SYSTEM_MATERIAL_ENABLED = "system_material_enabled"
     private const val KEY_HYPER_MATERIAL_ENABLED = "hyper_material_enabled"
     private const val KEY_GLASS_PARAMS = "glass_params"
     private const val KEY_GLASS_BLOOM = "glass_bloom"
@@ -50,10 +51,12 @@ object WeTypeSettings {
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
     private const val KEY_ICON_EDGE_LIGHT_ENABLED = "icon_edge_light_enabled"
+    private const val KEY_KEY_EDGE_LIGHT_ENABLED = "key_edge_light_enabled"
     private const val KEY_NATIVE_EDGE_LIGHT_ENABLED = "native_edge_light_enabled"
     private const val KEY_EDGE_LIGHT_WIDTH = "edge_light_width"
     private const val KEY_NATIVE_EDGE_LIGHT_WIDTH = "native_edge_light_width"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
+    private const val KEY_GLOW_INTENSITY = "glow_intensity"
     const val KEY_SHOW_CROSS_DEVICE_CLIPBOARD = "show_cross_device_clipboard"
     const val KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT = "remove_clipboard_retention_limit"
     const val KEY_REMOVE_CLIPBOARD_TEXT_LIMIT = "remove_clipboard_text_limit"
@@ -77,7 +80,6 @@ object WeTypeSettings {
 
     // 设置页展示偏好（独立读写，不进入 Snapshot）。
     const val KEY_APPEARANCE_STAGE_PREVIEW = "appearance_stage_preview"
-    const val KEY_APPEARANCE_STAGE_GUIDES = "appearance_stage_guides"
 
     const val KEY_QWERTY_GESTURE_ENABLED = "qwerty_gesture_enabled"
     const val KEY_T9_GESTURE_ENABLED = "t9_gesture_enabled"
@@ -246,8 +248,11 @@ object WeTypeSettings {
     const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
     const val DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP = 6
     const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
+    const val MIN_CANDIDATE_MARGIN_DP = 0
+    const val MAX_CANDIDATE_MARGIN_DP = 64
     const val DEFAULT_TOOLBAR_ICON_BG_OPACITY = 150
     const val DEFAULT_ICON_EDGE_LIGHT_ENABLED = true
+    const val DEFAULT_KEY_EDGE_LIGHT_ENABLED = true
     const val DEFAULT_NATIVE_EDGE_LIGHT_ENABLED = false
     const val DEFAULT_EDGE_LIGHT_WIDTH = 2
     const val MIN_EDGE_LIGHT_WIDTH = 1
@@ -258,7 +263,11 @@ object WeTypeSettings {
     const val DEFAULT_EDGE_LIGHT_ANGLE = 45
     const val MIN_EDGE_LIGHT_ANGLE = 0
     const val MAX_EDGE_LIGHT_ANGLE = 360
+    const val DEFAULT_GLOW_INTENSITY = 100
+    const val MIN_GLOW_INTENSITY = 0
+    const val MAX_GLOW_INTENSITY = 200
     const val DEFAULT_DISABLE_HOT_UPDATE = true
+    const val DEFAULT_SYSTEM_MATERIAL_ENABLED = true
     const val DEFAULT_HYPER_MATERIAL_ENABLED = false
 
     private val legacyKeyColorDefaults = mapOf(
@@ -334,10 +343,12 @@ object WeTypeSettings {
         val appearanceColors: Map<String, Int>,
         val toolbarIconBgOpacity: Int,
         val iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
+        val keyEdgeLightEnabled: Boolean = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         val nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
         val edgeLightWidth: Int = DEFAULT_EDGE_LIGHT_WIDTH,
         val nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
         val edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
+        val glowIntensity: Int = DEFAULT_GLOW_INTENSITY,
         val disableHotUpdate: Boolean,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
@@ -376,6 +387,7 @@ object WeTypeSettings {
         val logoImageName: String = DEFAULT_LOGO_IMAGE_NAME,
         val logoImageUpdatedAt: Long = DEFAULT_LOGO_IMAGE_UPDATED_AT,
         val fontMode: Int = DEFAULT_FONT_MODE,
+        val systemMaterialEnabled: Boolean = DEFAULT_SYSTEM_MATERIAL_ENABLED,
         val hyperMaterialEnabled: Boolean = DEFAULT_HYPER_MATERIAL_ENABLED,
         val glassOverrides: GlassMaterialOverrides = GlassMaterialOverrides()
     )
@@ -416,13 +428,6 @@ object WeTypeSettings {
 
     fun setAppearanceStagePreviewEnabled(context: Context, enabled: Boolean): Boolean =
         appPreferences(context).edit().putBoolean(KEY_APPEARANCE_STAGE_PREVIEW, enabled).commit()
-
-    /** 圆角对齐参考线：叠在真机键盘底部两角的屏幕圆角 / 配置圆角参考弧。 */
-    fun isAppearanceStageGuidesEnabled(context: Context): Boolean =
-        appPreferences(context).getBoolean(KEY_APPEARANCE_STAGE_GUIDES, false)
-
-    fun setAppearanceStageGuidesEnabled(context: Context, enabled: Boolean): Boolean =
-        appPreferences(context).edit().putBoolean(KEY_APPEARANCE_STAGE_GUIDES, enabled).commit()
 
     fun readClipboardBackupSettings(context: Context): ClipboardBackupSettings {
         val local = appPreferences(context)
@@ -585,7 +590,7 @@ object WeTypeSettings {
     fun getColorOsLightAngle(context: Context): Int = readSnapshot(context).colorOsLightAngle
 
     /**
-     * ColorOS 光感二级页的定点更新入口：读当前快照后只覆盖光感相关字段，
+     * 光感相关字段的定点更新入口：读当前快照后只覆盖光感字段，
      * 其余设置原样回写。同时把 ColorOS 光感与 HyperOS 质感开关解耦——
      * 光感是否生效只看这里的 `edgeHighlightEnabled`。
      */
@@ -595,10 +600,12 @@ object WeTypeSettings {
         edgeHighlightIntensity: Int? = null,
         colorOsLightAngle: Int? = null,
         iconEdgeLightEnabled: Boolean? = null,
+        keyEdgeLightEnabled: Boolean? = null,
         nativeEdgeLightEnabled: Boolean? = null,
         edgeLightWidth: Int? = null,
         nativeEdgeLightWidth: Int? = null,
         edgeLightAngle: Int? = null,
+        glowIntensity: Int? = null,
         onPersisted: (Boolean) -> Unit = {}
     ): Boolean {
         val current = readLocalSnapshot(context)
@@ -619,10 +626,12 @@ object WeTypeSettings {
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
             iconEdgeLightEnabled = iconEdgeLightEnabled ?: current.iconEdgeLightEnabled,
+            keyEdgeLightEnabled = keyEdgeLightEnabled ?: current.keyEdgeLightEnabled,
             nativeEdgeLightEnabled = nativeEdgeLightEnabled ?: current.nativeEdgeLightEnabled,
             edgeLightWidth = edgeLightWidth ?: current.edgeLightWidth,
             nativeEdgeLightWidth = nativeEdgeLightWidth ?: current.nativeEdgeLightWidth,
             edgeLightAngle = edgeLightAngle ?: current.edgeLightAngle,
+            glowIntensity = glowIntensity ?: current.glowIntensity,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
@@ -662,6 +671,7 @@ object WeTypeSettings {
             logoImageName = current.logoImageName,
             logoImageUpdatedAt = current.logoImageUpdatedAt,
             fontMode = current.fontMode,
+            systemMaterialEnabled = current.systemMaterialEnabled,
             hyperMaterialEnabled = current.hyperMaterialEnabled,
             glassOverrides = current.glassOverrides,
             onPersisted = onPersisted
@@ -898,10 +908,12 @@ object WeTypeSettings {
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
         iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
+        keyEdgeLightEnabled: Boolean = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
         edgeLightWidth: Int = DEFAULT_EDGE_LIGHT_WIDTH,
         nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
+        glowIntensity: Int = DEFAULT_GLOW_INTENSITY,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -941,6 +953,7 @@ object WeTypeSettings {
         logoImageName: String = DEFAULT_LOGO_IMAGE_NAME,
         logoImageUpdatedAt: Long = DEFAULT_LOGO_IMAGE_UPDATED_AT,
         fontMode: Int = DEFAULT_FONT_MODE,
+        systemMaterialEnabled: Boolean = DEFAULT_SYSTEM_MATERIAL_ENABLED,
         hyperMaterialEnabled: Boolean = DEFAULT_HYPER_MATERIAL_ENABLED,
         glassOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
         onPersisted: (Boolean) -> Unit = {}
@@ -965,10 +978,12 @@ object WeTypeSettings {
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
             iconEdgeLightEnabled = iconEdgeLightEnabled,
+            keyEdgeLightEnabled = keyEdgeLightEnabled,
             nativeEdgeLightEnabled = nativeEdgeLightEnabled,
             edgeLightWidth = edgeLightWidth,
             nativeEdgeLightWidth = nativeEdgeLightWidth,
             edgeLightAngle = edgeLightAngle,
+            glowIntensity = glowIntensity,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
@@ -1008,6 +1023,7 @@ object WeTypeSettings {
             logoImageName = logoImageName,
             logoImageUpdatedAt = logoImageUpdatedAt,
             fontMode = fontMode,
+            systemMaterialEnabled = systemMaterialEnabled,
             hyperMaterialEnabled = hyperMaterialEnabled,
             glassOverrides = glassOverrides,
             onPersisted = onPersisted
@@ -1048,6 +1064,12 @@ object WeTypeSettings {
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
             iconEdgeLightEnabled = current.iconEdgeLightEnabled,
+            keyEdgeLightEnabled = current.keyEdgeLightEnabled,
+            nativeEdgeLightEnabled = current.nativeEdgeLightEnabled,
+            edgeLightWidth = current.edgeLightWidth,
+            nativeEdgeLightWidth = current.nativeEdgeLightWidth,
+            edgeLightAngle = current.edgeLightAngle,
+            glowIntensity = current.glowIntensity,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
@@ -1087,6 +1109,7 @@ object WeTypeSettings {
             logoImageName = imageName ?: current.logoImageName,
             logoImageUpdatedAt = updatedAt ?: current.logoImageUpdatedAt,
             fontMode = current.fontMode,
+            systemMaterialEnabled = current.systemMaterialEnabled,
             hyperMaterialEnabled = current.hyperMaterialEnabled,
             glassOverrides = current.glassOverrides,
             onPersisted = onPersisted
@@ -1132,6 +1155,12 @@ object WeTypeSettings {
     fun isIconEdgeLightEnabledXposed(): Boolean =
         readSnapshotXposed().iconEdgeLightEnabled
 
+    fun isKeyEdgeLightEnabled(context: Context): Boolean =
+        readSnapshot(context).keyEdgeLightEnabled
+
+    fun isKeyEdgeLightEnabledXposed(): Boolean =
+        readSnapshotXposed().keyEdgeLightEnabled
+
     fun isNativeEdgeLightEnabledXposed(): Boolean =
         readSnapshotXposed().nativeEdgeLightEnabled
 
@@ -1141,10 +1170,16 @@ object WeTypeSettings {
 
     fun getEdgeLightAngleXposed(): Int = readSnapshotXposed().edgeLightAngle
 
+    fun getGlowIntensityXposed(): Int = readSnapshotXposed().glowIntensity
+
     fun getCandidatePinyinLeftMarginDpXposed(): Int =
         readSnapshotXposed().candidatePinyinLeftMarginDp
 
     fun isDisableHotUpdateXposed(): Boolean = readSnapshotXposed().disableHotUpdate
+
+    fun isSystemMaterialEnabled(context: Context): Boolean = readSnapshot(context).systemMaterialEnabled
+
+    fun isSystemMaterialEnabledXposed(): Boolean = readSnapshotXposed().systemMaterialEnabled
 
     fun isHyperMaterialEnabled(context: Context): Boolean = readSnapshot(context).hyperMaterialEnabled
 
@@ -1273,10 +1308,12 @@ object WeTypeSettings {
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
         iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
+        keyEdgeLightEnabled: Boolean = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
         edgeLightWidth: Int = DEFAULT_EDGE_LIGHT_WIDTH,
         nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
+        glowIntensity: Int = DEFAULT_GLOW_INTENSITY,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -1316,6 +1353,7 @@ object WeTypeSettings {
         logoImageName: String = DEFAULT_LOGO_IMAGE_NAME,
         logoImageUpdatedAt: Long = DEFAULT_LOGO_IMAGE_UPDATED_AT,
         fontMode: Int = DEFAULT_FONT_MODE,
+        systemMaterialEnabled: Boolean = DEFAULT_SYSTEM_MATERIAL_ENABLED,
         hyperMaterialEnabled: Boolean = DEFAULT_HYPER_MATERIAL_ENABLED,
         glassOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
         onPersisted: (Boolean) -> Unit
@@ -1335,15 +1373,19 @@ object WeTypeSettings {
                 0f,
                 MAX_CANDIDATE_BACKGROUND_CORNER.toFloat()
             ),
-            candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.coerceIn(0, 64),
-            candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.coerceIn(0, 64),
+            candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp
+                .coerceIn(MIN_CANDIDATE_MARGIN_DP, MAX_CANDIDATE_MARGIN_DP),
+            candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp
+                .coerceIn(MIN_CANDIDATE_MARGIN_DP, MAX_CANDIDATE_MARGIN_DP),
             toolbarIconBgOpacity = toolbarIconBgOpacity.coerceIn(0, 255),
             iconEdgeLightEnabled = iconEdgeLightEnabled,
+            keyEdgeLightEnabled = keyEdgeLightEnabled,
             nativeEdgeLightEnabled = nativeEdgeLightEnabled,
             edgeLightWidth = edgeLightWidth.coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH),
             nativeEdgeLightWidth = nativeEdgeLightWidth
                 .coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
             edgeLightAngle = edgeLightAngle.coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
+            glowIntensity = glowIntensity.coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 group.id to (appearanceColors[group.id] ?: group.defaultColor)
             },
@@ -1385,6 +1427,7 @@ object WeTypeSettings {
             logoImageName = logoImageName.take(128),
             logoImageUpdatedAt = logoImageUpdatedAt.coerceAtLeast(0L),
             fontMode = fontMode.coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM),
+            systemMaterialEnabled = systemMaterialEnabled,
             hyperMaterialEnabled = hyperMaterialEnabled,
             glassOverrides = glassOverrides
         )
@@ -1476,10 +1519,13 @@ object WeTypeSettings {
             )
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, snapshot.toolbarIconBgOpacity)
             .putBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, snapshot.iconEdgeLightEnabled)
+            .putBoolean(KEY_KEY_EDGE_LIGHT_ENABLED, snapshot.keyEdgeLightEnabled)
             .putBoolean(KEY_NATIVE_EDGE_LIGHT_ENABLED, snapshot.nativeEdgeLightEnabled)
             .putInt(KEY_EDGE_LIGHT_WIDTH, snapshot.edgeLightWidth)
             .putInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, snapshot.nativeEdgeLightWidth)
             .putInt(KEY_EDGE_LIGHT_ANGLE, snapshot.edgeLightAngle)
+            .putInt(KEY_GLOW_INTENSITY, snapshot.glowIntensity)
+            .putBoolean(KEY_SYSTEM_MATERIAL_ENABLED, snapshot.systemMaterialEnabled)
             .putBoolean(KEY_HYPER_MATERIAL_ENABLED, snapshot.hyperMaterialEnabled)
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
@@ -1617,11 +1663,13 @@ object WeTypeSettings {
         putInt(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP, candidatePinyinLeftMarginDp)
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
         putBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, iconEdgeLightEnabled)
+        putBoolean(KEY_KEY_EDGE_LIGHT_ENABLED, keyEdgeLightEnabled)
         putBoolean(KEY_NATIVE_EDGE_LIGHT_ENABLED, nativeEdgeLightEnabled)
         putInt(KEY_EDGE_LIGHT_WIDTH, edgeLightWidth)
         putInt(KEY_COLOROS_LIGHT_ANGLE, colorOsLightAngle)
         putInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, nativeEdgeLightWidth)
         putInt(KEY_EDGE_LIGHT_ANGLE, edgeLightAngle)
+        putInt(KEY_GLOW_INTENSITY, glowIntensity)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
@@ -1661,6 +1709,7 @@ object WeTypeSettings {
         putString(KEY_LOGO_IMAGE_NAME, logoImageName)
         putLong(KEY_LOGO_IMAGE_UPDATED_AT, logoImageUpdatedAt)
         putInt(KEY_FONT_MODE, fontMode)
+        putBoolean(KEY_SYSTEM_MATERIAL_ENABLED, systemMaterialEnabled)
         putBoolean(KEY_HYPER_MATERIAL_ENABLED, hyperMaterialEnabled)
         glassOverrides.glass?.let { putFloatArray(KEY_GLASS_PARAMS, it.toFloatArray()) }
         glassOverrides.bloom?.let { putFloatArray(KEY_GLASS_BLOOM, it.toFloatArray()) }
@@ -1742,6 +1791,10 @@ object WeTypeSettings {
                 KEY_ICON_EDGE_LIGHT_ENABLED,
                 defaults.iconEdgeLightEnabled
             ),
+            keyEdgeLightEnabled = getBoolean(
+                KEY_KEY_EDGE_LIGHT_ENABLED,
+                defaults.keyEdgeLightEnabled
+            ),
             nativeEdgeLightEnabled = getBoolean(
                 KEY_NATIVE_EDGE_LIGHT_ENABLED,
                 defaults.nativeEdgeLightEnabled
@@ -1758,6 +1811,10 @@ object WeTypeSettings {
                 KEY_EDGE_LIGHT_ANGLE,
                 defaults.edgeLightAngle
             ).coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
+            glowIntensity = getInt(
+                KEY_GLOW_INTENSITY,
+                defaults.glowIntensity
+            ).coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY),
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
@@ -1821,6 +1878,7 @@ object WeTypeSettings {
             logoImageUpdatedAt = getLong(KEY_LOGO_IMAGE_UPDATED_AT, defaults.logoImageUpdatedAt).coerceAtLeast(0L),
             fontMode = getInt(KEY_FONT_MODE, defaults.fontMode)
                 .coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM),
+            systemMaterialEnabled = getBoolean(KEY_SYSTEM_MATERIAL_ENABLED, defaults.systemMaterialEnabled),
             hyperMaterialEnabled = getBoolean(KEY_HYPER_MATERIAL_ENABLED, defaults.hyperMaterialEnabled),
             glassOverrides = GlassMaterialOverrides(
                 glass = getFloatArray(KEY_GLASS_PARAMS)?.toList(),
@@ -1914,6 +1972,10 @@ object WeTypeSettings {
                 KEY_ICON_EDGE_LIGHT_ENABLED,
                 DEFAULT_ICON_EDGE_LIGHT_ENABLED
             ),
+            keyEdgeLightEnabled = getBoolean(
+                KEY_KEY_EDGE_LIGHT_ENABLED,
+                DEFAULT_KEY_EDGE_LIGHT_ENABLED
+            ),
             nativeEdgeLightEnabled = getBoolean(
                 KEY_NATIVE_EDGE_LIGHT_ENABLED,
                 DEFAULT_NATIVE_EDGE_LIGHT_ENABLED
@@ -1924,6 +1986,8 @@ object WeTypeSettings {
                 .coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
             edgeLightAngle = getInt(KEY_EDGE_LIGHT_ANGLE, DEFAULT_EDGE_LIGHT_ANGLE)
                 .coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
+            glowIntensity = getInt(KEY_GLOW_INTENSITY, DEFAULT_GLOW_INTENSITY)
+                .coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 val key = "$KEY_APPEARANCE_COLOR_PREFIX${group.id}"
                 val fallbackColor = if (legacyKeyOpacity != null) {
@@ -1996,6 +2060,7 @@ object WeTypeSettings {
                 .coerceAtLeast(0L),
             fontMode = getInt(KEY_FONT_MODE, DEFAULT_FONT_MODE)
                 .coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM),
+            systemMaterialEnabled = getBoolean(KEY_SYSTEM_MATERIAL_ENABLED, DEFAULT_SYSTEM_MATERIAL_ENABLED),
             hyperMaterialEnabled = getBoolean(KEY_HYPER_MATERIAL_ENABLED, DEFAULT_HYPER_MATERIAL_ENABLED),
             glassOverrides = readGlassOverrides()
         )
@@ -2037,10 +2102,12 @@ object WeTypeSettings {
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         toolbarIconBgOpacity = DEFAULT_TOOLBAR_ICON_BG_OPACITY,
         iconEdgeLightEnabled = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
+        keyEdgeLightEnabled = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         nativeEdgeLightEnabled = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
         edgeLightWidth = DEFAULT_EDGE_LIGHT_WIDTH,
         nativeEdgeLightWidth = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
         edgeLightAngle = DEFAULT_EDGE_LIGHT_ANGLE,
+        glowIntensity = DEFAULT_GLOW_INTENSITY,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -2099,10 +2166,12 @@ object WeTypeSettings {
             contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) ||
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
             contains(KEY_ICON_EDGE_LIGHT_ENABLED) ||
+            contains(KEY_KEY_EDGE_LIGHT_ENABLED) ||
             contains(KEY_NATIVE_EDGE_LIGHT_ENABLED) ||
             contains(KEY_EDGE_LIGHT_WIDTH) ||
             contains(KEY_NATIVE_EDGE_LIGHT_WIDTH) ||
             contains(KEY_EDGE_LIGHT_ANGLE) ||
+            contains(KEY_GLOW_INTENSITY) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
@@ -2138,6 +2207,7 @@ object WeTypeSettings {
             contains(KEY_LOGO_IMAGE_NAME) ||
             contains(KEY_LOGO_IMAGE_UPDATED_AT) ||
             contains(KEY_FONT_MODE) ||
+            contains(KEY_SYSTEM_MATERIAL_ENABLED) ||
             contains(KEY_HYPER_MATERIAL_ENABLED) ||
             contains("${KEY_GLASS_PARAMS}_count") ||
             contains(KEY_GLASS_BLUR_SMALL) ||

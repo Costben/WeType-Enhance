@@ -37,6 +37,7 @@ import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeColorOsMaterialStroke
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
+import com.xposed.wetypehook.wetype.graphics.WeTypeSelfDrawnEdgeLight
 import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -46,15 +47,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 private const val WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX = 2
-
-/**
- * 工具栏条带抓取的重试窗口。
- *
- * `onStartInputView` 回来时工具栏行还没量过尺寸，渲染出来是空的；250ms 一次、最多 6 次
- * 覆盖了宿主的首帧布局与切换键盘语法后的重排。
- */
-private const val TOOLBAR_STRIP_CAPTURE_RETRY_COUNT = 6
-private const val TOOLBAR_STRIP_CAPTURE_RETRY_DELAY_MS = 250L
 
 /**
  * ColorOS 原生材质边缘光生效时，背板面板的最低不透明度（0xC8 ≈ 78%）。
@@ -71,17 +63,6 @@ private const val MIN_PANEL_ALPHA = 0xC8
 /** 把 [this] 的 alpha 提升到至少 [minimum]（0..255），保留 RGB。 */
 private fun Int.withMinimumAlpha(minimum: Int): Int =
     (this and 0x00FFFFFF) or (maxOf(this ushr 24, minimum) shl 24)
-
-/** 模块自绘高光的基准宽度（dp），对应 WeTypeBloomStrokeDrawable 的 CSS 阴影几何。 */
-private const val BASE_EDGE_WIDTH_DP = 2f
-
-/**
- * 强度滑杆（0..100）到自绘高光的换算倍数。
- *
- * 滑杆从 0..300 收到 0..100，倍数相应提高，使 100 与原来的 300 等效——自绘高光的
- * 可达上限不变，只是每一格对应的调整量更大。
- */
-private const val BLOOM_EDGE_INTENSITY_GAIN = 3f
 
 /**
  * 强度滑杆（0..100）到原生材质的换算倍数。
@@ -154,8 +135,8 @@ internal object WeTypeWindowHooks {
         val cornerRadii: WeTypeCornerRadii,
         val nightMode: Int,
         val density: Float,
-        val hyperMaterialEnabled: Boolean,
-        val hyperMaterialAvailable: Boolean,
+        val systemMaterialEnabled: Boolean,
+        val systemMaterialActive: Boolean,
         val nativeStrokeEnabled: Boolean
     )
 
@@ -1134,7 +1115,6 @@ internal object WeTypeWindowHooks {
         (inputMethodService as? InputMethodService)?.let { service ->
             if (stage == "onStartInputView" || stage == "onWindowShown") {
                 KeyboardPreviewLiveReload.start(service)
-                scheduleToolbarStripCapture(service)
             }
         }
         runCatching {
@@ -1157,32 +1137,6 @@ internal object WeTypeWindowHooks {
             Log.i("Failed: Handle WeType window stage")
             Log.i(it)
         }
-    }
-
-    /**
-     * 键盘显示后把工具栏那一行抓成条带 PNG，供设置页的键盘复刻件当工具栏用。
-     *
-     * 必须等布局完成：`onStartInputView` 刚回来时工具栏行还没量过尺寸，直接渲染只会得到
-     * 一张空图。所以要重试几次，抓到就停；预览开关关着时一次都不排。
-     */
-    private fun scheduleToolbarStripCapture(inputMethodService: Any) {
-        val context = (inputMethodService as? InputMethodService)?.window?.window?.decorView?.context
-            ?: return
-        if (!WeTypeSettings.isAppearanceStagePreviewEnabled(context)) return
-        val decorView = (inputMethodService as InputMethodService).window?.window?.decorView as? ViewGroup
-            ?: return
-        val handler = Handler(Looper.getMainLooper())
-        var attempt = 0
-        val tick = object : Runnable {
-            override fun run() {
-                if (!decorView.isAttachedToWindow) return
-                if (KeyboardToolbarStripCapture.capture(context, decorView)) return
-                attempt++
-                if (attempt >= TOOLBAR_STRIP_CAPTURE_RETRY_COUNT) return
-                handler.postDelayed(this, TOOLBAR_STRIP_CAPTURE_RETRY_DELAY_MS)
-            }
-        }
-        handler.postDelayed(tick, TOOLBAR_STRIP_CAPTURE_RETRY_DELAY_MS)
     }
 
     private fun scheduleWindowBlur(inputMethodService: Any, refreshStyle: Boolean = true) {
@@ -1411,10 +1365,16 @@ internal object WeTypeWindowHooks {
             }
         }
 
-        val overrides = if (settings.hyperMaterialEnabled && WeTypeSystemMaterials.areGlassOverridesAvailable()) {
+        val colorOsMaterial = settings.systemMaterialEnabled && settings.nativeEdgeLightEnabled &&
+            WeTypeSystemMaterials.isColorOsBackend()
+        // HyperOS 上的背板材质开关。ColorOS 后端由「ColorOS 系统材质」那一行接管，这个开关不参与。
+        val hyperMaterial = settings.systemMaterialEnabled && settings.hyperMaterialEnabled &&
+            !WeTypeSystemMaterials.isColorOsBackend()
+        val systemMaterialActive = colorOsMaterial || hyperMaterial
+        // 玻璃参数只有 HyperOS 后端读，ColorOS 后端由 areGlassOverridesAvailable() 自己挡掉。
+        val overrides = if (hyperMaterial && WeTypeSystemMaterials.areGlassOverridesAvailable()) {
             settings.glassOverrides
         } else GlassMaterialOverrides()
-        val materialEnabled = settings.hyperMaterialEnabled
         val carrier = ensureBackgroundCarrier(context, decorGroup, state, overrides)
         carrier.visibility = View.VISIBLE
         val style = BackgroundStyle(
@@ -1431,8 +1391,8 @@ internal object WeTypeWindowHooks {
             cornerRadii = cornerRadii,
             nightMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
             density = context.resources.displayMetrics.density,
-            hyperMaterialEnabled = materialEnabled,
-            hyperMaterialAvailable = WeTypeSystemMaterials.isAvailable(context),
+            systemMaterialEnabled = settings.systemMaterialEnabled,
+            systemMaterialActive = systemMaterialActive,
             nativeStrokeEnabled = WeTypeSystemMaterials.isNativeStrokeEnabled(context)
         )
         val viewRoot = if (state.backgroundStyleDirty || carrier.background == null) {
@@ -1440,12 +1400,11 @@ internal object WeTypeWindowHooks {
         } else {
             state.backgroundViewRoot
         }
-        // ColorOS 原生边缘光是否生效只看模块自己的开关，不再依赖 HyperOS 质感视效开关。
-        val useColorOsStroke = style.edgeHighlightEnabled &&
-            style.nativeEdgeLightEnabled &&
-            WeTypeSystemMaterials.isColorOsBackend()
+        // ColorOS 那套系统材质（背板模糊 + 原生边缘光 + 内阴影）整体由「ColorOS 系统材质」
+        // 这一行驱动，与 HyperOS 的背板材质开关、模块自绘光感都是独立轨道。两者同时开启时以原生为准。
+        val useColorOsStroke = colorOsMaterial
         if (carrier.background == null || state.backgroundStyle != style || state.backgroundViewRoot !== viewRoot) {
-            val isColorOsMaterial = style.hyperMaterialEnabled && WeTypeSystemMaterials.isColorOsBackend()
+            val isColorOsMaterial = useColorOsStroke
             if (!isColorOsMaterial) {
                 applyContinuousCornerOutline(carrier, cornerRadii)
             } else {
@@ -1453,7 +1412,7 @@ internal object WeTypeWindowHooks {
                 carrier.outlineProvider = null
             }
             val material = checkNotNull(state.hyperMaterial)
-            if (style.hyperMaterialEnabled) {
+            if (style.systemMaterialActive) {
                 // Remove the old blur/bloom drawable before enabling the system material.
                 carrier.background = Color.TRANSPARENT.toDrawable()
                 if (!material.apply(style.nightMode == Configuration.UI_MODE_NIGHT_YES, style.color)) {
@@ -1463,7 +1422,7 @@ internal object WeTypeWindowHooks {
                     applyContinuousCornerOutline(carrier, cornerRadii)
                 } else {
                     // ColorOS 的原生模糊只画背景，不像 HyperOS 材质自带面板光影；
-                    // 这里把模块自绘的「流光轮廓」叠到模糊之上，跟随系统同名开关。
+                    // 这里把模块自绘的「流光轮廓」叠到模糊之上，跟随模块自己的「光感设置」总控。
                     if (useColorOsStroke) {
                         // 原生材质是**背板滤镜**，只处理「节点背后、同一窗口内」已画好的画面。
                         // 载体此前只挂模糊 Drawable，等于没画任何东西（实测键盘区像素与 App 背景
@@ -1479,15 +1438,25 @@ internal object WeTypeWindowHooks {
                         carrier.background = createBackgroundDrawable(
                             carrier, context, style.copy(color = panelColor), skipStroke = true
                         )
-                    } else {
+                    } else if (style.edgeHighlightEnabled) {
                         carrier.foreground = WeTypeBloomStrokeDrawable(
                             context = context,
                             cornerRadii = cornerRadii,
                             surfaceColor = style.color,
-                            intensityScale = style.edgeHighlightIntensity / 100f * BLOOM_EDGE_INTENSITY_GAIN,
-                            strokeWidthScale = style.edgeLightWidth / BASE_EDGE_WIDTH_DP,
-                            lightAngleDegrees = style.edgeLightAngle.toFloat()
+                            intensityScale = WeTypeSelfDrawnEdgeLight
+                                .intensityScale(style.edgeHighlightIntensity),
+                            strokeWidthScale = WeTypeSelfDrawnEdgeLight
+                                .strokeWidthScale(style.edgeLightWidth),
+                            lightAngleDegrees = style.edgeLightAngle.toFloat(),
+                            // 面板只留亮层。阴影栈里那层黑色（inset 0 0 8dp 1dp 20% 黑）会跟着
+                            // 「强度」一起放大，而三层白色在强度 ~40 就顶到 255 不再变亮，于是继续
+                            // 拉高只剩内缘越来越暗：216 上强度 92 时实测顶边往里 8~10px 处比面板
+                            // 暗 29 级，正是「内圈不亮反暗」。这里把暗层整层关掉，让预览与真机一致。
+                            innerShadowScale = 0f
                         )
+                    } else {
+                        // 自绘光感总控关闭：清掉上一轮挂上的流光轮廓，避免残留描边。
+                        carrier.foreground = null
                     }
                 }
             } else {
@@ -1513,7 +1482,7 @@ internal object WeTypeWindowHooks {
             carrier.layout(0, bounds.top, decorView.width, bounds.top + backgroundHeight)
             carrier.invalidateOutline()
         }
-        if (style.hyperMaterialEnabled) {
+        if (style.systemMaterialActive) {
             state.hyperMaterial?.updateGeometry(cornerRadii)
         }
         // 材质边缘光/内阴影必须等载体量到真实尺寸后再下发：`OplusMaterialUtil.setBaseParams`
@@ -1606,7 +1575,7 @@ internal object WeTypeWindowHooks {
     ) {
         // 带透明度的色值是"叠加色"，实际观感取决于底下透出什么；系统材质的观感来自合成器
         // 采样。两者都推不出亮度，退回系统深浅模式，而不是拿半透明色硬算。
-        val colorIsUsable = !style.hyperMaterialEnabled &&
+        val colorIsUsable = !style.systemMaterialActive &&
             Color.alpha(style.color) >= NAV_BAR_OPAQUE_ALPHA_THRESHOLD
         // 该位表达的是"底栏是浅色的，请画深色图标"，不是一个"图标要浅色"的开关。
         val lightNavBar = if (colorIsUsable) {
@@ -1881,9 +1850,13 @@ internal object WeTypeWindowHooks {
                         context = context,
                         cornerRadii = cornerRadii,
                         surfaceColor = color,
-                        intensityScale = style.edgeHighlightIntensity / 100f * BLOOM_EDGE_INTENSITY_GAIN,
-                        strokeWidthScale = style.edgeLightWidth / BASE_EDGE_WIDTH_DP,
-                        lightAngleDegrees = style.edgeLightAngle.toFloat()
+                        intensityScale = WeTypeSelfDrawnEdgeLight
+                            .intensityScale(style.edgeHighlightIntensity),
+                        strokeWidthScale = WeTypeSelfDrawnEdgeLight
+                            .strokeWidthScale(style.edgeLightWidth),
+                        lightAngleDegrees = style.edgeLightAngle.toFloat(),
+                        // 同上：面板的暗层整层关掉，只留亮层，免得「强度」拉高后内圈发暗。
+                        innerShadowScale = 0f
                     )
                 )
             }

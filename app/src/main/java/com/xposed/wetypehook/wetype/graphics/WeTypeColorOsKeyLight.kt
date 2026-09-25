@@ -26,7 +26,7 @@ import com.xposed.wetypehook.xposed.Log
 internal class WeTypeColorOsKeyLight private constructor(
     private val drawable: Drawable,
     private val loader: ClassLoader
-) {
+) : WeTypeEdgeLightSource {
 
     @Volatile
     private var failed = false
@@ -54,7 +54,7 @@ internal class WeTypeColorOsKeyLight private constructor(
      * 画出单键光感。[rect] 是键帽在传入 Canvas 坐标系里的矩形；
      * 内部把画布原点平移到键帽左上角，再按键帽尺寸下发分辨率与尺寸。
      */
-    fun draw(canvas: Canvas, rect: android.graphics.Rect, keyRadiusPx: Float, dark: Boolean) {
+    override fun draw(canvas: Canvas, rect: android.graphics.Rect, radiusPx: Float, dark: Boolean) {
         if (failed) return
         val width = rect.width().toFloat()
         val height = rect.height().toFloat()
@@ -64,7 +64,7 @@ internal class WeTypeColorOsKeyLight private constructor(
             // 明暗权重随主题切换（对齐小布）：暗色 0.10/0.15、亮色 0.60/0.20。
             call("setFadeAlpha", if (dark) DARK_FADE_IN else LIGHT_FADE_IN, if (dark) DARK_FADE_OUT else LIGHT_FADE_OUT)
             // 半径不能超过短边一半，否则 SDF 圆角外鼓、超出键帽轮廓。
-            call("setCornerRadius", keyRadiusPx.coerceIn(0f, minOf(width, height) / 2f))
+            call("setCornerRadius", radiusPx.coerceIn(0f, minOf(width, height) / 2f))
             call("setResolution", width, height)
             call("setSize", width, height)
             val save = canvas.save()

@@ -22,7 +22,7 @@ import kotlin.math.sin
  * A single CSS-style box-shadow layer. All length values are expressed in CSS px and are mapped to
  * density-independent pixels at draw time, matching the rest of this drawable.
  */
-private data class BoxShadow(
+internal data class BoxShadow(
     val inset: Boolean,
     val offsetX: Float,
     val offsetY: Float,
@@ -30,6 +30,27 @@ private data class BoxShadow(
     val spread: Float,
     val color: Int
 )
+
+/**
+ * Which shadow stack [WeTypeBloomStrokeDrawable] renders.
+ *
+ * [PANEL] is the stack the keyboard panel was tuned against — hundreds of dp across, so its 8dp
+ * dark inner shadow and 2dp white blurs read as a soft edge. That dark layer is also what turns
+ * "raise 强度" into "recess the inner edge", so the panel call sites drop it (`innerShadowScale = 0`)
+ * and keep only the white layers. Stamped onto a 40dp key cap or a 24dp
+ * circular icon the same numbers smear across most of the surface, so [COMPACT] keeps the four-layer
+ * structure and colours but pulls every length down to the piece size.
+ */
+internal enum class WeTypeEdgeLightPreset {
+    PANEL,
+    COMPACT;
+
+    internal val boxShadows: List<BoxShadow>
+        get() = when (this) {
+            PANEL -> PANEL_BOX_SHADOWS
+            COMPACT -> COMPACT_BOX_SHADOWS
+        }
+}
 
 private class RenderedShadow(
     val inset: Boolean,
@@ -52,12 +73,16 @@ private class RenderedShadow(
  * Outer shadows are clipped to the region outside the content shape so the overlay never darkens the
  * surface interior; inset shadows are clipped to the inside of the content shape. [intensityScale]
  * scales every layer's alpha, [strokeWidthScale] scales every layer's offset/blur/spread — that is,
- * the visible stroke width.
+ * the visible stroke width. [innerShadowScale] scales the stack's black layer alone, which is what
+ * turns "less glow" into "more recessed" instead of "uniformly dimmer".
  *
  * [lightAngleDegrees] steers the whole stack. The layer offsets above are authored for a light source
  * 45° up and to the left, so every offset is rotated by `lightAngleDegrees - 45` around the panel
- * centre: 0° puts the source straight above, the angle grows clockwise, 45° therefore reproduces the
+ * centre: 0° lights the left edge, the angle grows clockwise, 45° therefore reproduces the
  * authored look exactly, and 225° mirrors the highlight onto the opposite corner.
+ *
+ * [preset] picks the shadow stack itself: [WeTypeEdgeLightPreset.PANEL] is the stack documented
+ * above, [WeTypeEdgeLightPreset.COMPACT] the one for key caps and round icons.
  */
 internal class WeTypeBloomStrokeDrawable(
     private val context: Context,
@@ -65,7 +90,9 @@ internal class WeTypeBloomStrokeDrawable(
     private val surfaceColor: Int,
     private val intensityScale: Float = 1f,
     private val strokeWidthScale: Float = 1f,
-    private val lightAngleDegrees: Float = BASE_LIGHT_ANGLE_DEGREES
+    private val lightAngleDegrees: Float = BASE_LIGHT_ANGLE_DEGREES,
+    private val innerShadowScale: Float = 1f,
+    private val preset: WeTypeEdgeLightPreset = WeTypeEdgeLightPreset.PANEL
 ) : Drawable() {
     private val contentPath = Path()
     private val renderedShadows = mutableListOf<RenderedShadow>()
@@ -126,10 +153,17 @@ internal class WeTypeBloomStrokeDrawable(
 
         // CSS paints the first listed shadow on top, so build the list reversed: earlier list
         // entries are appended last and therefore drawn last (on top).
-        BOX_SHADOWS.asReversed().forEach { shadow ->
-            buildShadow(shadow, contentRect, alphaScale)?.let(renderedShadows::add)
+        preset.boxShadows.asReversed().forEach { shadow ->
+            val layerScale = if (isDarkeningLayer(shadow)) innerShadowScale else 1f
+            buildShadow(shadow, contentRect, alphaScale * layerScale)?.let(renderedShadows::add)
         }
     }
+
+    /** The stack's single black layer: it recesses the surface while the white layers bloom on it. */
+    private fun isDarkeningLayer(shadow: BoxShadow): Boolean =
+        Color.red(shadow.color) == 0 &&
+            Color.green(shadow.color) == 0 &&
+            Color.blue(shadow.color) == 0
 
     private fun buildShadow(
         shadow: BoxShadow,
@@ -244,18 +278,37 @@ internal class WeTypeBloomStrokeDrawable(
         private const val CSS_BLUR_TO_MASK_RADIUS = 0.8660f
         private const val MIN_MASK_RADIUS_PX = 0.05f
 
-        /** The light-source azimuth the [BOX_SHADOWS] offsets are authored for: 45° up and to the left. */
+        /** The light-source azimuth the panel stack offsets are authored for: 45° up and to the left. */
         private const val BASE_LIGHT_ANGLE_DEGREES = 45f
 
         // The highlight reads much brighter on dark keyboards, so dim every shadow layer's opacity
         // in night mode (mirrors the previous bloom behaviour).
         private const val DARK_MODE_ALPHA_SCALE = 0.3f
-
-        private val BOX_SHADOWS = listOf(
-            BoxShadow(inset = true, offsetX = 2f, offsetY = 2f, blur = 0.25f, spread = -1.5f, color = 0xB3FFFFFF.toInt()),
-            BoxShadow(inset = true, offsetX = 1f, offsetY = 1f, blur = 2f, spread = 0f, color = 0xCCFFFFFF.toInt()),
-            BoxShadow(inset = true, offsetX = -1f, offsetY = -1f, blur = 2f, spread = 0f, color = 0x99FFFFFF.toInt()),
-            BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 8f, spread = 1f, color = 0x33000000)
-        )
     }
 }
+
+/**
+ * The authored stack, byte for byte, and the reference the class doc's CSS is copied from: nothing
+ * here may drift while [WeTypeEdgeLightPreset.COMPACT] is tuned. The keyboard panel runs it with the
+ * black layer switched off (`innerShadowScale = 0`) — see the two call sites in `WeTypeWindowHooks`.
+ */
+private val PANEL_BOX_SHADOWS = listOf(
+    BoxShadow(inset = true, offsetX = 2f, offsetY = 2f, blur = 0.25f, spread = -1.5f, color = 0xB3FFFFFF.toInt()),
+    BoxShadow(inset = true, offsetX = 1f, offsetY = 1f, blur = 2f, spread = 0f, color = 0xCCFFFFFF.toInt()),
+    BoxShadow(inset = true, offsetX = -1f, offsetY = -1f, blur = 2f, spread = 0f, color = 0x99FFFFFF.toInt()),
+    BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 8f, spread = 1f, color = 0x33000000)
+)
+
+/**
+ * Same four layers and the same colours, retuned for small surfaces (~24dp–40dp: key caps and the
+ * round toolbar icons). Offsets and spreads are halved and blurs drop to 0.3–0.4× of the panel
+ * values, so the highlight reads as an edge rather than a haze that swallows the surface: on a 40dp
+ * key cap the panel's 8dp dark blur alone spans a fifth of the piece, while its 2dp white blurs wash
+ * out the hairline highlight.
+ */
+private val COMPACT_BOX_SHADOWS = listOf(
+    BoxShadow(inset = true, offsetX = 1f, offsetY = 1f, blur = 0.1f, spread = -0.75f, color = 0xB3FFFFFF.toInt()),
+    BoxShadow(inset = true, offsetX = 0.5f, offsetY = 0.5f, blur = 0.75f, spread = 0f, color = 0xCCFFFFFF.toInt()),
+    BoxShadow(inset = true, offsetX = -0.5f, offsetY = -0.5f, blur = 0.75f, spread = 0f, color = 0x99FFFFFF.toInt()),
+    BoxShadow(inset = true, offsetX = 0f, offsetY = 0f, blur = 2.5f, spread = 0.5f, color = 0x33000000)
+)
