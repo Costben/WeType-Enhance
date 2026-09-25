@@ -46,8 +46,6 @@
     <string name="settings_edge_highlight_title">Enable edge highlight effect</string>
     <string name="settings_edge_highlight_desc">When disabled, only the blur and base tint remain, without drawing the edge highlight.</string>
     <string name="settings_edge_highlight_intensity_title">Highlight intensity</string>
-    <string name="settings_coloros_light_title">ColorOS light settings</string>
-    <string name="settings_coloros_light_desc">Backplate edge light, light angle, intensity and icon edge light.</string>
     <string name="settings_group_color">Color</string>
     <string name="settings_group_actions">Actions</string>
     <string name="settings_group_other">Other</string>
@@ -67,6 +65,8 @@
     <string name="settings_toolbar_icon_bg_opacity_title">Toolbar icon bg opacity</string>
     <string name="settings_icon_edge_light_title">Icon edge light</string>
     <string name="settings_icon_edge_light_desc">Apply the same edge light as the keys to the toolbar icons and logo.</string>
+    <string name="settings_key_edge_light_title">Keyboard key light</string>
+    <string name="settings_key_edge_light_desc">Drawn by the module: adds an inner highlight to every key.</string>
     <string name="settings_key_color_hook_alpha_title">Candidate background opacity</string>
     <string name="settings_custom_color">Custom background color</string>
     <string name="settings_appearance_color_group_summary">%1$d mapped entries · default %2$s</string>
@@ -84,6 +84,7 @@
 
     <string name="settings_save_title">Save settings</string>
     <string name="settings_refresh_title">Refresh</string>
+    <string name="settings_keyboard_title">Show keyboard</string>
     <string name="settings_save_desc">Write the current configuration to the module</string>
     <string name="settings_reset_title">Restore defaults</string>
     <string name="settings_reset_desc">Reset all options to their default values</string>
@@ -109,6 +110,10 @@
     <string name="settings_hyper_material_desc">Render the keyboard background and blur with the system material. The rest of this page applies with it.</string>
     <string name="settings_hyper_material_unavailable">This system does not support the material.</string>
     <string name="settings_hyper_material_preview">Material</string>
+    <string name="settings_miui_material_title">MIUI system material</string>
+    <string name="settings_miui_material_desc">Render the keyboard plate and blur with the MIUI system material.</string>
+    <string name="settings_coloros_material_title">ColorOS system material</string>
+    <string name="settings_coloros_material_desc">Draw the edge light and inner shadow with the native ColorOS material. Width and intensity below apply to it.</string>
     <string name="settings_glass_params">Glass effect parameters</string>
     <string name="settings_glass_params_desc">42 finite numbers, separated by commas; keeps the native parameter order and units.</string>
     <string name="settings_glass_blur">Glass blur radii</string>

@@ -202,9 +202,8 @@ internal fun LogoImagePreviewCard(
     }
 
     Card(
-        modifier = Modifier
-            .padding(horizontal = 16.dp)
-            .then(pinToggleModifier),
+        // 左右缩进由承载它的容器统一给（跟列表卡片对齐），这里不再自带。
+        modifier = pinToggleModifier,
         insideMargin = PaddingValues(16.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

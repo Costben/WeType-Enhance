@@ -435,6 +435,7 @@ internal fun ClipboardBackupPage(
                     }
                 },
                 actions = {
+                    SettingsKeyboardButton()
                     SettingsRefreshButton {
                         applySettingsToImeProcess(context)
                     }

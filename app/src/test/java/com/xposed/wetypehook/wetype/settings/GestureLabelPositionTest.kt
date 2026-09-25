@@ -14,7 +14,13 @@ import org.junit.Test
 class GestureLabelPositionTest {
     private val settings = File("src/main/java/com/xposed/wetypehook/wetype/settings/WeTypeSettings.kt").readText()
     private val hooks = File("src/main/java/com/xposed/wetypehook/wetype/hook/WeTypeKeyLabelHooks.kt").readText()
-    private val ui = File("src/main/java/com/xposed/wetypehook/MainActivity.kt").readText()
+    // 设置界面拆成根包下的多个文件，按单个文件名硬编码会在每次搬家时失效，
+    // 所以整包拼接后匹配：搬家不影响契约，新增文件才会参与断言。
+    private val ui = File("src/main/java/com/xposed/wetypehook")
+        .listFiles { file -> file.extension == "kt" }
+        .orEmpty()
+        .sortedBy { it.name }
+        .joinToString("\n") { it.readText() }
 
     @Test fun centerOptionIsGone() {
         assertFalse(settings.contains("GESTURE_LABEL_POSITION_CENTER"))
