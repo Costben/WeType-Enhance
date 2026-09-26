@@ -3,35 +3,35 @@ package com.xposed.wetypehook.wetype.graphics
 import android.content.Context
 import android.graphics.BlendMode
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
+import android.view.View
 import com.xposed.wetypehook.PropertyUtils
 import com.xposed.wetypehook.xposed.Log
+import java.lang.ref.WeakReference
 
 /**
- * ColorOS 逐键光感：加载系统自身的 `COUIShadowEdgeDrawable`。
+ * ColorOS 逐键与图标原生光感后端。
  *
- * 小布输入法给每个按键单独叠这层边缘光（先画键帽底色，再画该 Drawable）。
- * 组件随 SystemUI 打包，用 [PathClassLoader] 从 `com.android.systemui` 的 APK
- * 路径加载；需要硬件加速 Canvas。
- *
- * 参数对齐小布官方实现：cornerType=2、weight=2.3、SHADOW_STYLE_2 / EDGE_STYLE_2、
- * SRC_OVER，暗色 fadeAlpha=(0.10, 0.15)、亮色 (0.60, 0.20)，描线关闭（小布也不描线）。
- *
- * `weight` 必须设置：它的默认值 0 会让 NEW_G2 走 `sdCapsule` 分支，宽大于高的按键
- * 退化成胶囊，光感圆角等于半个按键高度，远大于键帽。小布实测 weight=2.3 才走圆角
- * 矩形 SDF，贴合键帽圆角——这正是“内发光圆角比按键大”的根因。
- *
- * 按键圆角跟随模块设置，并按键帽尺寸收敛到短边一半，避免半径超过短边时 SDF 外鼓。
+ * 优先走 ColorOS 17 原生 RenderNode 材质通道（[WeTypeNativeEdgeLightManager] +
+ * [WeTypeColorOsMaterialStroke]），通过透明硬件图层节点挂载 `OplusMaterialUtil` 的
+ * `setEdgeParams` 与 `setShadowParams`；
+ * 当宿主视图未就绪或非硬件加速 Canvas 时返回 false，由调用方平滑回退至模块自绘引擎
+ * （[WeTypeSelfDrawnEdgeLight]）。
  */
 internal class WeTypeColorOsKeyLight private constructor(
-    private val drawable: Drawable,
-    private val loader: ClassLoader
+    private val hostViewRef: WeakReference<View>?,
+    private val isIconTarget: Boolean,
+    private val iconTarget: WeTypeIconEdgeLightTarget = WeTypeIconEdgeLightTarget.IMAGE_CONTENT,
+    private val legacyDrawable: Drawable?,
+    private val loader: ClassLoader?
 ) : WeTypeEdgeLightSource {
 
     @Volatile
-    private var failed = false
+    private var legacyFailed = false
 
     private fun call(name: String, vararg args: Any) {
+        val drawable = legacyDrawable ?: return
         val types = Array(args.size) { index ->
             when (val value = args[index]) {
                 is Float -> Float::class.javaPrimitiveType
@@ -44,26 +44,44 @@ internal class WeTypeColorOsKeyLight private constructor(
     }
 
     private fun enumCall(method: String, type: String, value: String) {
-        val enumClass = loader.loadClass("com.coui.appcompat.shadowedge.IShadowEdgeEffect\$$type")
+        val drawable = legacyDrawable ?: return
+        val clsLoader = loader ?: return
+        val enumClass = clsLoader.loadClass("com.coui.appcompat.shadowedge.IShadowEdgeEffect\$$type")
         @Suppress("UNCHECKED_CAST")
         val constant = java.lang.Enum.valueOf(enumClass as Class<out Enum<*>>, value)
         drawable.javaClass.getMethod(method, enumClass).invoke(drawable, constant)
     }
 
-    /**
-     * 画出单键光感。[rect] 是键帽在传入 Canvas 坐标系里的矩形；
-     * 内部把画布原点平移到键帽左上角，再按键帽尺寸下发分辨率与尺寸。
-     */
-    override fun draw(canvas: Canvas, rect: android.graphics.Rect, radiusPx: Float, dark: Boolean) {
-        if (failed) return
+    override fun draw(canvas: Canvas, rect: Rect, radiusPx: Float, dark: Boolean): Boolean {
         val width = rect.width().toFloat()
         val height = rect.height().toFloat()
-        if (!canvas.isHardwareAccelerated || width <= 0f || height <= 0f) return
-        runCatching {
+        if (!canvas.isHardwareAccelerated || width <= 0f || height <= 0f) return false
+
+        // 1. 优先通过 ColorOS 原生 RenderNode 材质 Overlay 渲染
+        val targetView = hostViewRef?.get()
+        if (targetView != null) {
+            val submitted = if (isIconTarget) {
+                WeTypeNativeEdgeLightManager.submitIcon(
+                    targetView,
+                    rect,
+                    radiusPx,
+                    dark,
+                    iconTarget
+                )
+            } else {
+                WeTypeNativeEdgeLightManager.submitKey(targetView, rect, radiusPx, dark)
+            }
+            if (submitted) {
+                return true
+            }
+        }
+
+        // 2. 若 RenderNode 材质未命中且 legacy Drawable 可用（旧版无原生材质冲突场景），尝试 legacy 绘制
+        val drawable = legacyDrawable
+        if (legacyFailed || drawable == null) return false
+        return runCatching {
             call("setIsDarkMode", dark)
-            // 明暗权重随主题切换（对齐小布）：暗色 0.10/0.15、亮色 0.60/0.20。
             call("setFadeAlpha", if (dark) DARK_FADE_IN else LIGHT_FADE_IN, if (dark) DARK_FADE_OUT else LIGHT_FADE_OUT)
-            // 半径不能超过短边一半，否则 SDF 圆角外鼓、超出键帽轮廓。
             call("setCornerRadius", radiusPx.coerceIn(0f, minOf(width, height) / 2f))
             call("setResolution", width, height)
             call("setSize", width, height)
@@ -72,23 +90,67 @@ internal class WeTypeColorOsKeyLight private constructor(
             drawable.setBounds(0, 0, rect.width(), rect.height())
             drawable.draw(canvas)
             canvas.restoreToCount(save)
+            true
         }.onFailure {
-            failed = true
+            legacyFailed = true
             Log.e("Failed: Draw ColorOS key light")
             Log.e(it)
-        }
+        }.getOrDefault(false)
     }
 
     companion object {
         fun isPlatform(): Boolean = !PropertyUtils["ro.build.version.oplusrom", ""].isNullOrEmpty()
 
-        fun create(context: Context): WeTypeColorOsKeyLight? = runCatching {
+        fun forKeyView(keyView: View): WeTypeColorOsKeyLight? {
+            if (!isPlatform()) return null
+            if (WeTypeColorOsMaterialStroke.isAvailable()) {
+                return WeTypeColorOsKeyLight(
+                    hostViewRef = WeakReference(keyView),
+                    isIconTarget = false,
+                    legacyDrawable = null,
+                    loader = null
+                )
+            }
+            return createLegacy(keyView.context, keyView, isIconTarget = false)
+        }
+
+        fun forIconView(
+            iconView: View,
+            target: WeTypeIconEdgeLightTarget
+        ): WeTypeColorOsKeyLight? {
+            if (!isPlatform()) return null
+            if (WeTypeColorOsMaterialStroke.isAvailable()) {
+                return WeTypeColorOsKeyLight(
+                    hostViewRef = WeakReference(iconView),
+                    isIconTarget = true,
+                    iconTarget = target,
+                    legacyDrawable = null,
+                    loader = null
+                )
+            }
+            return createLegacy(iconView.context, iconView, isIconTarget = true)
+        }
+
+        fun create(context: Context): WeTypeColorOsKeyLight? =
+            createLegacy(context, null, isIconTarget = false)
+
+        private fun createLegacy(
+            context: Context,
+            targetView: View?,
+            isIconTarget: Boolean
+        ): WeTypeColorOsKeyLight? = runCatching {
             val loader = WeTypeColorOsClassLoader.get(context) ?: return null
             val drawable = loader
                 .loadClass("com.coui.appcompat.shadowedge.COUIShadowEdgeDrawable")
                 .getConstructor()
                 .newInstance() as Drawable
-            val light = WeTypeColorOsKeyLight(drawable, loader)
+            val light = WeTypeColorOsKeyLight(
+                hostViewRef = targetView?.let { WeakReference(it) },
+                isIconTarget = isIconTarget,
+                iconTarget = WeTypeIconEdgeLightTarget.IMAGE_CONTENT,
+                legacyDrawable = drawable,
+                loader = loader
+            )
             light.call("setDensity", context.resources.displayMetrics.density)
             light.call("setDrawableEnabled", true)
             light.call("setCornerType", CORNER_TYPE)
@@ -108,11 +170,7 @@ internal class WeTypeColorOsKeyLight private constructor(
         }
 
         private const val CORNER_TYPE = 2
-
-        /** 小布实测：weight>=2 时 NEW_G2 走圆角矩形 SDF；低于 2 退化成胶囊/整圆。 */
         private const val KEY_WEIGHT = 2.3f
-
-        /** 小布实测内阴影明暗权重：暗色按键 10% / 15%，亮色 60% / 20%。 */
         private const val DARK_FADE_IN = 0.10f
         private const val DARK_FADE_OUT = 0.15f
         private const val LIGHT_FADE_IN = 0.60f

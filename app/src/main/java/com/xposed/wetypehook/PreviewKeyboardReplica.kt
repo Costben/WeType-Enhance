@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeSmoothRoundedShape
+import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import top.yukonga.miuix.kmp.basic.Text
 import kotlin.math.roundToInt
@@ -93,7 +94,7 @@ internal fun KeyboardReplica(
     candidateBackgroundAlpha: Int,
     candidateBackgroundLeftMarginDp: Int,
     edgeHighlightEnabled: Boolean,
-    edgeHighlightIntensity: Int,
+    backgroundLight: EdgeLightGroup,
     iconEdgeLight: ReplicaEdgeLight,
     keyEdgeLight: ReplicaEdgeLight,
     keyColor: Int,
@@ -101,6 +102,7 @@ internal fun KeyboardReplica(
     systemMaterialEnabled: Boolean,
     hyperMaterialEnabled: Boolean,
     nativeEdgeLightEnabled: Boolean,
+    nativeEdgeLightIntensity: Int = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
     showCornerGuide: Boolean,
     accentColor: Int,
     toolbarLogo: Bitmap?,
@@ -123,7 +125,7 @@ internal fun KeyboardReplica(
         colorOsBackend = WeTypeSystemMaterials.isColorOsBackend(),
         edgeHighlightEnabled = edgeHighlightEnabled,
         nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-        edgeHighlightIntensity = edgeHighlightIntensity
+        nativeEdgeLightIntensity = nativeEdgeLightIntensity
     )
     val displayColor = materialPanel.color
     val topCornerDp = cornerRadius.coerceIn(0, WeTypeSettings.MAX_CORNER_RADIUS).dp
@@ -186,8 +188,9 @@ internal fun KeyboardReplica(
                     color = displayColor,
                     topCornerRadius = topCornerDp,
                     bottomCornerRadius = bottomCornerDp,
-                    edgeHighlightEnabled = materialPanel.moduleBloom,
-                    edgeHighlightIntensity = edgeHighlightIntensity,
+                    edgeHighlightEnabled = materialPanel.moduleBloom && backgroundLight.enabled,
+                    backgroundLight = backgroundLight,
+                    angleDegrees = keyEdgeLight.angleDegrees,
                     isDark = isDark
                 )
                 .clip(panelShape)

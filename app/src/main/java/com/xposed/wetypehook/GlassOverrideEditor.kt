@@ -43,29 +43,41 @@ internal fun GlassOverrideEditor(
     onValueChange: (Int, String) -> Unit,
     onReset: () -> Unit
 ) {
-    fun read(field: GlassOverrideField) = runCatching {
-        GlassMaterialOverrides.parse(mapOf(field to values[field.ordinal]))
+    val overrides = runCatching {
+        GlassMaterialOverrides.parse(
+            GlassOverrideField.entries.associateWith { values[it.ordinal] }
+        )
     }.getOrNull()
-    val glass = read(GlassOverrideField.GLASS)?.glass
-    val radii = read(GlassOverrideField.BLUR_RADII)?.blurRadii ?: GlassSliderParameter.startingBlurRadii()
-    val bloom = read(GlassOverrideField.BLOOM)?.bloom ?: GlassSliderParameter.startingBloom()
-    val valid = GlassOverrideField.entries.all { read(it) != null }
+    val glass = overrides?.glass
+    val radii = overrides?.blurRadii ?: GlassSliderParameter.startingBlurRadii()
+    val bloom = overrides?.bloom ?: GlassSliderParameter.startingBloom()
+    val valid = overrides != null
+    // A partially edited array must not leave the switch on while its sliders are disabled.
+    val liquidGlassEnabled = valid && overrides?.isLiquidGlassEnabled == true
     SwitchPreference(
         title = stringResource(R.string.settings_glass_custom),
-        summary = stringResource(
-            if (enabled) R.string.settings_glass_custom_desc else R.string.settings_glass_unavailable
-        ),
-        checked = glass != null,
+        summary = when {
+            !enabled -> stringResource(R.string.settings_glass_unavailable)
+            !valid -> stringResource(R.string.settings_glass_invalid)
+            else -> stringResource(R.string.settings_glass_custom_desc)
+        },
+        checked = liquidGlassEnabled,
         enabled = enabled && valid,
         onCheckedChange = { checked ->
-            val current = GlassMaterialOverrides(glass, radii, bloom)
+            val current = GlassMaterialOverrides(
+                glass = glass,
+                blurRadii = radii,
+                bloom = bloom,
+                materialType = overrides?.materialType
+            )
             val updated = current.withGlassEnabled(checked)
             GlassOverrideField.entries.forEach { onValueChange(it.ordinal, updated.text(it)) }
         }
     )
     if (glass == null && valid) return
     HorizontalDivider()
-    if (glass != null) {
+    if (liquidGlassEnabled) {
+        val glassValues = checkNotNull(glass)
         val labels = mapOf(
             GlassSliderParameter.LIGHT_ANGLE to R.string.settings_glass_light_angle,
             GlassSliderParameter.LIGHT_INTENSITY to R.string.settings_glass_light_intensity,
@@ -84,7 +96,7 @@ internal fun GlassOverrideEditor(
             )
             SliderPreferenceItem(
                 title = if (bloomMode) stringResource(R.string.settings_glass_highlight_parameter, label) else label,
-                value = if (bloomMode) parameter.readBloom(bloom) else parameter.read(glass),
+                value = if (bloomMode) parameter.readBloom(bloom) else parameter.read(glassValues),
                 range = parameter.range,
                 step = parameter.step,
                 enabled = enabled && valid,
@@ -98,7 +110,7 @@ internal fun GlassOverrideEditor(
                 },
                 onValueChange = {
                     val field = if (bloomMode) GlassOverrideField.BLOOM else GlassOverrideField.GLASS
-                    val updated = if (bloomMode) parameter.writeBloom(bloom, it) else parameter.write(glass, it)
+                    val updated = if (bloomMode) parameter.writeBloom(bloom, it) else parameter.write(glassValues, it)
                     onValueChange(field.ordinal, updated.joinToString(", "))
                 }
             )
@@ -174,7 +186,7 @@ internal fun GlassRawOverrideEditor(
             style = MiuixTheme.textStyles.body2,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary
         )
-        GlassOverrideField.entries.filter { it != GlassOverrideField.MATERIAL_TYPE }.forEach { field ->
+        GlassOverrideField.entries.forEach { field ->
             val index = field.ordinal
             val valid = GlassMaterialOverrides.isValid(field, values[index])
             Column(Modifier.fillMaxWidth().padding(top = 16.dp).alpha(if (enabled) 1f else 0.38f)) {

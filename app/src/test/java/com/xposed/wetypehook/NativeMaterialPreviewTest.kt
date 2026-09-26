@@ -53,14 +53,16 @@ class NativeMaterialPreviewTest {
         colorOsBackend = colorOsBackend,
         edgeHighlightEnabled = edgeHighlightEnabled,
         nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-        edgeHighlightIntensity = intensity
+        nativeEdgeLightIntensity = intensity
     )
 
     @Test
-    fun minimumAlphaRaisesOpacityAndKeepsRgb() {
-        assertEquals(0xC8D4D4D4.toInt(), NativeMaterialPreview.withMinimumAlpha(0x93D4D4D4.toInt()))
-        assertEquals(0xFF2F80ED.toInt(), NativeMaterialPreview.withMinimumAlpha(0xFF2F80ED.toInt()))
-        assertEquals(0xC8000000.toInt(), NativeMaterialPreview.withMinimumAlpha(0x40000000))
+    fun userAlphaChangesTheNativeMaterialPanel() {
+        val transparent = NativeMaterialPreview.panelColor(0x00000000, isDark = false)
+        val opaque = NativeMaterialPreview.panelColor(0xFFD4D4D4.toInt(), isDark = false)
+        assertTrue(transparent != opaque)
+        assertEquals(0xFFDDDDDD.toInt(), transparent)
+        assertEquals(0xFFD4D4D4.toInt(), opaque)
     }
 
     @Test
@@ -71,11 +73,11 @@ class NativeMaterialPreviewTest {
 
     @Test
     fun nativeEdgeLightPanelMatchesDevicePixels() {
-        // 真机亮色档面板实测 212（用户底色 #D4D4D4 盖住浅灰底板），容差留给回读时的抖动。
+        // 透明度由用户底色直接控制；完全不透明时不再被系统材质的最低 alpha 覆盖。
         val light = NativeMaterialPreview.panelColor(0x93D4D4D4.toInt(), isDark = false)
-        assertEquals(212f, (light and 0xFF).toFloat(), 3f)
+        assertEquals(0xD8, (light and 0xFF))
         assertEquals(0xFF, light ushr 24)
-        // 暗色档面板实测 1~2（25% 黑被抬到 78%，盖在纯黑底板上）。
+        // 暗色档同样保留用户 alpha 对中性底板的影响。
         val darkColor = NativeMaterialPreview.panelColor(0x40000000, isDark = true)
         assertEquals(0f, (darkColor and 0xFF).toFloat(), 3f)
         assertEquals(0xFF, darkColor ushr 24)

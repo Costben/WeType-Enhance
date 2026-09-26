@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
@@ -36,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -57,6 +60,14 @@ internal fun WeTypeSettingsScreen(settingsContext: Context) {
     rememberWeTypeSettingsState(settingsContext).WeTypeSettingsScaffold()
 }
 
+/**
+ * 自动落盘的防抖窗口（毫秒）：状态停手这么久之后才写一次盘。
+ *
+ * 写盘走的是 `SharedPreferences.commit()`，整份快照同步落盘；拖动滑杆时每帧都写会卡，
+ * 所以窗口取得远大于一帧。拖完松手到写盘之间只差这一小段。
+ */
+private const val SETTINGS_AUTO_SAVE_DELAY_MS = 350L
+
 @Composable
 private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
     DisposableEffect(preferencesContext) {
@@ -70,7 +81,7 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
             logoImageName = fresh.logoImageName
             logoImageUpdatedAt = fresh.logoImageUpdatedAt
         }
-        // 二级页在同一进程直接写本地偏好，回来时刷新摘要与透传值（主页面不编辑这些字段）。
+        // Logo 图片那几项体积大、不进 SavedState，二级页改完之后落盘，回来时按本地偏好重读一遍。
         refreshFromLocal()
         val stopObserving = WeTypeSettings.observeLocalChanges(
             preferencesContext,
@@ -110,6 +121,27 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
             updateInfo = info
             showUpdateSheet = true
         }
+    }
+
+    // 自动落盘：控件只改内存状态，这里等状态安静下来再写一次盘。
+    //
+    // 落盘时机取「状态停止变化」而不是接每个控件的回调：一级页与二级页加起来几十处接线，
+    // 逐个接必漏；而拖动滑杆时状态每帧都在变，`collectLatest` 会取消上一次等待、重新计时，
+    // 于是整个拖动过程一次盘都不写，松手之后才写。
+    //
+    // 不重启输入法进程：`:hld` 那边有 KeyboardPreviewLiveReload 轮询偏好文件时间戳，
+    // 写盘之后自己就会重放。右上角「刷新」保留成显式重启入口。
+    LaunchedEffect(this) {
+        snapshotFlow { persistedFingerprint() }
+            .drop(1)
+            .collectLatest {
+                delay(SETTINGS_AUTO_SAVE_DELAY_MS)
+                autoSave()
+            }
+    }
+    // 兜底：改完立刻离开（防抖还没到点）也要落盘。
+    DisposableEffect(this) {
+        onDispose { autoSave() }
     }
 
     NavDisplay(
@@ -349,28 +381,25 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
                             candidateBackgroundAlpha = candidateBackgroundAlpha,
                             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
-                            edgeHighlightEnabled = edgeHighlightEnabled,
-                            edgeHighlightIntensity = edgeHighlightIntensity,
-                            // 图标与按键光感各由自己的开关门控，都挂在「光感设置」总开关之下。
+                            edgeHighlightEnabled = edgeHighlightEnabled && backgroundLight.enabled,
+                            backgroundLight = backgroundLight,
+                            // 图标与按键光感各由自己的分组门控，都挂在「光感设置」总开关之下。
                             iconEdgeLight = ReplicaEdgeLight(
-                                enabled = edgeHighlightEnabled && iconEdgeLightEnabled,
+                                enabled = edgeHighlightEnabled && iconLight.enabled,
                                 angleDegrees = edgeLightAngle,
-                                widthDp = edgeLightWidth,
-                                intensity = edgeHighlightIntensity,
-                                glow = glowIntensity
+                                group = iconLight
                             ),
                             keyEdgeLight = ReplicaEdgeLight(
-                                enabled = edgeHighlightEnabled && keyEdgeLightEnabled,
+                                enabled = edgeHighlightEnabled && keyLight.enabled,
                                 angleDegrees = edgeLightAngle,
-                                widthDp = edgeLightWidth,
-                                intensity = edgeHighlightIntensity,
-                                glow = glowIntensity
+                                group = keyLight
                             ),
                             keyColor = keyColorValue(currentModeIsDark),
                             isDark = currentModeIsDark,
                             systemMaterialEnabled = systemMaterialEnabled,
                             hyperMaterialEnabled = hyperMaterialEnabled,
                             nativeEdgeLightEnabled = nativeEdgeLightEnabled,
+                            nativeEdgeLightIntensity = nativeEdgeLightIntensity,
                             showCornerGuide = subPage == SettingsSubPage.CORNER_BLUR,
                             accentColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
                                 ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR,

@@ -60,14 +60,12 @@ internal fun WeTypeSettingsState.renderAppearancePreview(
                 cornerRadius = cornerRadius,
                 bottomCornerRadius = bottomCornerRadius,
                 keyCornerRadius = keyCornerRadius,
-                edgeHighlightEnabled = edgeHighlightEnabled,
-                edgeHighlightIntensity = edgeHighlightIntensity,
+                edgeHighlightEnabled = edgeHighlightEnabled && backgroundLight.enabled,
+                backgroundLight = backgroundLight,
                 keyEdgeLight = ReplicaEdgeLight(
-                    enabled = edgeHighlightEnabled && keyEdgeLightEnabled,
+                    enabled = edgeHighlightEnabled && keyLight.enabled,
                     angleDegrees = edgeLightAngle,
-                    widthDp = edgeLightWidth,
-                    intensity = edgeHighlightIntensity,
-                    glow = glowIntensity
+                    group = keyLight
                 ),
                 lightKeyColor = keyColorValue(false),
                 darkKeyColor = keyColorValue(true),
@@ -75,6 +73,7 @@ internal fun WeTypeSettingsState.renderAppearancePreview(
                 systemMaterialEnabled = systemMaterialEnabled,
                 hyperMaterialEnabled = hyperMaterialEnabled,
                 nativeEdgeLightEnabled = nativeEdgeLightEnabled,
+                nativeEdgeLightIntensity = nativeEdgeLightIntensity,
                 pinned = pinned,
                 onTogglePin = onTogglePin,
                 keyboardPreviewEnabled = keyboardPreviewEnabled,
@@ -182,14 +181,10 @@ internal fun WeTypeSettingsState.renderSubPageContent(
 
                 SettingsSubPage.MATERIAL -> MaterialSubPageContent(
                     systemMaterialEnabled = systemMaterialEnabled,
-                    onSystemMaterialEnabledChange = { systemMaterialEnabled = it },
+                    onSystemMaterialEnabledChange = ::selectSystemMaterialEnabled,
                     colorOsMaterialAvailable = colorOsMaterialAvailable,
                     edgeHighlightEnabled = edgeHighlightEnabled,
-                    onEdgeHighlightEnabledChange = { edgeHighlightEnabled = it },
-                    edgeLightAngle = edgeLightAngle,
-                    onEdgeLightAngleChange = { edgeLightAngle = it },
-                    edgeLightWidth = edgeLightWidth,
-                    onEdgeLightWidthChange = { edgeLightWidth = it },
+                    onOpenEdgeLightPage = { openSubPage(SettingsSubPage.EDGE_LIGHT) },
                     hyperMaterialEnabled = hyperMaterialEnabled,
                     onHyperMaterialEnabledChange = { hyperMaterialEnabled = it },
                     hyperMaterialAvailable = hyperMaterialAvailable,
@@ -201,19 +196,26 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                         GlassOverrideField.entries.forEach { glassInput[it.ordinal] = defaults.text(it) }
                     },
                     nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-                    onNativeEdgeLightEnabledChange = { nativeEdgeLightEnabled = it },
+                    onNativeEdgeLightEnabledChange = ::selectNativeEdgeLightEnabled,
                     colorOsLightAngle = colorOsLightAngle,
                     onColorOsLightAngleChange = { colorOsLightAngle = it },
                     nativeEdgeLightWidth = nativeEdgeLightWidth,
                     onNativeEdgeLightWidthChange = { nativeEdgeLightWidth = it },
-                    edgeHighlightIntensity = edgeHighlightIntensity,
-                    onEdgeHighlightIntensityChange = { edgeHighlightIntensity = it },
-                    glowIntensity = glowIntensity,
-                    onGlowIntensityChange = { glowIntensity = it },
-                    iconEdgeLightEnabled = iconEdgeLightEnabled,
-                    onIconEdgeLightEnabledChange = { iconEdgeLightEnabled = it },
-                    keyEdgeLightEnabled = keyEdgeLightEnabled,
-                    onKeyEdgeLightEnabledChange = { keyEdgeLightEnabled = it }
+                    nativeEdgeLightIntensity = nativeEdgeLightIntensity,
+                    onNativeEdgeLightIntensityChange = { nativeEdgeLightIntensity = it }
+                )
+
+                SettingsSubPage.EDGE_LIGHT -> EdgeLightSubPageContent(
+                    edgeHighlightEnabled = edgeHighlightEnabled,
+                    onEdgeHighlightEnabledChange = ::selectEdgeHighlightEnabled,
+                    edgeLightAngle = edgeLightAngle,
+                    onEdgeLightAngleChange = { edgeLightAngle = it },
+                    backgroundLight = backgroundLight,
+                    onBackgroundLightChange = { backgroundLight = it },
+                    iconLight = iconLight,
+                    onIconLightChange = { iconLight = it },
+                    keyLight = keyLight,
+                    onKeyLightChange = { keyLight = it }
                 )
 
                 SettingsSubPage.CLIPBOARD -> ClipboardSubPageContent(

@@ -11,10 +11,41 @@ import io.github.libxposed.service.XposedServiceHelper
 class ModuleApplication : Application(), XposedServiceHelper.OnServiceListener {
     companion object {
         private const val TAG = "MIUIIME.Service"
+        private const val WETYPE_IME_PROCESS = "com.tencent.wetype:hld"
 
         @Volatile
         var xposedService: XposedService? = null
             private set
+
+        /**
+         * Refresh the hooked WeType process when the settings UI runs under the module uid.
+         *
+         * A module Activity cannot signal `com.tencent.wetype:hld` directly because the two
+         * packages have different uids. API 102 hot reload is the supported cross-process route;
+         * the embedded host path still falls back to the same-uid signal in [WeTypeProcessRestarter].
+         */
+        fun requestHotReloadForWeType(): Boolean {
+            val service = xposedService ?: return false
+            val targets = runCatching { service.runningTargets }.getOrNull().orEmpty()
+            val target = targets.firstOrNull { it.processName == WETYPE_IME_PROCESS }
+                ?: targets.firstOrNull { it.processName.startsWith("com.tencent.wetype:") }
+                ?: return false
+            return runCatching {
+                service.hotReloadModule(target, null) { reloadedTarget, result ->
+                    if (result.status == HotReloadResult.Status.SUCCEEDED) {
+                        Log.i(TAG, "Hot reloaded ${reloadedTarget.processName} after settings save")
+                    } else {
+                        Log.w(
+                            TAG,
+                            "Hot reload ${reloadedTarget.processName}: ${result.status} ${result.message.orEmpty()}"
+                        )
+                    }
+                }
+                true
+            }.onFailure { error ->
+                Log.e(TAG, "Failed to hot reload WeType after settings save", error)
+            }.getOrDefault(false)
+        }
     }
 
     override fun onCreate() {

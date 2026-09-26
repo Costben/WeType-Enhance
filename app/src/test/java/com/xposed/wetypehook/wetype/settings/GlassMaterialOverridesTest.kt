@@ -84,7 +84,16 @@ class GlassMaterialOverridesTest {
         val enabled = GlassMaterialOverrides().withGlassEnabled(true)
         assertEquals(listOf(60, 16), enabled.blurRadii)
         assertEquals(GlassSliderParameter.startingBloom(), enabled.bloom)
+        assertTrue(enabled.isLiquidGlassEnabled)
         assertEquals(enabled, enabled.forLiquidGlass())
+    }
+
+    @Test fun liquidGlassStateMatchesGlassParameterPresence() {
+        val glass = GlassSliderParameter.startingGlass()
+        assertTrue(GlassMaterialOverrides(glass = glass).isLiquidGlassEnabled)
+        assertTrue(GlassMaterialOverrides(glass = glass, materialType = 0).isLiquidGlassEnabled)
+        assertTrue(GlassMaterialOverrides(glass = glass, materialType = 1).isLiquidGlassEnabled)
+        assertEquals(1, GlassMaterialOverrides(glass = glass, materialType = 0).forLiquidGlass().materialType)
     }
 
     @Test fun defaultsMatchTheSelectedNativePresetsExactly() {

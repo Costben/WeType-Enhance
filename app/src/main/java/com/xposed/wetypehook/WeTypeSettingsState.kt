@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.logo.LogoImageStore
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
+import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
@@ -90,20 +91,19 @@ internal class WeTypeSettingsState(
     var bottomCornerRadius by mutableIntStateOf(snapshot.bottomCornerRadius)
     var keyCornerRadius by mutableIntStateOf(snapshot.keyCornerRadius)
     var edgeHighlightEnabled by mutableStateOf(snapshot.edgeHighlightEnabled)
-    var edgeHighlightIntensity by mutableIntStateOf(snapshot.edgeHighlightIntensity)
+    var backgroundLight by mutableStateOf(snapshot.backgroundLight)
+    var iconLight by mutableStateOf(snapshot.iconLight)
+    var keyLight by mutableStateOf(snapshot.keyLight)
     var edgeLightAngle by mutableIntStateOf(snapshot.edgeLightAngle)
-    var edgeLightWidth by mutableIntStateOf(snapshot.edgeLightWidth)
-    var glowIntensity by mutableIntStateOf(snapshot.glowIntensity)
     var nativeEdgeLightEnabled by mutableStateOf(snapshot.nativeEdgeLightEnabled)
     var nativeEdgeLightWidth by mutableIntStateOf(snapshot.nativeEdgeLightWidth)
+    var nativeEdgeLightIntensity by mutableIntStateOf(snapshot.nativeEdgeLightIntensity)
     var colorOsLightAngle by mutableIntStateOf(snapshot.colorOsLightAngle)
     var candidateBackgroundAlpha by mutableIntStateOf(snapshot.candidateBackgroundAlpha)
     var candidateBackgroundCorner by mutableIntStateOf(snapshot.candidateBackgroundCorner.roundToInt())
     var candidateBackgroundLeftMarginDp by mutableIntStateOf(snapshot.candidateBackgroundLeftMarginDp)
     var candidatePinyinLeftMarginDp by mutableIntStateOf(snapshot.candidatePinyinLeftMarginDp)
     var toolbarIconBgOpacity by mutableIntStateOf(snapshot.toolbarIconBgOpacity)
-    var iconEdgeLightEnabled by mutableStateOf(snapshot.iconEdgeLightEnabled)
-    var keyEdgeLightEnabled by mutableStateOf(snapshot.keyEdgeLightEnabled)
     var disableHotUpdate by mutableStateOf(snapshot.disableHotUpdate)
     var showCrossDeviceClipboard by mutableStateOf(snapshot.showCrossDeviceClipboard)
     var removeClipboardRetentionLimit by mutableStateOf(snapshot.removeClipboardRetentionLimit)
@@ -173,9 +173,36 @@ internal class WeTypeSettingsState(
     val systemMaterialActive = systemMaterialEnabled &&
         if (colorOsMaterialAvailable) nativeEdgeLightEnabled else hyperMaterialEnabled
 
+    fun selectEdgeHighlightEnabled(enabled: Boolean) {
+        edgeHighlightEnabled = enabled
+        if (enabled) {
+            systemMaterialEnabled = false
+            nativeEdgeLightEnabled = false
+        }
+    }
+
+    fun selectSystemMaterialEnabled(enabled: Boolean) {
+        systemMaterialEnabled = enabled
+        if (enabled) {
+            edgeHighlightEnabled = false
+        } else {
+            // The ColorOS row is a child of this gate; closing the parent must not
+            // leave native mode persisted and silently reopen the parent on save.
+            nativeEdgeLightEnabled = false
+        }
+    }
+
+    fun selectNativeEdgeLightEnabled(enabled: Boolean) {
+        nativeEdgeLightEnabled = enabled
+        if (enabled) {
+            systemMaterialEnabled = true
+            edgeHighlightEnabled = false
+        }
+    }
+
     val openSubPage: (SettingsSubPage) -> Unit = { targetSubPage ->
-        // 现有二级页只有一个返回按钮，深度恒为 1。
-        if (navBackStack.size == 1) {
+        // 「高级材质」下面还压着三级页「光感设置」，所以返回栈最高三层。
+        if (navBackStack.size < MAX_SUB_PAGE_DEPTH) {
             navBackStack.add(SettingsRoute.SubPage(targetSubPage))
         }
     }
@@ -274,7 +301,7 @@ internal class WeTypeSettingsState(
                     logoImageName = png.name
                     logoImageType = WeTypeSettings.LOGO_IMAGE_TYPE_PNG
                     logoImageUpdatedAt = System.currentTimeMillis()
-                    logoImageMessage = "PNG 已就绪：${png.name}，点「保存」后生效"
+                    logoImageMessage = "PNG 已就绪：${png.name}，已自动保存"
                 }.onFailure { error ->
                     logoImageMessage = "导入失败：${error.message ?: "未知错误"}"
                 }
@@ -308,7 +335,7 @@ internal class WeTypeSettingsState(
                     logoImageName = svg.name
                     logoImageType = WeTypeSettings.LOGO_IMAGE_TYPE_SVG
                     logoImageUpdatedAt = System.currentTimeMillis()
-                    logoImageMessage = "SVG 已就绪：${svg.name}，点「保存」后生效"
+                    logoImageMessage = "SVG 已就绪：${svg.name}，已自动保存"
                 }.onFailure { error ->
                     logoImageMessage = "导入失败：${error.message ?: "未知错误"}"
                 }
@@ -377,13 +404,21 @@ internal class WeTypeSettingsState(
         previewWallpaperName = ""
     }
 
+    /**
+     * 把当前状态写进偏好文件。
+     *
+     * [silent] 给自动保存用：成功不提示，失败仍然要提示，否则用户会以为改动已经存上了。
+     */
     fun saveSettings(
         successMessage: Int = R.string.settings_saved,
         glassOverridesToSave: GlassMaterialOverrides? = parsedGlassOverrides,
-        restartIme: Boolean = false
+        restartIme: Boolean = false,
+        silent: Boolean = false
     ): Boolean {
         if (glassOverridesToSave == null) {
-            Toast.makeText(context, R.string.settings_glass_invalid, Toast.LENGTH_SHORT).show()
+            if (!silent) {
+                Toast.makeText(context, R.string.settings_glass_invalid, Toast.LENGTH_SHORT).show()
+            }
             return false
         }
         return WeTypeSettings.save(
@@ -395,20 +430,19 @@ internal class WeTypeSettingsState(
             bottomCornerRadius = bottomCornerRadius,
             keyCornerRadius = keyCornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity,
+            backgroundLight = backgroundLight,
+            iconLight = iconLight,
+            keyLight = keyLight,
             colorOsLightAngle = colorOsLightAngle,
             nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-            edgeLightWidth = edgeLightWidth,
             nativeEdgeLightWidth = nativeEdgeLightWidth,
+            nativeEdgeLightIntensity = nativeEdgeLightIntensity,
             edgeLightAngle = edgeLightAngle,
-            glowIntensity = glowIntensity,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
-            iconEdgeLightEnabled = iconEdgeLightEnabled,
-            keyEdgeLightEnabled = keyEdgeLightEnabled,
             appearanceColors = currentAppearanceColors(),
             disableHotUpdate = disableHotUpdate,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
@@ -459,9 +493,25 @@ internal class WeTypeSettingsState(
                     saved -> successMessage
                     else -> R.string.settings_save_failed
                 }
-                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                if (!silent || !saved) {
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
             }
         )
+    }
+
+    /**
+     * 自动保存：控件停手之后由设置页的防抖调用，只写盘，不重启输入法进程。
+     *
+     * 输入法那边有 `KeyboardPreviewLiveReload` 每 300ms 比对偏好文件时间戳，写盘之后自己就会
+     * 重放一遍，不需要在这里踢进程；右上角「刷新」保留成显式重启入口。
+     *
+     * 玻璃参数正在编辑、解析不出来时静默跳过：那是「还没输完」，不是「保存失败」，
+     * 报错留给用户主动点「刷新」的那一刻。
+     */
+    fun autoSave() {
+        if (parsedGlassOverrides == null) return
+        saveSettings(silent = true)
     }
 
     fun restoreDefaults() {
@@ -472,20 +522,19 @@ internal class WeTypeSettingsState(
         bottomCornerRadius = WeTypeSettings.DEFAULT_BOTTOM_CORNER_RADIUS
         keyCornerRadius = WeTypeSettings.DEFAULT_KEY_CORNER_RADIUS
         edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
-        edgeHighlightIntensity = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY
+        backgroundLight = EdgeLightGroup()
+        iconLight = EdgeLightGroup()
+        keyLight = EdgeLightGroup()
         edgeLightAngle = WeTypeSettings.DEFAULT_EDGE_LIGHT_ANGLE
-        edgeLightWidth = WeTypeSettings.DEFAULT_EDGE_LIGHT_WIDTH
-        glowIntensity = WeTypeSettings.DEFAULT_GLOW_INTENSITY
         nativeEdgeLightEnabled = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_ENABLED
         nativeEdgeLightWidth = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_WIDTH
+        nativeEdgeLightIntensity = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY
         colorOsLightAngle = WeTypeSettings.DEFAULT_COLOROS_LIGHT_ANGLE
         candidateBackgroundAlpha = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_ALPHA
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
         candidateBackgroundLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
-        iconEdgeLightEnabled = WeTypeSettings.DEFAULT_ICON_EDGE_LIGHT_ENABLED
-        keyEdgeLightEnabled = WeTypeSettings.DEFAULT_KEY_EDGE_LIGHT_ENABLED
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT

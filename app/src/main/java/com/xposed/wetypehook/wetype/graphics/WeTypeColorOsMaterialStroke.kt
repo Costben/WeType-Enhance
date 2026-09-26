@@ -61,6 +61,20 @@ internal object WeTypeColorOsMaterialStroke {
     /** 节点级背板模糊半径，与 ColorOS 材质模糊预设（150px）保持一致。 */
     private const val BACKDROP_BLUR_PX = 150f
 
+    /** 局部元素（按键/图标覆盖层）的最小激活模糊半径，使 HWUI 建立材质滤镜且不模糊底层字形。 */
+    internal const val ELEMENT_OVERLAY_BLUR_PX = 0.5f
+
+    private val materialClassesAvailable: Boolean by lazy {
+        runCatching {
+            WeTypeColorOsMaterial.isPlatform() &&
+                Class.forName(MATERIAL_UTIL) != null &&
+                Class.forName(EDGE_PARAMS) != null &&
+                Class.forName(SHADOW_PARAMS) != null
+        }.getOrDefault(false)
+    }
+
+    fun isAvailable(): Boolean = materialClassesAvailable
+
     // FRAMEWORK_CAPSULE_PARAMS_1_LIGHT
     private const val LIGHT_EDGE_ALPHA = 0.2f
     private const val LIGHT_SHADOW_FADE_IN = 0.1f
@@ -84,8 +98,11 @@ internal object WeTypeColorOsMaterialStroke {
         angleDegrees: Float,
         edgeWidthDp: Float,
         cornerRadiusPx: Float,
-        maskColor: Int
+        maskColor: Int,
+        blurRadiusPx: Float = BACKDROP_BLUR_PX,
+        verboseLog: Boolean = true
     ): Boolean = runCatching {
+        if (view.width <= 0 || view.height <= 0) return false
         val util = Class.forName(MATERIAL_UTIL)
         val edgeClass = Class.forName(EDGE_PARAMS)
         val shadowClass = Class.forName(SHADOW_PARAMS)
@@ -105,7 +122,7 @@ internal object WeTypeColorOsMaterialStroke {
         // `setShadowClippingEnabled(true)` 与背板成对出现（系统 `applyBlur` 的同款顺序），
         // 缺它时材质滤镜照建但边缘光/内阴影不参与绘制。
         setShadowClippingEnabled(view)
-        attachBackdrop(view, BACKDROP_BLUR_PX)
+        attachBackdrop(view, blurRadiusPx)
 
         // 材质滤镜绘制在节点内容之下：载体自身背景必须透明，否则边缘光/内阴影被完全遮住。
         // 放在材质滤镜重建成功之后才生效——重建失败时保留原有背景，避免键盘整片变透明。
@@ -154,13 +171,15 @@ internal object WeTypeColorOsMaterialStroke {
         if (rebuilt) {
             view.setBackgroundColor(Color.TRANSPARENT)
         }
-        Log.i(
-            "MaterialStroke apply edge=$edgeOk shadow=$shadowOk cleared=$cleared rebuilt=$rebuilt " +
-                "w=${view.width} h=${view.height} r=$radius alpha=$edgeAlpha " +
-                "width=${widthDp}dp angle=$angleDegrees type=$edgeType/$shadowType " +
-                "fadeIn=$fadeIn fadeScale=$fadeScale " +
-                "attached=${view.isAttachedToWindow} layer=${view.layerType}"
-        )
+        if (verboseLog) {
+            Log.i(
+                "MaterialStroke apply edge=$edgeOk shadow=$shadowOk cleared=$cleared rebuilt=$rebuilt " +
+                    "w=${view.width} h=${view.height} r=$radius alpha=$edgeAlpha " +
+                    "width=${widthDp}dp angle=$angleDegrees type=$edgeType/$shadowType " +
+                    "fadeIn=$fadeIn fadeScale=$fadeScale " +
+                    "attached=${view.isAttachedToWindow} layer=${view.layerType}"
+            )
+        }
         edgeOk && shadowOk
     }.getOrElse {
         Log.e("Failed: Apply ColorOS material stroke")

@@ -37,8 +37,10 @@ import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeColorOsMaterialStroke
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
+import com.xposed.wetypehook.wetype.graphics.WeTypeNativeEdgeLightManager
 import com.xposed.wetypehook.wetype.graphics.WeTypeSelfDrawnEdgeLight
 import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
+import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.lang.ref.WeakReference
@@ -47,22 +49,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 private const val WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX = 2
-
-/**
- * ColorOS 原生材质边缘光生效时，背板面板的最低不透明度（0xC8 ≈ 78%）。
- *
- * 原生材质是**背板滤镜**，输出强度正比于背板已画出的内容量。实测同一套参数下：25% 透明
- * 面板 → 0 像素；不透明深色 → 6,052；不透明中灰 → 8,834；不透明浅色 → 10,118。默认深色
- * 面板为 25% 黑，铺在本来就暗的宿主背景上近似空白，滤镜输入为空，光效完全不可见。
- *
- * 输出随面板不透明度近似线性（实测 alpha 0x40 → 0 px、0xB3 → 3,554 px、0xFF → 6,052 px），
- * 0xC8 为深色模式留出可见余量。
- */
-private const val MIN_PANEL_ALPHA = 0xC8
-
-/** 把 [this] 的 alpha 提升到至少 [minimum]（0..255），保留 RGB。 */
-private fun Int.withMinimumAlpha(minimum: Int): Int =
-    (this and 0x00FFFFFF) or (maxOf(this ushr 24, minimum) shl 24)
 
 /**
  * 强度滑杆（0..100）到原生材质的换算倍数。
@@ -126,10 +112,10 @@ internal object WeTypeWindowHooks {
         val color: Int,
         val blurRadius: Int,
         val edgeHighlightEnabled: Boolean,
-        val edgeHighlightIntensity: Int,
+        val backgroundLight: EdgeLightGroup,
         val colorOsLightAngle: Int,
         val nativeEdgeLightEnabled: Boolean,
-        val edgeLightWidth: Int,
+        val nativeEdgeLightIntensity: Int,
         val edgeLightAngle: Int,
         val nativeEdgeLightWidth: Int,
         val cornerRadii: WeTypeCornerRadii,
@@ -1064,7 +1050,13 @@ internal object WeTypeWindowHooks {
         if (!HookEnvironment.postTracked(decorView) {
                 state.resourceReconcilePending = false
                 if (state.windowVisible) {
+                    // Alpha/color hooks are evaluated while the host redraws its own key and
+                    // candidate canvases. A remote settings change must invalidate the whole
+                    // decor tree; refreshing only already-created toolbar drawables leaves the
+                    // cached candidate/key pixels untouched until the next host layout pass.
+                    decorView.invalidate()
                     WeTypeResourceHooks.reconcileCurrentKeyboardLogos(listOf(decorView))
+                    WeTypeResourceHooks.reconcileCurrentToolbarIconBackgrounds(listOf(decorView))
                 }
             }) {
             state.resourceReconcilePending = false
@@ -1382,10 +1374,10 @@ internal object WeTypeWindowHooks {
                 Configuration.UI_MODE_NIGHT_YES) settings.darkColor else settings.lightColor,
             blurRadius = settings.blurRadius,
             edgeHighlightEnabled = settings.edgeHighlightEnabled,
-            edgeHighlightIntensity = settings.edgeHighlightIntensity,
+            backgroundLight = settings.backgroundLight,
             colorOsLightAngle = settings.colorOsLightAngle,
             nativeEdgeLightEnabled = settings.nativeEdgeLightEnabled,
-            edgeLightWidth = settings.edgeLightWidth,
+            nativeEdgeLightIntensity = settings.nativeEdgeLightIntensity,
             edgeLightAngle = settings.edgeLightAngle,
             nativeEdgeLightWidth = settings.nativeEdgeLightWidth,
             cornerRadii = cornerRadii,
@@ -1429,30 +1421,31 @@ internal object WeTypeWindowHooks {
                         // 完全一致），覆盖层的材质滤镜输入为空 → 参数下发成功但零像素。
                         // 原生边缘光生效时让载体画出真实面板，材质才有输入源。
                         carrier.foreground = null
-                        // 原生材质是背板滤镜，输出强度正比于背板的内容量。实测同一套参数下：
-                        // 25% 透明面板 → 0 像素；不透明深色面板 → 6,052 像素；不透明中灰 →
-                        // 8,834 像素；不透明浅色 → 10,118 像素。默认深色面板是 25% 黑，铺在
-                        // 本来就暗的宿主背景上几乎等于空白，材质滤镜输入为空 → 光效不可见。
-                        // 因此原生边缘光生效时给面板一个最低不透明度。
-                        val panelColor = style.color.withMinimumAlpha(MIN_PANEL_ALPHA)
                         carrier.background = createBackgroundDrawable(
-                            carrier, context, style.copy(color = panelColor), skipStroke = true
+                            carrier, context, style, skipStroke = true
                         )
-                    } else if (style.edgeHighlightEnabled) {
+                    } else if (style.edgeHighlightEnabled && style.backgroundLight.enabled) {
+                        val bg = style.backgroundLight
                         carrier.foreground = WeTypeBloomStrokeDrawable(
                             context = context,
                             cornerRadii = cornerRadii,
                             surfaceColor = style.color,
-                            intensityScale = WeTypeSelfDrawnEdgeLight
-                                .intensityScale(style.edgeHighlightIntensity),
-                            strokeWidthScale = WeTypeSelfDrawnEdgeLight
-                                .strokeWidthScale(style.edgeLightWidth),
+                            edgeIntensityScale = WeTypeSelfDrawnEdgeLight
+                                .intensityScale(bg.edgeIntensity),
+                            edgeWidthScale = WeTypeSelfDrawnEdgeLight
+                                .strokeWidthScale(bg.edgeWidth),
+                            glowIntensityScale = WeTypeSelfDrawnEdgeLight
+                                .glowLayerScale(bg.glowIntensity),
+                            glowWidthScale = WeTypeSelfDrawnEdgeLight
+                                .strokeWidthScale(bg.glowWidth),
                             lightAngleDegrees = style.edgeLightAngle.toFloat(),
                             // 面板只留亮层。阴影栈里那层黑色（inset 0 0 8dp 1dp 20% 黑）会跟着
                             // 「强度」一起放大，而三层白色在强度 ~40 就顶到 255 不再变亮，于是继续
                             // 拉高只剩内缘越来越暗：216 上强度 92 时实测顶边往里 8~10px 处比面板
                             // 暗 29 级，正是「内圈不亮反暗」。这里把暗层整层关掉，让预览与真机一致。
-                            innerShadowScale = 0f
+                            innerShadowScale = 0f,
+                            edgeHighlightEnabled = bg.edgeEnabled,
+                            glowEnabled = bg.glowEnabled
                         )
                     } else {
                         // 自绘光感总控关闭：清掉上一轮挂上的流光轮廓，避免残留描边。
@@ -1488,6 +1481,7 @@ internal object WeTypeWindowHooks {
         // 材质边缘光/内阴影必须等载体量到真实尺寸后再下发：`OplusMaterialUtil.setBaseParams`
         // 依赖 innerBounds，载体在 apply 时还是 0x0 会导致参数下发失败、光效不可见。
         applyColorOsMaterialStroke(carrier, state, style, useColorOsStroke)
+        WeTypeNativeEdgeLightManager.onWindowShown(decorGroup)
         // R1 探针：仅在 debug.wetype.r1probe=1 时下发；默认关闭时若此前下发过则清理一次。
         WeTypeNativeMaterialProbe.applyIfEnabled(carrier, "ime")
         syncColorOsCapsule(inputMethodService, decorGroup, state)
@@ -1790,6 +1784,7 @@ internal object WeTypeWindowHooks {
         restoreNavigationBarAppearance(state)
         state.capsuleManager?.hide()
         val carrier = state.backgroundCarrier ?: return
+        WeTypeNativeEdgeLightManager.onWindowHidden(carrier.parent as? ViewGroup)
         detachStrokeOverlay(state)
         carrier.visibility = View.INVISIBLE
         state.hyperMaterial?.clear()
@@ -1809,6 +1804,7 @@ internal object WeTypeWindowHooks {
         // 必须在置空 state.window 之前交还：restoreNavigationBarAppearance 依赖它取窗口。
         restoreNavigationBarAppearance(state)
         val carrier = state.backgroundCarrier ?: return
+        WeTypeNativeEdgeLightManager.onWindowRemoved(carrier.parent as? ViewGroup)
         detachStrokeOverlay(state)
         carrier.foreground = null
         (carrier.parent as? ViewGroup)?.removeView(carrier)
@@ -1844,19 +1840,26 @@ internal object WeTypeWindowHooks {
         val layers = buildList {
             blurDrawable?.also(::add)
             add(tintDrawable)
-            if (style.edgeHighlightEnabled && !skipStroke) {
+            if (style.edgeHighlightEnabled && style.backgroundLight.enabled && !skipStroke) {
+                val bg = style.backgroundLight
                 add(
                     WeTypeBloomStrokeDrawable(
                         context = context,
                         cornerRadii = cornerRadii,
                         surfaceColor = color,
-                        intensityScale = WeTypeSelfDrawnEdgeLight
-                            .intensityScale(style.edgeHighlightIntensity),
-                        strokeWidthScale = WeTypeSelfDrawnEdgeLight
-                            .strokeWidthScale(style.edgeLightWidth),
+                        edgeIntensityScale = WeTypeSelfDrawnEdgeLight
+                            .intensityScale(bg.edgeIntensity),
+                        edgeWidthScale = WeTypeSelfDrawnEdgeLight
+                            .strokeWidthScale(bg.edgeWidth),
+                        glowIntensityScale = WeTypeSelfDrawnEdgeLight
+                            .glowLayerScale(bg.glowIntensity),
+                        glowWidthScale = WeTypeSelfDrawnEdgeLight
+                            .strokeWidthScale(bg.glowWidth),
                         lightAngleDegrees = style.edgeLightAngle.toFloat(),
                         // 同上：面板的暗层整层关掉，只留亮层，免得「强度」拉高后内圈发暗。
-                        innerShadowScale = 0f
+                        innerShadowScale = 0f,
+                        edgeHighlightEnabled = bg.edgeEnabled,
+                        glowEnabled = bg.glowEnabled
                     )
                 )
             }
@@ -1923,7 +1926,7 @@ internal object WeTypeWindowHooks {
         // 尺寸/样式未变就不重复下发，避免每个布局回调都走一遍反射。
         val key = listOf(
             carrier.width, carrier.height,
-            style.nightMode, style.edgeHighlightIntensity, style.colorOsLightAngle,
+            style.nightMode, style.nativeEdgeLightIntensity, style.colorOsLightAngle,
             style.nativeEdgeLightWidth, topRadius, bottomRadius
         ).joinToString("|")
         if (state.materialStrokeApplied && state.materialStrokeKey == key) return
@@ -1932,7 +1935,7 @@ internal object WeTypeWindowHooks {
         upperTarget.visibility = View.VISIBLE
         lowerTarget.visibility = View.VISIBLE
         val isDark = style.nightMode == Configuration.UI_MODE_NIGHT_YES
-        val intensityScale = style.edgeHighlightIntensity / 100f * COLOROS_EDGE_INTENSITY_GAIN
+        val intensityScale = style.nativeEdgeLightIntensity / 100f * COLOROS_EDGE_INTENSITY_GAIN
         val angleDegrees = style.colorOsLightAngle.toFloat()
         val edgeWidthDp = style.nativeEdgeLightWidth.toFloat()
         val upperOk = WeTypeColorOsMaterialStroke.apply(

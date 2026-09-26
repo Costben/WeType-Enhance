@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
 
@@ -19,11 +20,7 @@ internal fun LazyListScope.MaterialSubPageContent(
     onSystemMaterialEnabledChange: (Boolean) -> Unit,
     colorOsMaterialAvailable: Boolean,
     edgeHighlightEnabled: Boolean,
-    onEdgeHighlightEnabledChange: (Boolean) -> Unit,
-    edgeLightAngle: Int,
-    onEdgeLightAngleChange: (Int) -> Unit,
-    edgeLightWidth: Int,
-    onEdgeLightWidthChange: (Int) -> Unit,
+    onOpenEdgeLightPage: () -> Unit,
     hyperMaterialEnabled: Boolean,
     onHyperMaterialEnabledChange: (Boolean) -> Unit,
     hyperMaterialAvailable: Boolean,
@@ -37,14 +34,8 @@ internal fun LazyListScope.MaterialSubPageContent(
     onColorOsLightAngleChange: (Int) -> Unit,
     nativeEdgeLightWidth: Int,
     onNativeEdgeLightWidthChange: (Int) -> Unit,
-    edgeHighlightIntensity: Int,
-    onEdgeHighlightIntensityChange: (Int) -> Unit,
-    glowIntensity: Int,
-    onGlowIntensityChange: (Int) -> Unit,
-    iconEdgeLightEnabled: Boolean,
-    onIconEdgeLightEnabledChange: (Boolean) -> Unit,
-    keyEdgeLightEnabled: Boolean,
-    onKeyEdgeLightEnabledChange: (Boolean) -> Unit
+    nativeEdgeLightIntensity: Int,
+    onNativeEdgeLightIntensityChange: (Int) -> Unit
 ) {
     item {
         SmallTitle(text = "光感")
@@ -52,49 +43,17 @@ internal fun LazyListScope.MaterialSubPageContent(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
-            SwitchPreference(
-                title = "光感设置",
-                summary = "光感总开关，关闭后背板与按键、图标的边缘光感一并关闭",
-                checked = edgeHighlightEnabled,
-                onCheckedChange = onEdgeHighlightEnabledChange
+            // 模块自绘的光感参数已经多到一屏放不下（三类元素 × 边缘/内发光 × 开关/强度/宽度），
+            // 所以收进三级页，这里只留入口。ColorOS 原生材质是另一条轨道，仍在下面那一栏。
+            ArrowPreference(
+                title = SettingsSubPage.EDGE_LIGHT.title,
+                summary = if (edgeHighlightEnabled) {
+                    "背景、图标、按键的边缘与内发光，共用一套光照方向"
+                } else {
+                    "总开关已关闭，进去打开后才能逐类调整"
+                },
+                onClick = onOpenEdgeLightPage
             )
-            SettingExpandGroup(visible = edgeHighlightEnabled) {
-                HorizontalDivider()
-                // 自绘边缘光不依赖系统材质，任何平台都能用；与 ColorOS 原生边缘光是两条独立轨道。
-                LightAngleSlider(
-                    value = edgeLightAngle,
-                    onValueChange = onEdgeLightAngleChange
-                )
-                LightWidthSlider(
-                    value = edgeLightWidth,
-                    onValueChange = onEdgeLightWidthChange
-                )
-                // 强度跟着自绘那一套参数走，所以和角度、宽度同组；ColorOS 分组里那份读的是同一个值。
-                LightIntensitySlider(
-                    value = edgeHighlightIntensity,
-                    onValueChange = onEdgeHighlightIntensityChange
-                )
-                // 发光强度只作用于模块自绘的内发光，ColorOS 的系统边缘光没有对应参数，所以不进它的分组。
-                LightGlowSlider(
-                    value = glowIntensity,
-                    onValueChange = onGlowIntensityChange
-                )
-                // 两个目标开关也收进总控：总控关掉时它们本来就没有效果，行本身一并收起。
-                HorizontalDivider()
-                SwitchPreference(
-                    title = stringResource(R.string.settings_key_edge_light_title),
-                    summary = stringResource(R.string.settings_key_edge_light_desc),
-                    checked = keyEdgeLightEnabled,
-                    onCheckedChange = onKeyEdgeLightEnabledChange
-                )
-                HorizontalDivider()
-                SwitchPreference(
-                    title = stringResource(R.string.settings_icon_edge_light_title),
-                    summary = stringResource(R.string.settings_icon_edge_light_desc),
-                    checked = iconEdgeLightEnabled,
-                    onCheckedChange = onIconEdgeLightEnabledChange
-                )
-            }
         }
     }
 
@@ -104,7 +63,7 @@ internal fun LazyListScope.MaterialSubPageContent(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
-            // 总控：关掉时下面两条系统材质轨道都不生效，背板与边缘光全部退回模块自绘。
+            // 两套渲染模式互斥：打开系统材质后，模块自绘光感会关闭。
             SwitchPreference(
                 title = stringResource(R.string.settings_hyper_material_title),
                 summary = stringResource(R.string.settings_hyper_material_desc),
@@ -151,6 +110,7 @@ internal fun LazyListScope.MaterialSubPageContent(
                     HorizontalDivider()
                     LightAngleSlider(
                         value = colorOsLightAngle,
+                        title = "光照角度",
                         note = "当前 ColorOS 版本未使用该参数：实测 45° 与 225° 在键盘背板上逐像素相同。",
                         onValueChange = onColorOsLightAngleChange
                     )
@@ -158,9 +118,9 @@ internal fun LazyListScope.MaterialSubPageContent(
                         value = nativeEdgeLightWidth,
                         onValueChange = onNativeEdgeLightWidthChange
                     )
-                    LightIntensitySlider(
-                        value = edgeHighlightIntensity,
-                        onValueChange = onEdgeHighlightIntensityChange
+                    NativeLightIntensitySlider(
+                        value = nativeEdgeLightIntensity,
+                        onValueChange = onNativeEdgeLightIntensityChange
                     )
                 }
             }

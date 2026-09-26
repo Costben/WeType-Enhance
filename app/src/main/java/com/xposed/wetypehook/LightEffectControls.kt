@@ -20,6 +20,7 @@ internal const val MAX_EDGE_LIGHT_WIDTH = WeTypeSettings.MAX_EDGE_LIGHT_WIDTH
 internal fun LightAngleSlider(
     value: Int,
     note: String? = null,
+    title: String = "光照方向",
     onValueChange: (Int) -> Unit
 ) {
     SliderPreference(
@@ -27,10 +28,10 @@ internal fun LightAngleSlider(
         onValueChange = {
             onValueChange(it.roundToInt().coerceIn(MIN_LIGHT_ANGLE, MAX_LIGHT_ANGLE))
         },
-        modifier = Modifier.semantics { contentDescription = "光照角度" },
-        title = "光照角度",
+        modifier = Modifier.semantics { contentDescription = title },
+        title = title,
         summary = buildString {
-            append("0°/180° 照亮左右，90°/270° 照亮上下，45°/135° 为对角。")
+            append("光感方向的总控，背景、图标、按键共用：0°/180° 照亮左右，90°/270° 照亮上下，45°/135° 为对角。")
             if (note != null) append("\n").append(note)
         },
         valueText = "$value°",
@@ -42,15 +43,16 @@ internal fun LightAngleSlider(
 @Composable
 internal fun LightWidthSlider(
     value: Int,
-    onValueChange: (Int) -> Unit
+    onValueChange: (Int) -> Unit,
+    title: String = "宽度"
 ) {
     SliderPreference(
         value = value.coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH).toFloat(),
         onValueChange = {
             onValueChange(it.roundToInt().coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH))
         },
-        modifier = Modifier.semantics { contentDescription = "边缘光宽度" },
-        title = "宽度",
+        modifier = Modifier.semantics { contentDescription = title },
+        title = title,
         valueText = "${value}dp",
         valueRange = MIN_EDGE_LIGHT_WIDTH.toFloat()..MAX_EDGE_LIGHT_WIDTH.toFloat(),
         steps = (MAX_EDGE_LIGHT_WIDTH - MIN_EDGE_LIGHT_WIDTH - 1).coerceAtLeast(0)
@@ -60,6 +62,29 @@ internal fun LightWidthSlider(
 @Composable
 internal fun LightIntensitySlider(
     value: Int,
+    onValueChange: (Int) -> Unit,
+    title: String = "强度",
+    summary: String? = null,
+    min: Int = 0,
+    max: Int = MAX_EDGE_HIGHLIGHT_INTENSITY
+) {
+    SliderPreference(
+        value = value.coerceIn(min, max).toFloat(),
+        onValueChange = {
+            onValueChange(it.roundToInt().coerceIn(min, max))
+        },
+        modifier = Modifier.semantics { contentDescription = title },
+        title = title,
+        summary = summary,
+        valueText = "$value",
+        valueRange = min.toFloat()..max.toFloat(),
+        steps = (max - min - 1).coerceAtLeast(0)
+    )
+}
+
+@Composable
+internal fun NativeLightIntensitySlider(
+    value: Int,
     onValueChange: (Int) -> Unit
 ) {
     SliderPreference(
@@ -67,29 +92,11 @@ internal fun LightIntensitySlider(
         onValueChange = {
             onValueChange(it.roundToInt().coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY))
         },
-        modifier = Modifier.semantics { contentDescription = "边缘光效强度" },
-        title = "强度",
+        modifier = Modifier.semantics { contentDescription = "ColorOS 原生材质强度" },
+        title = "原生材质强度",
+        summary = "只作用于 ColorOS 系统材质的按键、工具栏图标、Logo 与背板。",
         valueText = "$value",
         valueRange = 0f..MAX_EDGE_HIGHLIGHT_INTENSITY.toFloat(),
         steps = (MAX_EDGE_HIGHLIGHT_INTENSITY - 1).coerceAtLeast(0)
-    )
-}
-
-@Composable
-internal fun LightGlowSlider(
-    value: Int,
-    onValueChange: (Int) -> Unit
-) {
-    SliderPreference(
-        value = value.coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY).toFloat(),
-        onValueChange = {
-            onValueChange(it.roundToInt().coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY))
-        },
-        modifier = Modifier.semantics { contentDescription = "按键发光强度" },
-        title = "按键发光强度",
-        summary = "同时决定键帽与 Logo／工具栏图标内发光的强弱，调高更亮、调低更内凹。",
-        valueText = "$value",
-        valueRange = MIN_GLOW_INTENSITY.toFloat()..MAX_GLOW_INTENSITY.toFloat(),
-        steps = (MAX_GLOW_INTENSITY - MIN_GLOW_INTENSITY - 1).coerceAtLeast(0)
     )
 }

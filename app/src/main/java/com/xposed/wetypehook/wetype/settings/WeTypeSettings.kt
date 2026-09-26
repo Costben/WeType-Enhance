@@ -36,7 +36,21 @@ object WeTypeSettings {
     private const val KEY_BOTTOM_CORNER_RADIUS = "bottom_corner_radius"
     private const val KEY_KEY_CORNER_RADIUS = "key_corner_radius"
     private const val KEY_EDGE_HIGHLIGHT_ENABLED = "edge_highlight_enabled"
+
+    // 光感：三类元素各存一条紧凑串，见 [EdgeLightGroup]。
+    private const val KEY_BACKGROUND_LIGHT = "background_light"
+    private const val KEY_ICON_LIGHT = "icon_light"
+    private const val KEY_KEY_LIGHT = "key_light"
+
+    // 旧版光感字段。新模型不再写它们，只在读不到上面三条串时用来合成迁移基线，
+    // 以及让 containsAnyPersistedSetting 仍能认出老安装。
+    private const val KEY_EDGE_HIGHLIGHT_STROKE_ENABLED = "edge_highlight_stroke_enabled"
     private const val KEY_EDGE_HIGHLIGHT_INTENSITY = "edge_highlight_intensity"
+    private const val KEY_GLOW_INTENSITY = "glow_intensity"
+    private const val KEY_EDGE_LIGHT_WIDTH = "edge_light_width"
+    private const val KEY_ICON_EDGE_LIGHT_ENABLED = "icon_edge_light_enabled"
+    private const val KEY_KEY_EDGE_LIGHT_ENABLED = "key_edge_light_enabled"
+
     private const val KEY_COLOROS_LIGHT_ANGLE = "coloros_light_angle"
     private const val KEY_KEY_OPACITY = "key_opacity"
     private const val KEY_KEY_OPACITY_MIGRATED = "key_opacity_migrated"
@@ -50,13 +64,10 @@ object WeTypeSettings {
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
-    private const val KEY_ICON_EDGE_LIGHT_ENABLED = "icon_edge_light_enabled"
-    private const val KEY_KEY_EDGE_LIGHT_ENABLED = "key_edge_light_enabled"
     private const val KEY_NATIVE_EDGE_LIGHT_ENABLED = "native_edge_light_enabled"
-    private const val KEY_EDGE_LIGHT_WIDTH = "edge_light_width"
     private const val KEY_NATIVE_EDGE_LIGHT_WIDTH = "native_edge_light_width"
+    private const val KEY_NATIVE_EDGE_LIGHT_INTENSITY = "native_edge_light_intensity"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
-    private const val KEY_GLOW_INTENSITY = "glow_intensity"
     const val KEY_SHOW_CROSS_DEVICE_CLIPBOARD = "show_cross_device_clipboard"
     const val KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT = "remove_clipboard_retention_limit"
     const val KEY_REMOVE_CLIPBOARD_TEXT_LIMIT = "remove_clipboard_text_limit"
@@ -241,6 +252,8 @@ object WeTypeSettings {
     const val DEFAULT_EDGE_HIGHLIGHT_ENABLED = true
     const val DEFAULT_EDGE_HIGHLIGHT_INTENSITY = 80
     const val MAX_EDGE_HIGHLIGHT_INTENSITY = 100
+    // 旧版按键/图标光感开关的默认值，只用于合成迁移基线。
+    const val DEFAULT_EDGE_HIGHLIGHT_STROKE_ENABLED = true
     const val DEFAULT_COLOROS_LIGHT_ANGLE = 45
     const val MAX_COLOROS_LIGHT_ANGLE = 360
     const val DEFAULT_CANDIDATE_BACKGROUND_ALPHA = 150
@@ -258,22 +271,65 @@ object WeTypeSettings {
     const val MIN_EDGE_LIGHT_WIDTH = 1
     const val MAX_EDGE_LIGHT_WIDTH = 10
     const val DEFAULT_NATIVE_EDGE_LIGHT_WIDTH = 2
+    const val DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY = 80
     const val MIN_NATIVE_EDGE_LIGHT_WIDTH = 1
     const val MAX_NATIVE_EDGE_LIGHT_WIDTH = 10
     const val DEFAULT_EDGE_LIGHT_ANGLE = 45
     const val MIN_EDGE_LIGHT_ANGLE = 0
     const val MAX_EDGE_LIGHT_ANGLE = 360
+    const val DEFAULT_GLOW_WIDTH = 2
+    const val MIN_GLOW_WIDTH = 1
+    const val MAX_GLOW_WIDTH = 10
+
+    /**
+     * 内发光强度的基准值，也是上限。
+     *
+     * 100 就是阴影栈被写出来时的原样：最亮的白层乘完底色微调后仍低于 255，模糊是完整的。
+     * 再往上乘，两层白会双双被截到 255——模糊被削平，内发光退化成贴着内缘的一圈硬边，
+     * 看起来「只有边缘高光、没有内发光」。所以上限就停在 100。
+     */
     const val DEFAULT_GLOW_INTENSITY = 100
     const val MIN_GLOW_INTENSITY = 0
-    const val MAX_GLOW_INTENSITY = 200
+    const val MAX_GLOW_INTENSITY = 100
     const val DEFAULT_DISABLE_HOT_UPDATE = true
-    const val DEFAULT_SYSTEM_MATERIAL_ENABLED = true
+    const val DEFAULT_SYSTEM_MATERIAL_ENABLED = false
     const val DEFAULT_HYPER_MATERIAL_ENABLED = false
 
     private val legacyKeyColorDefaults = mapOf(
         LIGHT_KEY_COLOR_GROUP_ID to 0xFFfcfcfe.toInt(),
         DARK_KEY_COLOR_GROUP_ID to 0xFF707070.toInt()
     )
+
+    private data class MaterialMode(
+        val edgeHighlightEnabled: Boolean,
+        val systemMaterialEnabled: Boolean,
+        val nativeEdgeLightEnabled: Boolean
+    )
+
+    /** Persist one active renderer only; native ColorOS mode implies the system-material gate. */
+    private fun normalizeMaterialMode(
+        edgeHighlightEnabled: Boolean,
+        systemMaterialEnabled: Boolean,
+        nativeEdgeLightEnabled: Boolean
+    ): MaterialMode = when {
+        nativeEdgeLightEnabled -> MaterialMode(false, true, true)
+        edgeHighlightEnabled -> MaterialMode(true, false, false)
+        systemMaterialEnabled -> MaterialMode(false, true, false)
+        else -> MaterialMode(false, false, false)
+    }
+
+    private fun Snapshot.normalizeMaterialMode(): Snapshot {
+        val mode = normalizeMaterialMode(
+            edgeHighlightEnabled = edgeHighlightEnabled,
+            systemMaterialEnabled = systemMaterialEnabled,
+            nativeEdgeLightEnabled = nativeEdgeLightEnabled
+        )
+        return copy(
+            edgeHighlightEnabled = mode.edgeHighlightEnabled,
+            systemMaterialEnabled = mode.systemMaterialEnabled,
+            nativeEdgeLightEnabled = mode.nativeEdgeLightEnabled
+        )
+    }
 
     private val remotePrefsLock = Any()
     private val settingsSyncLock = Any()
@@ -283,6 +339,16 @@ object WeTypeSettings {
 
     @Volatile
     private var remotePreferences: SharedPreferences? = null
+
+    /**
+     * 本进程最近一次补发镜像所用的 revision。
+     *
+     * [ensureHostSnapshot] 挂在 `onStartInputView` 上，每拉起一次键盘都会走到补发分支。
+     * 模块 App 被系统的自启动管理拦住时远端永远不会带上这个 revision，没有这道闸就会
+     * 变成"每弹一次键盘发一条广播"。
+     */
+    @Volatile
+    private var mirrorAttemptRevision = 0L
 
     /**
      * 模块 App 是否真的作为一个包存在。
@@ -322,8 +388,18 @@ object WeTypeSettings {
     @Volatile
     private var moduleBridgePendingIntent: PendingIntent? = null
 
+    /**
+     * 输入法进程收到远端偏好变化后的回调。
+     *
+     * 独立模块设置进程与微信输入法不是同一个 uid，输入法不能靠杀进程同步这条路径。
+     * 由宿主注册一个轻量回调，在主线程重新套用当前窗口样式；进程重启仍作为兜底。
+     */
+    @Volatile
+    private var xposedSnapshotChangeListener: (() -> Unit)? = null
+
     private val remotePrefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         cachedXposedSnapshot = null
+        runCatching { xposedSnapshotChangeListener?.invoke() }
     }
 
     data class Snapshot(
@@ -334,7 +410,9 @@ object WeTypeSettings {
         val bottomCornerRadius: Int = DEFAULT_BOTTOM_CORNER_RADIUS,
         val keyCornerRadius: Int,
         val edgeHighlightEnabled: Boolean,
-        val edgeHighlightIntensity: Int,
+        val backgroundLight: EdgeLightGroup = EdgeLightGroup(),
+        val iconLight: EdgeLightGroup = EdgeLightGroup(),
+        val keyLight: EdgeLightGroup = EdgeLightGroup(),
         val colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         val candidateBackgroundAlpha: Int,
         val candidateBackgroundCorner: Float,
@@ -342,13 +420,10 @@ object WeTypeSettings {
         val candidatePinyinLeftMarginDp: Int,
         val appearanceColors: Map<String, Int>,
         val toolbarIconBgOpacity: Int,
-        val iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
-        val keyEdgeLightEnabled: Boolean = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         val nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        val edgeLightWidth: Int = DEFAULT_EDGE_LIGHT_WIDTH,
         val nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
+        val nativeEdgeLightIntensity: Int = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         val edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
-        val glowIntensity: Int = DEFAULT_GLOW_INTENSITY,
         val disableHotUpdate: Boolean,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
@@ -585,8 +660,6 @@ object WeTypeSettings {
 
     fun isEdgeHighlightEnabled(context: Context): Boolean = readSnapshot(context).edgeHighlightEnabled
 
-    fun getEdgeHighlightIntensity(context: Context): Int = readSnapshot(context).edgeHighlightIntensity
-
     fun getColorOsLightAngle(context: Context): Int = readSnapshot(context).colorOsLightAngle
 
     /**
@@ -597,15 +670,14 @@ object WeTypeSettings {
     fun saveColorOsLight(
         context: Context,
         edgeHighlightEnabled: Boolean? = null,
-        edgeHighlightIntensity: Int? = null,
         colorOsLightAngle: Int? = null,
-        iconEdgeLightEnabled: Boolean? = null,
-        keyEdgeLightEnabled: Boolean? = null,
         nativeEdgeLightEnabled: Boolean? = null,
-        edgeLightWidth: Int? = null,
         nativeEdgeLightWidth: Int? = null,
+        nativeEdgeLightIntensity: Int? = null,
         edgeLightAngle: Int? = null,
-        glowIntensity: Int? = null,
+        backgroundLight: EdgeLightGroup? = null,
+        iconLight: EdgeLightGroup? = null,
+        keyLight: EdgeLightGroup? = null,
         onPersisted: (Boolean) -> Unit = {}
     ): Boolean {
         val current = readLocalSnapshot(context)
@@ -618,20 +690,19 @@ object WeTypeSettings {
             bottomCornerRadius = current.bottomCornerRadius,
             keyCornerRadius = current.keyCornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled ?: current.edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity ?: current.edgeHighlightIntensity,
+            backgroundLight = backgroundLight ?: current.backgroundLight,
+            iconLight = iconLight ?: current.iconLight,
+            keyLight = keyLight ?: current.keyLight,
             colorOsLightAngle = colorOsLightAngle ?: current.colorOsLightAngle,
             candidateBackgroundAlpha = current.candidateBackgroundAlpha,
             candidateBackgroundCorner = current.candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
-            iconEdgeLightEnabled = iconEdgeLightEnabled ?: current.iconEdgeLightEnabled,
-            keyEdgeLightEnabled = keyEdgeLightEnabled ?: current.keyEdgeLightEnabled,
             nativeEdgeLightEnabled = nativeEdgeLightEnabled ?: current.nativeEdgeLightEnabled,
-            edgeLightWidth = edgeLightWidth ?: current.edgeLightWidth,
             nativeEdgeLightWidth = nativeEdgeLightWidth ?: current.nativeEdgeLightWidth,
+            nativeEdgeLightIntensity = nativeEdgeLightIntensity ?: current.nativeEdgeLightIntensity,
             edgeLightAngle = edgeLightAngle ?: current.edgeLightAngle,
-            glowIntensity = glowIntensity ?: current.glowIntensity,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
@@ -762,6 +833,38 @@ object WeTypeSettings {
     }
 
     /**
+     * 首次安装时的种子导入：**只在宿主本地还没有任何快照时**才接受远端那份副本。
+     *
+     * ## 为什么不用 revision 比大小
+     *
+     * 远端偏好只有模块 App 写得进去。libxposed API 102 的 `getRemotePreferences` 在
+     * 被 hook 的宿主进程里是只读的（框架实现的 `edit()` 直接抛
+     * `UnsupportedOperationException`），所以宿主那份本地文件是它唯一能写的存档。
+     *
+     * 而模块 App 手里那份快照只是宿主上一次镜像过去的副本 —— 桥接被 ColorOS 的启动管理
+     * 掐掉时它会落后一整个周期。按 revision 大小决定谁赢，等于允许一份过期副本覆盖宿主
+     * 刚存下的设置，而且覆盖得毫无痕迹。这里改成"宿主落过盘就一律不认远端"：镜像从此
+     * 只能补第一次，永远不会反向改写。
+     */
+    fun syncHostSnapshotFromRemote(): Boolean {
+        val hostContext = hostContextRef?.get() ?: return false
+        synchronized(remotePrefsLock) {
+            val localPreferences = appPreferences(hostContext)
+            if (localPreferences.toSnapshotOrNull() != null) return false
+            val remote = resolvedRemotePreferencesLocked() ?: return false
+            val remoteSnapshot = remote.toSnapshotOrNull() ?: return false
+            val remoteRevision = remote.getLong(KEY_HOST_SYNC_REVISION, 0L)
+            val saved = writeSnapshot(localPreferences, remoteSnapshot) { editor ->
+                editor
+                    .putLong(KEY_HOST_SYNC_REVISION, remoteRevision)
+                    .putBoolean(KEY_HOST_SYNC_PENDING, false)
+            }
+            if (saved) cachedXposedSnapshot = remoteSnapshot
+            return saved
+        }
+    }
+
+    /**
      * 宿主偏好落盘的那个文件。`:hld` 侧靠比对它的 mtime/size 发现设置页刚写下的改动 ——
      * 两个进程同包同 uid，写的就是同一个文件，不需要任何 IPC。
      */
@@ -772,6 +875,11 @@ object WeTypeSettings {
 
     fun bindModuleBridgePendingIntent(pendingIntent: PendingIntent?) {
         moduleBridgePendingIntent = pendingIntent
+    }
+
+    /** Registers the host-side live refresh callback; replacing it is safe during hot reload. */
+    fun setXposedSnapshotChangeListener(listener: (() -> Unit)?) {
+        xposedSnapshotChangeListener = listener
     }
 
     /**
@@ -801,15 +909,19 @@ object WeTypeSettings {
         hostContextRef = java.lang.ref.WeakReference(appContext)
         val hostSyncPending = localPreferences.getBoolean(KEY_HOST_SYNC_PENDING, false)
 
-        // 宿主本地已有快照：它就是权威值。待同步标记可能来自上一次镜像没送达，
-        // 这里补发一次即可 —— 补发成功就清掉标记，失败就留着下次再试，本地并不会
-        // 因此变旧。
+        // 宿主本地已有快照：它就是权威值。待同步标记表示"模块 App 那份镜像还没被证实
+        // 跟上"，这里回读远端偏好确认一次：远端带上了同一个 revision 才算送达，清掉标记；
+        // 没带上就在本进程补发一次 —— 本方法挂在 onStartInputView 上，所以补发要设闸。
         if (localSnapshot != null) {
             cachedXposedSnapshot = localSnapshot
             if (hostSyncPending) {
                 val revision = localPreferences.getLong(KEY_HOST_SYNC_REVISION, 0L)
-                val delivered = sendSnapshotToModule(appContext, localSnapshot, revision)
-                localPreferences.edit().putBoolean(KEY_HOST_SYNC_PENDING, !delivered).commit()
+                if (remoteCarriesRevision(revision)) {
+                    localPreferences.edit().putBoolean(KEY_HOST_SYNC_PENDING, false).commit()
+                } else if (revision != mirrorAttemptRevision) {
+                    mirrorAttemptRevision = revision
+                    sendSnapshotToModule(appContext, localSnapshot, revision)
+                }
             }
             return
         }
@@ -839,7 +951,12 @@ object WeTypeSettings {
         val pending = localPreferences.getBoolean(KEY_REMOTE_SYNC_PENDING, false)
         when {
             pending && localSnapshot != null -> {
-                val synced = runCatching { writeSnapshot(remote, localSnapshot) }
+                val revision = localPreferences.getLong(KEY_HOST_SYNC_REVISION, 0L)
+                val synced = runCatching {
+                    writeSnapshot(remote, localSnapshot) { editor ->
+                        editor.putLong(KEY_HOST_SYNC_REVISION, revision)
+                    }
+                }
                     .getOrDefault(false)
                 if (synced) {
                     localPreferences.edit().putBoolean(KEY_REMOTE_SYNC_PENDING, false).commit()
@@ -848,7 +965,12 @@ object WeTypeSettings {
             }
 
             remoteSnapshot == null && localSnapshot != null -> {
-                val synced = runCatching { writeSnapshot(remote, localSnapshot) }
+                val revision = localPreferences.getLong(KEY_HOST_SYNC_REVISION, 0L)
+                val synced = runCatching {
+                    writeSnapshot(remote, localSnapshot) { editor ->
+                        editor.putLong(KEY_HOST_SYNC_REVISION, revision)
+                    }
+                }
                     .getOrDefault(false)
                 if (synced) {
                     localPreferences.edit().putBoolean(KEY_REMOTE_SYNC_PENDING, false).commit()
@@ -858,7 +980,12 @@ object WeTypeSettings {
 
             remoteSnapshot != null -> {
                 val mirrored = writeSnapshot(localPreferences, remoteSnapshot) { editor ->
-                    editor.putBoolean(KEY_REMOTE_SYNC_PENDING, false)
+                    editor
+                        .putBoolean(KEY_REMOTE_SYNC_PENDING, false)
+                        .putLong(
+                            KEY_HOST_SYNC_REVISION,
+                            remote.getLong(KEY_HOST_SYNC_REVISION, 0L)
+                        )
                 }
                 if (mirrored) cachedXposedSnapshot = remoteSnapshot
             }
@@ -883,6 +1010,7 @@ object WeTypeSettings {
                 editor
                     .putBoolean(KEY_REMOTE_SYNC_PENDING, true)
                     .putLong(KEY_LAST_IMPORTED_REVISION, revision)
+                    .putLong(KEY_HOST_SYNC_REVISION, revision)
             }
             if (!staged) return@synchronized false
             cachedXposedSnapshot = snapshot
@@ -900,20 +1028,19 @@ object WeTypeSettings {
         bottomCornerRadius: Int = DEFAULT_BOTTOM_CORNER_RADIUS,
         keyCornerRadius: Int,
         edgeHighlightEnabled: Boolean,
-        edgeHighlightIntensity: Int,
+        backgroundLight: EdgeLightGroup = EdgeLightGroup(),
+        iconLight: EdgeLightGroup = EdgeLightGroup(),
+        keyLight: EdgeLightGroup = EdgeLightGroup(),
         colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
-        iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
-        keyEdgeLightEnabled: Boolean = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        edgeLightWidth: Int = DEFAULT_EDGE_LIGHT_WIDTH,
         nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
+        nativeEdgeLightIntensity: Int = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
-        glowIntensity: Int = DEFAULT_GLOW_INTENSITY,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -970,20 +1097,19 @@ object WeTypeSettings {
             bottomCornerRadius = bottomCornerRadius,
             keyCornerRadius = keyCornerRadius,
             edgeHighlightEnabled = edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity,
+            backgroundLight = backgroundLight,
+            iconLight = iconLight,
+            keyLight = keyLight,
             colorOsLightAngle = colorOsLightAngle,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
-            iconEdgeLightEnabled = iconEdgeLightEnabled,
-            keyEdgeLightEnabled = keyEdgeLightEnabled,
             nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-            edgeLightWidth = edgeLightWidth,
             nativeEdgeLightWidth = nativeEdgeLightWidth,
+            nativeEdgeLightIntensity = nativeEdgeLightIntensity,
             edgeLightAngle = edgeLightAngle,
-            glowIntensity = glowIntensity,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
@@ -1056,20 +1182,19 @@ object WeTypeSettings {
             bottomCornerRadius = current.bottomCornerRadius,
             keyCornerRadius = current.keyCornerRadius,
             edgeHighlightEnabled = current.edgeHighlightEnabled,
-            edgeHighlightIntensity = current.edgeHighlightIntensity,
+            backgroundLight = current.backgroundLight,
+            iconLight = current.iconLight,
+            keyLight = current.keyLight,
             colorOsLightAngle = current.colorOsLightAngle,
             candidateBackgroundAlpha = current.candidateBackgroundAlpha,
             candidateBackgroundCorner = current.candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
-            iconEdgeLightEnabled = current.iconEdgeLightEnabled,
-            keyEdgeLightEnabled = current.keyEdgeLightEnabled,
             nativeEdgeLightEnabled = current.nativeEdgeLightEnabled,
-            edgeLightWidth = current.edgeLightWidth,
             nativeEdgeLightWidth = current.nativeEdgeLightWidth,
+            nativeEdgeLightIntensity = current.nativeEdgeLightIntensity,
             edgeLightAngle = current.edgeLightAngle,
-            glowIntensity = current.glowIntensity,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
@@ -1135,8 +1260,19 @@ object WeTypeSettings {
     fun isEdgeHighlightEnabledXposed(context: Context): Boolean =
         readSnapshotXposed().edgeHighlightEnabled
 
-    fun getEdgeHighlightIntensityXposed(context: Context): Int =
-        readSnapshotXposed().edgeHighlightIntensity
+    /**
+     * 绘制侧取某一类元素（背景 / 图标 / 按键）的光感设置。
+     *
+     * 三类共用同一个角度，但它不在这里：角度是 `getEdgeLightAngleXposed()`。
+     */
+    internal fun getEdgeLightGroupXposed(target: EdgeLightTarget): EdgeLightGroup {
+        val snapshot = readSnapshotXposed()
+        return when (target) {
+            EdgeLightTarget.BACKGROUND -> snapshot.backgroundLight
+            EdgeLightTarget.ICON -> snapshot.iconLight
+            EdgeLightTarget.KEY -> snapshot.keyLight
+        }
+    }
 
     fun getColorOsLightAngleXposed(): Int = readSnapshotXposed().colorOsLightAngle
 
@@ -1153,24 +1289,22 @@ object WeTypeSettings {
         readSnapshotXposed().toolbarIconBgOpacity
 
     fun isIconEdgeLightEnabledXposed(): Boolean =
-        readSnapshotXposed().iconEdgeLightEnabled
+        readSnapshotXposed().iconLight.enabled
 
     fun isKeyEdgeLightEnabled(context: Context): Boolean =
-        readSnapshot(context).keyEdgeLightEnabled
+        readSnapshot(context).keyLight.enabled
 
     fun isKeyEdgeLightEnabledXposed(): Boolean =
-        readSnapshotXposed().keyEdgeLightEnabled
+        readSnapshotXposed().keyLight.enabled
 
     fun isNativeEdgeLightEnabledXposed(): Boolean =
         readSnapshotXposed().nativeEdgeLightEnabled
 
-    fun getEdgeLightWidthXposed(): Int = readSnapshotXposed().edgeLightWidth
-
     fun getNativeEdgeLightWidthXposed(): Int = readSnapshotXposed().nativeEdgeLightWidth
 
-    fun getEdgeLightAngleXposed(): Int = readSnapshotXposed().edgeLightAngle
+    fun getNativeEdgeLightIntensityXposed(): Int = readSnapshotXposed().nativeEdgeLightIntensity
 
-    fun getGlowIntensityXposed(): Int = readSnapshotXposed().glowIntensity
+    fun getEdgeLightAngleXposed(): Int = readSnapshotXposed().edgeLightAngle
 
     fun getCandidatePinyinLeftMarginDpXposed(): Int =
         readSnapshotXposed().candidatePinyinLeftMarginDp
@@ -1300,20 +1434,19 @@ object WeTypeSettings {
         bottomCornerRadius: Int = DEFAULT_BOTTOM_CORNER_RADIUS,
         keyCornerRadius: Int,
         edgeHighlightEnabled: Boolean,
-        edgeHighlightIntensity: Int,
+        backgroundLight: EdgeLightGroup = EdgeLightGroup(),
+        iconLight: EdgeLightGroup = EdgeLightGroup(),
+        keyLight: EdgeLightGroup = EdgeLightGroup(),
         colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
-        iconEdgeLightEnabled: Boolean = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
-        keyEdgeLightEnabled: Boolean = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        edgeLightWidth: Int = DEFAULT_EDGE_LIGHT_WIDTH,
         nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
+        nativeEdgeLightIntensity: Int = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
-        glowIntensity: Int = DEFAULT_GLOW_INTENSITY,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -1358,6 +1491,11 @@ object WeTypeSettings {
         glassOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
         onPersisted: (Boolean) -> Unit
     ): Boolean {
+        val materialMode = normalizeMaterialMode(
+            edgeHighlightEnabled = edgeHighlightEnabled,
+            systemMaterialEnabled = systemMaterialEnabled,
+            nativeEdgeLightEnabled = nativeEdgeLightEnabled
+        )
         val snapshot = Snapshot(
             lightColor = lightColor,
             darkColor = darkColor,
@@ -1365,8 +1503,10 @@ object WeTypeSettings {
             cornerRadius = cornerRadius.coerceIn(0, MAX_CORNER_RADIUS),
             bottomCornerRadius = bottomCornerRadius.coerceIn(0, MAX_BOTTOM_CORNER_RADIUS),
             keyCornerRadius = keyCornerRadius.coerceIn(0, MAX_KEY_CORNER_RADIUS),
-            edgeHighlightEnabled = edgeHighlightEnabled,
-            edgeHighlightIntensity = edgeHighlightIntensity.coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
+            edgeHighlightEnabled = materialMode.edgeHighlightEnabled,
+            backgroundLight = backgroundLight.normalized(),
+            iconLight = iconLight.normalized(),
+            keyLight = keyLight.normalized(),
             colorOsLightAngle = colorOsLightAngle.coerceIn(0, MAX_COLOROS_LIGHT_ANGLE),
             candidateBackgroundAlpha = candidateBackgroundAlpha.coerceIn(0, 255),
             candidateBackgroundCorner = candidateBackgroundCorner.coerceIn(
@@ -1378,14 +1518,12 @@ object WeTypeSettings {
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp
                 .coerceIn(MIN_CANDIDATE_MARGIN_DP, MAX_CANDIDATE_MARGIN_DP),
             toolbarIconBgOpacity = toolbarIconBgOpacity.coerceIn(0, 255),
-            iconEdgeLightEnabled = iconEdgeLightEnabled,
-            keyEdgeLightEnabled = keyEdgeLightEnabled,
-            nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-            edgeLightWidth = edgeLightWidth.coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH),
+            nativeEdgeLightEnabled = materialMode.nativeEdgeLightEnabled,
             nativeEdgeLightWidth = nativeEdgeLightWidth
                 .coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
+            nativeEdgeLightIntensity = nativeEdgeLightIntensity
+                .coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
             edgeLightAngle = edgeLightAngle.coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
-            glowIntensity = glowIntensity.coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 group.id to (appearanceColors[group.id] ?: group.defaultColor)
             },
@@ -1427,7 +1565,7 @@ object WeTypeSettings {
             logoImageName = logoImageName.take(128),
             logoImageUpdatedAt = logoImageUpdatedAt.coerceAtLeast(0L),
             fontMode = fontMode.coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM),
-            systemMaterialEnabled = systemMaterialEnabled,
+            systemMaterialEnabled = materialMode.systemMaterialEnabled,
             hyperMaterialEnabled = hyperMaterialEnabled,
             glassOverrides = glassOverrides
         )
@@ -1435,11 +1573,18 @@ object WeTypeSettings {
         val localPreferences = appPreferences(appContext)
         return if (appContext.packageName == MODULE_PACKAGE_NAME) {
             val persisted = synchronized(settingsSyncLock) {
+                val revision = nextSnapshotRevision(localPreferences, remotePreferences)
                 val synced = remotePreferences?.let { preferences ->
-                    runCatching { writeSnapshot(preferences, snapshot) }.getOrDefault(false)
+                    runCatching {
+                        writeSnapshot(preferences, snapshot) { editor ->
+                            editor.putLong(KEY_HOST_SYNC_REVISION, revision)
+                        }
+                    }.getOrDefault(false)
                 } ?: false
                 writeSnapshot(localPreferences, snapshot) { editor ->
-                    editor.putBoolean(KEY_REMOTE_SYNC_PENDING, !synced)
+                    editor
+                        .putBoolean(KEY_REMOTE_SYNC_PENDING, !synced)
+                        .putLong(KEY_HOST_SYNC_REVISION, revision)
                 }.also { saved ->
                     if (saved) cachedXposedSnapshot = snapshot
                 }
@@ -1470,13 +1615,14 @@ object WeTypeSettings {
             // （`OplusAppStartupManager: prevent start .../ModuleBridgeReceiver`），
             // 于是每次保存都白等 5 秒，再弹一个与事实相反的「设置保存失败」。
             //
-            // 标记的写法因此也反过来了：先把待同步标记落成 false（保存这一瞬间本地就是
-            // 最新，没有欠账），只在镜像确实没送出去时才置回 true，留给下一次
-            // ensureHostSnapshot 补发。旧写法无条件先置 true、再由回执清掉，一旦回执
-            // 丢失就永久卡在"欠同步"，每次启动都白发一条广播。
-            var mirrorDelivered = false
-            if (isModulePackagePresent(appContext)) {
-                mirrorDelivered = sendSnapshotToModule(appContext, snapshot, revision)
+            // 待同步标记的语义是"欠同步"，不是"发送失败"：`sendSnapshotToModule` 的返回值
+            // 只说明广播发出去了，收没收到它答不了。所以只要模块 App 存在就先记成欠同步，
+            // 由下一次 ensureHostSnapshot 回读远端偏好验证后清掉 —— 那条回写是唯一能证明
+            // 镜像落地的凭据。LSPatch 内嵌模式下模块 App 根本不存在，没有镜像可等，直接记
+            // 成不欠。
+            val modulePresent = isModulePackagePresent(appContext)
+            if (modulePresent) {
+                sendSnapshotToModule(appContext, snapshot, revision)
             } else {
                 // LSPatch 内嵌模式：模块 App 根本不存在，没有镜像可送。
                 AndroidLog.i(
@@ -1485,7 +1631,7 @@ object WeTypeSettings {
                 )
             }
             localPreferences.edit()
-                .putBoolean(KEY_HOST_SYNC_PENDING, !mirrorDelivered)
+                .putBoolean(KEY_HOST_SYNC_PENDING, modulePresent)
                 .commit()
             onPersisted(true)
             return true
@@ -1505,7 +1651,9 @@ object WeTypeSettings {
             .putInt(KEY_BOTTOM_CORNER_RADIUS, snapshot.bottomCornerRadius)
             .putInt(KEY_KEY_CORNER_RADIUS, snapshot.keyCornerRadius)
             .putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, snapshot.edgeHighlightEnabled)
-            .putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, snapshot.edgeHighlightIntensity)
+            .putString(KEY_BACKGROUND_LIGHT, snapshot.backgroundLight.text())
+            .putString(KEY_ICON_LIGHT, snapshot.iconLight.text())
+            .putString(KEY_KEY_LIGHT, snapshot.keyLight.text())
             .putInt(KEY_COLOROS_LIGHT_ANGLE, snapshot.colorOsLightAngle)
             .putInt(KEY_CANDIDATE_BACKGROUND_ALPHA, snapshot.candidateBackgroundAlpha)
             .putFloat(KEY_CANDIDATE_BACKGROUND_CORNER, snapshot.candidateBackgroundCorner)
@@ -1518,13 +1666,10 @@ object WeTypeSettings {
                 snapshot.candidatePinyinLeftMarginDp
             )
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, snapshot.toolbarIconBgOpacity)
-            .putBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, snapshot.iconEdgeLightEnabled)
-            .putBoolean(KEY_KEY_EDGE_LIGHT_ENABLED, snapshot.keyEdgeLightEnabled)
             .putBoolean(KEY_NATIVE_EDGE_LIGHT_ENABLED, snapshot.nativeEdgeLightEnabled)
-            .putInt(KEY_EDGE_LIGHT_WIDTH, snapshot.edgeLightWidth)
             .putInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, snapshot.nativeEdgeLightWidth)
+            .putInt(KEY_NATIVE_EDGE_LIGHT_INTENSITY, snapshot.nativeEdgeLightIntensity)
             .putInt(KEY_EDGE_LIGHT_ANGLE, snapshot.edgeLightAngle)
-            .putInt(KEY_GLOW_INTENSITY, snapshot.glowIntensity)
             .putBoolean(KEY_SYSTEM_MATERIAL_ENABLED, snapshot.systemMaterialEnabled)
             .putBoolean(KEY_HYPER_MATERIAL_ENABLED, snapshot.hyperMaterialEnabled)
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
@@ -1643,9 +1788,46 @@ object WeTypeSettings {
         return delivered
     }
 
+    /**
+     * 远端偏好里是否已经带上这个 revision —— 镜像落地的唯一凭据。
+     *
+     * [sendSnapshotToModule] 的返回值只说明广播发出去了，收没收到是另一回事：ColorOS 的
+     * 自启动管理会直接掐掉唤醒模块 App 的广播（`OplusAppStartupManager: prevent start`），
+     * 而发送方一无所知。模块 App 收到快照后会以同一个 revision 写回远端偏好
+     * （见 [importBridgedSettings]），那条回写才是宿主能读到的证据。
+     */
+    private fun remoteCarriesRevision(revision: Long): Boolean {
+        if (revision <= 0L) return false
+        return synchronized(remotePrefsLock) {
+            resolvedRemotePreferencesLocked()?.getLong(KEY_HOST_SYNC_REVISION, 0L) == revision
+        }
+    }
+
+    /**
+     * 宿主写入用的 revision：时间戳与「上一个 + 1」取大，保证宿主每次写入都严格递增，
+     * 且必定大于模块 App 可能产生过的任何值。
+     */
     private fun nextHostRevision(preferences: SharedPreferences): Long {
         val previous = preferences.getLong(KEY_HOST_SYNC_REVISION, 0L)
         return maxOf(System.currentTimeMillis(), previous + 1L)
+    }
+
+    /**
+     * 模块 App 写入用的 revision：只在前一个值上加一，**不掺时间戳**。
+     *
+     * 掺时间戳会让一份落后一整个桥接周期的副本凭空获得比宿主更大的号 —— 旧实现正是
+     * `max(now, previous + 1)`，于是模块那份旧数据能通过宿主的比较、把用户刚保存的设置
+     * 换成自己那份。只加一之后，模块的号只排在自己已知的值之后，不再由墙上时钟保证。
+     */
+    private fun nextSnapshotRevision(
+        local: SharedPreferences,
+        remote: SharedPreferences?
+    ): Long {
+        val previous = maxOf(
+            local.getLong(KEY_HOST_SYNC_REVISION, 0L),
+            remote?.getLong(KEY_HOST_SYNC_REVISION, 0L) ?: 0L
+        )
+        return previous + 1L
     }
 
     private fun Snapshot.toBundle(): Bundle = Bundle().apply {
@@ -1656,20 +1838,19 @@ object WeTypeSettings {
         putInt(KEY_BOTTOM_CORNER_RADIUS, bottomCornerRadius)
         putInt(KEY_KEY_CORNER_RADIUS, keyCornerRadius)
         putBoolean(KEY_EDGE_HIGHLIGHT_ENABLED, edgeHighlightEnabled)
-        putInt(KEY_EDGE_HIGHLIGHT_INTENSITY, edgeHighlightIntensity)
+        putString(KEY_BACKGROUND_LIGHT, backgroundLight.text())
+        putString(KEY_ICON_LIGHT, iconLight.text())
+        putString(KEY_KEY_LIGHT, keyLight.text())
         putInt(KEY_CANDIDATE_BACKGROUND_ALPHA, candidateBackgroundAlpha)
         putFloat(KEY_CANDIDATE_BACKGROUND_CORNER, candidateBackgroundCorner)
         putInt(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP, candidateBackgroundLeftMarginDp)
         putInt(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP, candidatePinyinLeftMarginDp)
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
-        putBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, iconEdgeLightEnabled)
-        putBoolean(KEY_KEY_EDGE_LIGHT_ENABLED, keyEdgeLightEnabled)
         putBoolean(KEY_NATIVE_EDGE_LIGHT_ENABLED, nativeEdgeLightEnabled)
-        putInt(KEY_EDGE_LIGHT_WIDTH, edgeLightWidth)
         putInt(KEY_COLOROS_LIGHT_ANGLE, colorOsLightAngle)
         putInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, nativeEdgeLightWidth)
+        putInt(KEY_NATIVE_EDGE_LIGHT_INTENSITY, nativeEdgeLightIntensity)
         putInt(KEY_EDGE_LIGHT_ANGLE, edgeLightAngle)
-        putInt(KEY_GLOW_INTENSITY, glowIntensity)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
@@ -1749,10 +1930,9 @@ object WeTypeSettings {
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 defaults.edgeHighlightEnabled
             ),
-            edgeHighlightIntensity = getInt(
-                KEY_EDGE_HIGHLIGHT_INTENSITY,
-                defaults.edgeHighlightIntensity
-            ).coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
+            backgroundLight = EdgeLightGroup.parse(getString(KEY_BACKGROUND_LIGHT), defaults.backgroundLight),
+            iconLight = EdgeLightGroup.parse(getString(KEY_ICON_LIGHT), defaults.iconLight),
+            keyLight = EdgeLightGroup.parse(getString(KEY_KEY_LIGHT), defaults.keyLight),
             colorOsLightAngle = getInt(
                 KEY_COLOROS_LIGHT_ANGLE,
                 defaults.colorOsLightAngle
@@ -1787,34 +1967,22 @@ object WeTypeSettings {
                 KEY_TOOLBAR_ICON_BG_OPACITY,
                 defaults.toolbarIconBgOpacity
             ).coerceIn(0, 255),
-            iconEdgeLightEnabled = getBoolean(
-                KEY_ICON_EDGE_LIGHT_ENABLED,
-                defaults.iconEdgeLightEnabled
-            ),
-            keyEdgeLightEnabled = getBoolean(
-                KEY_KEY_EDGE_LIGHT_ENABLED,
-                defaults.keyEdgeLightEnabled
-            ),
             nativeEdgeLightEnabled = getBoolean(
                 KEY_NATIVE_EDGE_LIGHT_ENABLED,
                 defaults.nativeEdgeLightEnabled
             ),
-            edgeLightWidth = getInt(
-                KEY_EDGE_LIGHT_WIDTH,
-                defaults.edgeLightWidth
-            ).coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH),
             nativeEdgeLightWidth = getInt(
                 KEY_NATIVE_EDGE_LIGHT_WIDTH,
                 defaults.nativeEdgeLightWidth
             ).coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
+            nativeEdgeLightIntensity = getInt(
+                KEY_NATIVE_EDGE_LIGHT_INTENSITY,
+                defaults.nativeEdgeLightIntensity
+            ).coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
             edgeLightAngle = getInt(
                 KEY_EDGE_LIGHT_ANGLE,
                 defaults.edgeLightAngle
             ).coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
-            glowIntensity = getInt(
-                KEY_GLOW_INTENSITY,
-                defaults.glowIntensity
-            ).coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY),
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
@@ -1893,7 +2061,7 @@ object WeTypeSettings {
                     getInt(KEY_GLASS_MATERIAL_TYPE, 0)
                 } else null
             )
-        )
+        ).normalizeMaterialMode()
     }
 
     /** 标签位置归一化：只认顶部/底部（含已下线的旧"居中"=2），其余回到默认。 */
@@ -1903,6 +2071,30 @@ object WeTypeSettings {
         } else {
             DEFAULT_GESTURE_LABEL_POSITION
         }
+
+    /**
+     * 旧版光感字段合成的分组基线。
+     *
+     * 读不到新紧凑串时走这里：三类元素都继承旧版那一套值（同一个宽度、同一份边缘强度与
+     * 内发光强度），所以升级前后观感不变，只有 [EdgeLightGroup.enabled] 各按旧开关取。
+     *
+     * 旧的内发光上限是 200，[EdgeLightGroup.normalized] 会把它夹到 100——200 那档本来就把
+     * 阴影栈里两层白顶到了 255，模糊被削平、内发光退化成贴着内缘的一圈硬边，夹回 100 才是
+     * 这层原本该有的样子。
+     */
+    private fun SharedPreferences.legacyEdgeLightGroup(enabled: Boolean): EdgeLightGroup =
+        EdgeLightGroup(
+            enabled = enabled,
+            edgeEnabled = getBoolean(
+                KEY_EDGE_HIGHLIGHT_STROKE_ENABLED,
+                DEFAULT_EDGE_HIGHLIGHT_STROKE_ENABLED
+            ),
+            edgeIntensity = getInt(KEY_EDGE_HIGHLIGHT_INTENSITY, DEFAULT_EDGE_HIGHLIGHT_INTENSITY),
+            edgeWidth = getInt(KEY_EDGE_LIGHT_WIDTH, DEFAULT_EDGE_LIGHT_WIDTH),
+            glowEnabled = true,
+            glowIntensity = getInt(KEY_GLOW_INTENSITY, DEFAULT_GLOW_INTENSITY),
+            glowWidth = DEFAULT_GLOW_WIDTH
+        ).normalized()
 
     private fun SharedPreferences.toSnapshot(): Snapshot {
         val shouldMigrateLegacyKeyOpacity = contains(KEY_KEY_OPACITY) &&
@@ -1929,6 +2121,22 @@ object WeTypeSettings {
         } else {
             getInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP)
         }
+        val backgroundLight = EdgeLightGroup.parse(
+            getString(KEY_BACKGROUND_LIGHT, null),
+            legacyEdgeLightGroup(enabled = true)
+        )
+        val iconLight = EdgeLightGroup.parse(
+            getString(KEY_ICON_LIGHT, null),
+            legacyEdgeLightGroup(
+                getBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, DEFAULT_ICON_EDGE_LIGHT_ENABLED)
+            )
+        )
+        val keyLight = EdgeLightGroup.parse(
+            getString(KEY_KEY_LIGHT, null),
+            legacyEdgeLightGroup(
+                getBoolean(KEY_KEY_EDGE_LIGHT_ENABLED, DEFAULT_KEY_EDGE_LIGHT_ENABLED)
+            )
+        )
         return Snapshot(
             lightColor = getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR),
             darkColor = getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR),
@@ -1943,10 +2151,9 @@ object WeTypeSettings {
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 DEFAULT_EDGE_HIGHLIGHT_ENABLED
             ),
-            edgeHighlightIntensity = getInt(
-                KEY_EDGE_HIGHLIGHT_INTENSITY,
-                DEFAULT_EDGE_HIGHLIGHT_INTENSITY
-            ),
+            backgroundLight = backgroundLight,
+            iconLight = iconLight,
+            keyLight = keyLight,
             colorOsLightAngle = getInt(
                 KEY_COLOROS_LIGHT_ANGLE,
                 DEFAULT_COLOROS_LIGHT_ANGLE
@@ -1968,26 +2175,18 @@ object WeTypeSettings {
                 DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
             ).coerceIn(0, 64),
             toolbarIconBgOpacity = getInt(KEY_TOOLBAR_ICON_BG_OPACITY, DEFAULT_TOOLBAR_ICON_BG_OPACITY).coerceIn(0, 255),
-            iconEdgeLightEnabled = getBoolean(
-                KEY_ICON_EDGE_LIGHT_ENABLED,
-                DEFAULT_ICON_EDGE_LIGHT_ENABLED
-            ),
-            keyEdgeLightEnabled = getBoolean(
-                KEY_KEY_EDGE_LIGHT_ENABLED,
-                DEFAULT_KEY_EDGE_LIGHT_ENABLED
-            ),
             nativeEdgeLightEnabled = getBoolean(
                 KEY_NATIVE_EDGE_LIGHT_ENABLED,
                 DEFAULT_NATIVE_EDGE_LIGHT_ENABLED
             ),
-            edgeLightWidth = getInt(KEY_EDGE_LIGHT_WIDTH, DEFAULT_EDGE_LIGHT_WIDTH)
-                .coerceIn(MIN_EDGE_LIGHT_WIDTH, MAX_EDGE_LIGHT_WIDTH),
             nativeEdgeLightWidth = getInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, DEFAULT_NATIVE_EDGE_LIGHT_WIDTH)
                 .coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
+            nativeEdgeLightIntensity = getInt(
+                KEY_NATIVE_EDGE_LIGHT_INTENSITY,
+                DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY
+            ).coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
             edgeLightAngle = getInt(KEY_EDGE_LIGHT_ANGLE, DEFAULT_EDGE_LIGHT_ANGLE)
                 .coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
-            glowIntensity = getInt(KEY_GLOW_INTENSITY, DEFAULT_GLOW_INTENSITY)
-                .coerceIn(MIN_GLOW_INTENSITY, MAX_GLOW_INTENSITY),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 val key = "$KEY_APPEARANCE_COLOR_PREFIX${group.id}"
                 val fallbackColor = if (legacyKeyOpacity != null) {
@@ -2063,7 +2262,7 @@ object WeTypeSettings {
             systemMaterialEnabled = getBoolean(KEY_SYSTEM_MATERIAL_ENABLED, DEFAULT_SYSTEM_MATERIAL_ENABLED),
             hyperMaterialEnabled = getBoolean(KEY_HYPER_MATERIAL_ENABLED, DEFAULT_HYPER_MATERIAL_ENABLED),
             glassOverrides = readGlassOverrides()
-        )
+        ).normalizeMaterialMode()
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -2094,20 +2293,16 @@ object WeTypeSettings {
         bottomCornerRadius = DEFAULT_BOTTOM_CORNER_RADIUS,
         keyCornerRadius = DEFAULT_KEY_CORNER_RADIUS,
         edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED,
-        edgeHighlightIntensity = DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
         colorOsLightAngle = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha = DEFAULT_CANDIDATE_BACKGROUND_ALPHA,
         candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
         candidateBackgroundLeftMarginDp = DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         toolbarIconBgOpacity = DEFAULT_TOOLBAR_ICON_BG_OPACITY,
-        iconEdgeLightEnabled = DEFAULT_ICON_EDGE_LIGHT_ENABLED,
-        keyEdgeLightEnabled = DEFAULT_KEY_EDGE_LIGHT_ENABLED,
         nativeEdgeLightEnabled = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        edgeLightWidth = DEFAULT_EDGE_LIGHT_WIDTH,
         nativeEdgeLightWidth = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
+        nativeEdgeLightIntensity = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         edgeLightAngle = DEFAULT_EDGE_LIGHT_ANGLE,
-        glowIntensity = DEFAULT_GLOW_INTENSITY,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -2147,7 +2342,7 @@ object WeTypeSettings {
         logoImageName = DEFAULT_LOGO_IMAGE_NAME,
         logoImageUpdatedAt = DEFAULT_LOGO_IMAGE_UPDATED_AT,
         fontMode = DEFAULT_FONT_MODE
-    )
+    ).normalizeMaterialMode()
 
     private fun SharedPreferences.containsAnyPersistedSetting(): Boolean {
         if (contains(KEY_LIGHT_COLOR) ||
@@ -2157,7 +2352,16 @@ object WeTypeSettings {
             contains(KEY_BOTTOM_CORNER_RADIUS) ||
             contains(KEY_KEY_CORNER_RADIUS) ||
             contains(KEY_EDGE_HIGHLIGHT_ENABLED) ||
+            contains(KEY_BACKGROUND_LIGHT) ||
+            contains(KEY_ICON_LIGHT) ||
+            contains(KEY_KEY_LIGHT) ||
+            // 旧版光感字段：只剩它们的老安装也要走 toSnapshot（而不是默认快照），迁移才有机会发生。
+            contains(KEY_EDGE_HIGHLIGHT_STROKE_ENABLED) ||
             contains(KEY_EDGE_HIGHLIGHT_INTENSITY) ||
+            contains(KEY_GLOW_INTENSITY) ||
+            contains(KEY_EDGE_LIGHT_WIDTH) ||
+            contains(KEY_ICON_EDGE_LIGHT_ENABLED) ||
+            contains(KEY_KEY_EDGE_LIGHT_ENABLED) ||
             contains(KEY_COLOROS_LIGHT_ANGLE) ||
             contains(KEY_KEY_OPACITY) ||
             contains(KEY_CANDIDATE_BACKGROUND_ALPHA) ||
@@ -2165,13 +2369,10 @@ object WeTypeSettings {
             contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) ||
             contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) ||
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
-            contains(KEY_ICON_EDGE_LIGHT_ENABLED) ||
-            contains(KEY_KEY_EDGE_LIGHT_ENABLED) ||
             contains(KEY_NATIVE_EDGE_LIGHT_ENABLED) ||
-            contains(KEY_EDGE_LIGHT_WIDTH) ||
             contains(KEY_NATIVE_EDGE_LIGHT_WIDTH) ||
+            contains(KEY_NATIVE_EDGE_LIGHT_INTENSITY) ||
             contains(KEY_EDGE_LIGHT_ANGLE) ||
-            contains(KEY_GLOW_INTENSITY) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||

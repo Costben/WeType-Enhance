@@ -13,8 +13,9 @@ import top.yukonga.miuix.kmp.icon.extended.Refresh
 /**
  * 设置界面右上角的统一动作，让输入法进程重新读取刚写入的配置。
  *
- * 一级页的滑块与开关只改内存状态，点击它才会写盘并重启输入法进程；
- * 二级页自身已经即时写盘，点击它只负责让改动生效。
+ * 写盘由设置页自己负责：一级页与二级页的改动会在停手之后自动落盘，这里只负责让输入法进程
+ * 立刻重读。正常路径下不需要点它 —— `:hld` 自己会轮询偏好文件时间戳；它是输入法没跟上时的
+ * 显式兜底。
  */
 @Composable
 internal fun SettingsRefreshButton(modifier: Modifier = Modifier, onClick: () -> Unit) {

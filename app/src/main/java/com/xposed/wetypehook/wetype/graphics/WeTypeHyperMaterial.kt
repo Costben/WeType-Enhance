@@ -31,7 +31,7 @@ internal class WeTypeHyperMaterial(
 
     // One native optical layer avoids independently sampled/tinted regions.
     // Its radius follows the custom top corners; the parent retains all four G2 clips.
-    private val usesGlassSurfaces = this.overrides.glass != null && this.overrides.materialType == 1
+    private val usesGlassSurfaces = this.overrides.isLiquidGlassEnabled
     private val glassSurface: View? = if (usesGlassSurfaces) {
         check(view is ViewGroup)
         View(view.context).apply {

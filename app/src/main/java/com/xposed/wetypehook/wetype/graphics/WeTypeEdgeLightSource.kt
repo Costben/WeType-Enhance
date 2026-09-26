@@ -14,7 +14,8 @@ import android.graphics.Rect
  * [radiusPx] 是该区域的圆角半径；[dark] 是调用方按自己那份 resources 判定的明暗。
  */
 internal fun interface WeTypeEdgeLightSource {
-    fun draw(canvas: Canvas, rect: Rect, radiusPx: Float, dark: Boolean)
+    /** 返回是否实际完成了绘制；原生实现失败时调用方可以换用自绘源。 */
+    fun draw(canvas: Canvas, rect: Rect, radiusPx: Float, dark: Boolean): Boolean
 }
 
 /** 一处边缘光最终由谁画。 */
@@ -34,9 +35,9 @@ internal enum class WeTypeEdgeLightBackend {
  * 就必须用它；它在非 ColorOS 上必然为 null，此时由模块自绘顶上，让「光感设置」在任何
  * ROM 上都画得出来。两个都不可用就不画。
  *
- * @param enabled 该处光感自己的总开关（图标光感 / 按键光感）。
+ * @param enabled 该处光感自己的总开关（「光感设置」里图标 / 按键那一组）。
  * @param nativeSourceAvailable 原生源此刻是否可用（平台判定 + 系统描边开关 + 组件加载成功）。
- * @param selfDrawnSourceEnabled 自绘源的总控（「光感设置」里的边缘高光开关）。
+ * @param selfDrawnSourceEnabled 自绘源的总控（「光感设置」总开关）。
  */
 internal fun resolveEdgeLightBackend(
     enabled: Boolean,

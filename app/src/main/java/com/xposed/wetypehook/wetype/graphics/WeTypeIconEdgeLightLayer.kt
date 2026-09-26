@@ -6,49 +6,84 @@ import android.graphics.ColorFilter
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
+import android.view.View
+import com.xposed.wetypehook.wetype.settings.WeTypeSettings
+import java.lang.ref.WeakReference
 
 /**
  * 把边缘光叠在图标自身的 drawable 之上。
  *
  * 工具栏图标与 Logo 的圆底都是圆形，直接取 `min(w, h) / 2` 作半径即可让轮廓与真实形状重合；
- * 按键那套「键帽半径」在这里不适用。
- *
- * 原生源的 `COUIShadowEdgeDrawable` 用 `canvas.drawPaint` 铺满当前裁剪区，因此这里必须先把
- * 画布裁到 drawable bounds，否则 shader 会以整块窗口为边界、在图标上画不出任何东西。
+ * 原生模式走 [WeTypeNativeEdgeLightManager] + RenderNode 材质覆盖层，失败或禁用时
+ * 平滑降级至模块自绘 [fallback]。
  */
 internal class WeTypeIconEdgeLightLayer(
     private val context: Context,
     private val host: Drawable?,
     private val light: WeTypeEdgeLightSource,
     private val backend: WeTypeEdgeLightBackend,
-    private val dark: Boolean
+    private val dark: Boolean,
+    private val fallback: WeTypeEdgeLightSource?,
+    private val hostViewRef: WeakReference<View>? = null,
+    private val nativeSource: WeTypeEdgeLightSource? = null,
+    private val target: WeTypeIconEdgeLightTarget = WeTypeIconEdgeLightTarget.IMAGE_CONTENT
 ) : Drawable() {
 
-    /** [forwardCallback] 是否已经补过 callback，避免每帧重复写。 */
     private var callbackForwarded = false
 
     override fun draw(canvas: Canvas) {
         val bounds = bounds
         if (bounds.isEmpty) return
         forwardCallback()
+        refreshHostOpacity()
         host?.let {
             it.setBounds(bounds)
             it.draw(canvas)
         }
+
         val active = isIconEdgeLightActive(context)
-        if (!isEdgeLightSourceStillValid(
-                backend = backend,
-                nativeSourceStillAvailable = active &&
-                    WeTypeSystemMaterials.isColorOsBackend() &&
-                    WeTypeSystemMaterials.isNativeStrokeEnabled(context),
-                selfDrawnSourceStillEnabled = active
-            )
-        ) {
+        val hostView = hostViewRef?.get()
+        if (!active) {
+            WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
             return
         }
+
+        val nativeSourceAvailable = nativeSource != null &&
+            WeTypeSystemMaterials.isColorOsBackend() &&
+            WeTypeSystemMaterials.isNativeStrokeEnabled(context) &&
+            WeTypeSettings.isSystemMaterialEnabledXposed() &&
+            WeTypeSettings.isNativeEdgeLightEnabledXposed() &&
+            !WeTypeSettings.isEdgeHighlightEnabledXposed(context)
+
+        val currentBackend = resolveEdgeLightBackend(
+            enabled = active,
+            nativeSourceAvailable = nativeSourceAvailable,
+            selfDrawnSourceEnabled = WeTypeSettings.isEdgeHighlightEnabledXposed(context)
+        )
+
+        if (currentBackend == WeTypeEdgeLightBackend.NONE) {
+            WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
+            return
+        }
+
         val save = canvas.save()
         canvas.clipRect(bounds)
-        light.draw(canvas, Rect(bounds), minOf(bounds.width(), bounds.height()) / 2f, dark)
+        val rect = Rect(bounds)
+        val radius = minOf(bounds.width(), bounds.height()) / 2f
+
+        if (currentBackend == WeTypeEdgeLightBackend.NATIVE) {
+            val drawn = nativeSource?.draw(canvas, rect, radius, dark) ?: light.draw(canvas, rect, radius, dark)
+            if (!drawn) {
+                WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
+                if (WeTypeSettings.isEdgeHighlightEnabledXposed(context)) {
+                    fallback?.draw(canvas, rect, radius, dark)
+                }
+            }
+        } else {
+            WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
+            fallback?.draw(canvas, rect, radius, dark)
+        }
+
         canvas.restoreToCount(save)
     }
 
@@ -56,17 +91,17 @@ internal class WeTypeIconEdgeLightLayer(
         host?.alpha = alpha
     }
 
+    /** Re-reads the toolbar opacity without requiring the host to recreate its background drawable. */
+    fun refreshHostOpacity() {
+        if (target == WeTypeIconEdgeLightTarget.BACKGROUND) {
+            host?.alpha = WeTypeSettings.getToolbarIconBgOpacityXposed()
+        }
+    }
+
     override fun setColorFilter(colorFilter: ColorFilter?) {
         host?.colorFilter = colorFilter
     }
 
-    /**
-     * 包装层要把 callback 转给内层 drawable，否则内层拿不到宿主 View，它的
-     * `invalidateSelf()` 会被直接丢弃，改 alpha 或颜色后不触发重绘。
-     *
-     * 不能 override `setCallback` —— 它在 `Drawable` 里是 final。改在首次绘制时补一次：
-     * `Drawable.setCallback` 只写字段、不触发失效，所以这里不会造成重绘递归。
-     */
     private fun forwardCallback() {
         if (callbackForwarded) return
         val cb = callback ?: return

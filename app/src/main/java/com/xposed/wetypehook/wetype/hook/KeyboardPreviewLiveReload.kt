@@ -8,7 +8,7 @@ import java.io.File
 import java.lang.ref.WeakReference
 
 /**
- * 「实时效果预览」开着时，把设置页刚写下的改动原地重放到活着的输入法窗口上。
+ * 把设置页刚写下的改动原地重放到活着的输入法窗口上。
  *
  * ## 为什么需要它
  *
@@ -24,7 +24,7 @@ import java.lang.ref.WeakReference
  * 这个文件的时间戳就够：变了就让 [WeTypeSettings] 重读偏好、然后把当前窗口重放一遍
  * （[WeTypeWindowHooks.reconcileCurrentInputMethodService]）。
  *
- * 只在开关打开、且键盘正在显示时轮询；其余时候一次回调都不排。
+ * 键盘正在显示时轮询；键盘隐藏后停止，避免后台常驻定时器。
  */
 internal object KeyboardPreviewLiveReload {
 
@@ -42,10 +42,6 @@ internal object KeyboardPreviewLiveReload {
         override fun run() {
             val service = serviceRef?.get()
             if (!running || service == null) {
-                stop()
-                return
-            }
-            if (!WeTypeSettings.isAppearanceStagePreviewEnabled(service)) {
                 stop()
                 return
             }

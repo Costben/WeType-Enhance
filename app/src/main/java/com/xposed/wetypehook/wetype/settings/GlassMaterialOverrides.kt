@@ -7,6 +7,10 @@ data class GlassMaterialOverrides(
     val bloom: List<Float>? = null,
     val materialType: Int? = null
 ) {
+    /** The editor's master switch is represented by a complete glass parameter array. */
+    val isLiquidGlassEnabled: Boolean
+        get() = glass != null
+
     init {
         require(glass == null || (glass.size == 42 && glass.all { it.isFinite() }))
         require(blurRadii == null || (blurRadii.size == 2 && blurRadii.all { it in 0..400 }))

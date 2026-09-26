@@ -918,6 +918,26 @@ internal object WeTypeResourceHooks {
         }
     }
 
+    /** Refreshes already-created toolbar backgrounds after a remote opacity change. */
+    fun reconcileCurrentToolbarIconBackgrounds(rootViews: Collection<View>) {
+        val containerId = runCatching {
+            HostResources.rClass("com.tencent.wetype.plugin.hld.s")
+                ?.getField("custom_toolbar_item_container_view")?.getInt(null)
+        }.getOrNull() ?: return
+        rootViews.forEach { rootView ->
+            forEachView(rootView) { view ->
+                if (view.id != containerId) return@forEachView
+                val background = view.background ?: return@forEachView
+                if (background is WeTypeIconEdgeLightLayer) {
+                    background.refreshHostOpacity()
+                } else {
+                    background.alpha = WeTypeSettings.getToolbarIconBgOpacityXposed()
+                }
+                view.invalidate()
+            }
+        }
+    }
+
     private inline fun forEachView(rootView: View, action: (View) -> Unit) {
         val pending = java.util.ArrayDeque<View>()
         pending.add(rootView)

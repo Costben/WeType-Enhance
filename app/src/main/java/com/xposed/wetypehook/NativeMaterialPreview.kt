@@ -23,6 +23,7 @@ import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
 import com.xposed.wetypehook.wetype.graphics.WeTypeEdgeLightPreset
 import com.xposed.wetypehook.wetype.graphics.WeTypeSelfDrawnEdgeLight
 import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
+import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import kotlin.math.min
 import kotlin.math.pow
@@ -33,8 +34,8 @@ import kotlin.math.roundToInt
  *
  * 真机两条路，开关组合决定走哪条：
  *
- * 1. ColorOS 后端 + 「ColorOS 系统材质」开 —— 背板是模块自己的底色（不透明度抬到
- *    [MIN_PANEL_ALPHA]），背板模糊走系统材质的固定 150px，边缘光与内阴影交给系统材质通道，
+ * 1. ColorOS 后端 + 「ColorOS 系统材质」开 —— 背板使用模块自己的底色与透明度，背板模糊走
+ *    系统材质的固定 150px，边缘光与内阴影交给系统材质通道，
  *    模块自绘的流光轮廓让位。
  * 2. 其余情况 —— 不是 ColorOS 后端，或者 ColorOS 上没开那一行：HyperOS 开了背板材质开关时
  *    沿用 [WeTypeSystemMaterials.fallbackColor]，否则就是模块自绘的底色与模糊；边缘光都由
@@ -55,9 +56,6 @@ import kotlin.math.roundToInt
  */
 internal object NativeMaterialPreview {
 
-    /** 与 hook 侧 `MIN_PANEL_ALPHA` 同值：原生边缘光生效时给面板的最低不透明度。 */
-    const val MIN_PANEL_ALPHA = 0xC8
-
     /** 系统材质的背板模糊半径。真机是固定 150px，不随 density 缩放。 */
     const val SYSTEM_BLUR_PX = 150f
 
@@ -71,22 +69,17 @@ internal object NativeMaterialPreview {
     /** 实测基准：强度 32 时的平台倍数。下面的绝对值都按这一档归一。 */
     private const val REFERENCE_SCALE = 1.28f
 
-    /** 抬高 [color] 的不透明度到至少 [MIN_PANEL_ALPHA]，保留 RGB。 */
-    fun withMinimumAlpha(color: Int): Int =
-        (color and 0x00FFFFFF) or (maxOf(color ushr 24, MIN_PANEL_ALPHA) shl 24)
-
     /** 系统材质的叠加染色。 */
     fun systemTint(isDark: Boolean): Int = if (isDark) DARK_MIX else LIGHT_MIX
 
     /**
-     * 原生边缘光生效时的面板实色：用户底色（不透明度抬到 [MIN_PANEL_ALPHA]）盖在系统材质的
-     * 中性底板上。
+     * 原生边缘光生效时的面板实色：用户底色按自己的 alpha 盖在系统材质的中性底板上。
      *
      * 底板取染色本身的实色：亮色是那块浅灰，暗色是纯黑——实测暗色档面板落在 1~2，亮色档
      * 落在 212（用户底色 #D4D4D4），两者都对得上。
      */
     fun panelColor(color: Int, isDark: Boolean): Int =
-        srcOver(withMinimumAlpha(color), systemTint(isDark) or (0xFF shl 24))
+        srcOver(color, systemTint(isDark) or (0xFF shl 24))
 
     /**
      * 边缘光剖面。左右按强度线性长大；顶部的亮度长得很慢（实测 32 → 100 只涨三成，横向摊开
@@ -133,14 +126,14 @@ internal object NativeMaterialPreview {
         colorOsBackend: Boolean,
         edgeHighlightEnabled: Boolean,
         nativeEdgeLightEnabled: Boolean,
-        edgeHighlightIntensity: Int
+        nativeEdgeLightIntensity: Int = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY
     ): MaterialPreviewPanel {
         // ColorOS 那套系统材质（背板模糊 + 原生边缘光 + 内阴影）整体由「ColorOS 系统材质」
         // 那一行驱动；HyperOS 的背板材质开关在 ColorOS 后端不参与。两条都以外层总控为门禁——hook 侧同口径。
         val colorOsMaterial = systemMaterialEnabled && colorOsBackend && nativeEdgeLightEnabled
         val hyperMaterial = systemMaterialEnabled && !colorOsBackend && hyperMaterialEnabled
         val nativeGlow = if (colorOsMaterial) {
-            edgeGlow(isDark, edgeHighlightIntensity)
+            edgeGlow(isDark, nativeEdgeLightIntensity)
         } else {
             null
         }
@@ -278,17 +271,15 @@ internal fun Modifier.nativeMaterialEdgeGlow(
  * 贴进 Compose 画布」，见 [ReplicaEdgeLightRenderer]。
  *
  * 四个数值与设置项同源，交给 drawable 的方式也跟真机完全一致：角度进
- * [WeTypeBloomStrokeDrawable] 的角度参数、宽度进 `strokeWidthScale`、强度与发光强度合成
- * `intensityScale`，发光强度另外反向决定阴影栈里那层黑色内阴影。
+ * [WeTypeBloomStrokeDrawable] 的角度参数，[ReplicaEdgeLight.group] 里边缘与内发光各自的开关、
+ * 强度、宽度分别作用于对应的阴影层。
  *
  * 图标与按键在真机上是两个开关、两条取源路径，所以调用方各传一份进来。
  */
 internal data class ReplicaEdgeLight(
     val enabled: Boolean,
     val angleDegrees: Int,
-    val widthDp: Int,
-    val intensity: Int,
-    val glow: Int = WeTypeSettings.DEFAULT_GLOW_INTENSITY
+    val group: EdgeLightGroup = EdgeLightGroup()
 )
 
 /**
@@ -314,9 +305,7 @@ internal object ReplicaEdgeLightRenderer {
         val heightPx: Int,
         val cornerRadiusPx: Float,
         val angleDegrees: Int,
-        val widthDp: Int,
-        val intensity: Int,
-        val glow: Int,
+        val group: EdgeLightGroup,
         val surfaceColor: Int,
         val isDark: Boolean
     )
@@ -349,9 +338,7 @@ internal object ReplicaEdgeLightRenderer {
             heightPx = heightPx,
             cornerRadiusPx = radius,
             angleDegrees = light.angleDegrees,
-            widthDp = light.widthDp,
-            intensity = light.intensity,
-            glow = light.glow,
+            group = light.group,
             surfaceColor = surfaceColor,
             isDark = isDark
         )
@@ -373,16 +360,20 @@ internal object ReplicaEdgeLightRenderer {
         isDark: Boolean
     ): Bitmap {
         val cornerRadii = WeTypeCornerRadii.uniform(cornerRadiusPx)
+        val group = light.group
         val drawable = WeTypeBloomStrokeDrawable(
             // 明暗档由 drawable 自己按 Context 的 uiMode 判，所以必须用预览的档、不能用宿主的。
             context = createPreviewContext(context, isDark),
             cornerRadii = cornerRadii,
             surfaceColor = surfaceColor,
-            intensityScale = WeTypeSelfDrawnEdgeLight.intensityScale(light.intensity) *
-                WeTypeSelfDrawnEdgeLight.glowLightScale(light.glow),
-            strokeWidthScale = WeTypeSelfDrawnEdgeLight.strokeWidthScale(light.widthDp),
+            edgeIntensityScale = WeTypeSelfDrawnEdgeLight.intensityScale(group.edgeIntensity),
+            edgeWidthScale = WeTypeSelfDrawnEdgeLight.strokeWidthScale(group.edgeWidth),
+            glowIntensityScale = WeTypeSelfDrawnEdgeLight.glowLayerScale(group.glowIntensity),
+            glowWidthScale = WeTypeSelfDrawnEdgeLight.strokeWidthScale(group.glowWidth),
             lightAngleDegrees = light.angleDegrees.toFloat(),
-            innerShadowScale = WeTypeSelfDrawnEdgeLight.glowInnerShadowScale(light.glow),
+            innerShadowScale = WeTypeSelfDrawnEdgeLight.glowInnerShadowScale(group.glowIntensity),
+            edgeHighlightEnabled = group.edgeEnabled,
+            glowEnabled = group.glowEnabled,
             preset = WeTypeEdgeLightPreset.COMPACT
         )
         drawable.setBounds(0, 0, widthPx, heightPx)

@@ -97,6 +97,8 @@ class MainHook : XposedModule() {
         "com.xiaomi.type"
     )
     private val installedHookTokens = ConcurrentHashMap.newKeySet<String>()
+    private val settingsReconcileHandler = Handler(Looper.getMainLooper())
+    private var settingsReconcilePosted = false
     private val imeInputFramesByDecor = WeakHashMap<View, WeakReference<ViewGroup>>()
     private val originalImeContentBottomPaddings = WeakHashMap<View, Int>()
     private data class FullscreenAreaLayout(val height: Int, val weight: Float)
@@ -288,6 +290,9 @@ class MainHook : XposedModule() {
     }
 
     private fun installWeTypeHooks(sourcePackage: String, sourceDir: String?, classLoader: ClassLoader) {
+        WeTypeSettings.setXposedSnapshotChangeListener {
+            requestWeTypeSettingsReconcile()
+        }
         if (frameworkProperties and XposedInterface.PROP_CAP_REMOTE != 0L) {
             // 懒重绑入口：热重载被拒/服务瞬态不可用导致 unbind 后，设置读取仍可自愈，
             // 不再回退默认色（#23C891 绿）并卡死到进程结束。
@@ -298,6 +303,7 @@ class MainHook : XposedModule() {
                 WeTypeSettings.bindRemotePreferences(
                     getRemotePreferences(WeTypeSettings.PREF_GROUP)
                 )
+                WeTypeSettings.syncHostSnapshotFromRemote()
                 true
             }.onFailure { error ->
                 Log.e("Failed: bind remote preferences")
@@ -1250,6 +1256,21 @@ class MainHook : XposedModule() {
         if (!reconciled) {
             Log.e("Failed:Reconcile current WeType UI after hot reload")
         }
+    }
+
+    /** Coalesce the one callback emitted for each key written by a remote SharedPreferences commit. */
+    private fun requestWeTypeSettingsReconcile() {
+        synchronized(this) {
+            if (settingsReconcilePosted) return
+            settingsReconcilePosted = true
+        }
+        settingsReconcileHandler.postDelayed({
+            synchronized(this) {
+                settingsReconcilePosted = false
+            }
+            WeTypeSettings.syncHostSnapshotFromRemote()
+            reconcileCurrentWeTypeUiAfterHotReload()
+        }, 120L)
     }
 
     private fun currentProcessWindowViews(): List<View> = runCatching {

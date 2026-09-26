@@ -9,15 +9,22 @@ import org.junit.Test
  * The bridge to the module app is a best-effort mirror, never a precondition.
  * `:hld` reads the host's own `shared_prefs` file — the very file `saveDirect`
  * just wrote — so a mirror that never arrives cannot make a saved setting take
- * effect any less. Two regressions are guarded here:
+ * effect any less. Three rules are guarded here:
  *
  * - A 5s ACK wait used to turn a delivered-but-unacknowledged broadcast into
  *   "could not save settings", while the value was already on disk. That is a
  *   lie, and on ColorOS it fired on *every* save: `OplusAppStartupManager`
- *   blocks waking the module app from a broadcast entirely.
+ *   blocks waking the module app from a broadcast entirely. No save may ever
+ *   wait for the mirror again.
  * - Ordering the snapshot resolution remote-first let the module app's stale
  *   mirror overwrite the host file on the next `:hld` start, silently reverting
- *   whatever the user had just saved.
+ *   whatever the user had just saved. Remote is now a first-install seed only:
+ *   once the host has written a snapshot of its own, no remote value may ever
+ *   change it, whatever revision it carries.
+ * - `host_sync_pending` means "the mirror is not yet proven to have landed", not
+ *   "the broadcast failed". `sendBroadcast` answering `true` says nothing about
+ *   the receiver, so the flag is cleared only after the module writes the same
+ *   revision back into remote preferences, which the host can read.
  *
  * The settings UI reads the boolean back through `saveSettings`, so the only
  * rules that matter are: the local write decides the result, and nothing else.
@@ -35,8 +42,17 @@ class SettingsPersistencePathTest {
     private fun saveResult(localWriteSucceeded: Boolean, mirrorDelivered: Boolean): Boolean =
         if (!localWriteSucceeded) false else true
 
-    /** The mirror outcome drives the pending flag, and nothing else. */
-    private fun hostSyncPendingAfterSave(mirrorDelivered: Boolean): Boolean = !mirrorDelivered
+    /**
+     * `host_sync_pending` as `saveDirect` now leaves it: owed whenever a mirror
+     * was even attempted, because the broadcast result proves nothing.
+     */
+    private fun hostSyncPendingAfterSave(moduleAppInstalled: Boolean): Boolean = moduleAppInstalled
+
+    /** Seeding only: modelled after the remote guard in `syncHostSnapshotFromRemote`. */
+    private fun remoteChangesTheHost(hostHasLocalSnapshot: Boolean): Boolean = !hostHasLocalSnapshot
+
+    /** Modelled after `nextSnapshotRevision`, which no longer reads the clock. */
+    private fun moduleRevisionAfter(local: Long, remote: Long): Long = maxOf(local, remote) + 1L
 
     @Test fun localWriteAloneIsEnoughWhenThereIsNoModuleApp() {
         assertTrue(saveResult(localWriteSucceeded = true, mirrorDelivered = false))
@@ -54,11 +70,39 @@ class SettingsPersistencePathTest {
         val localWriteSucceeded = true
         val mirrorDelivered = false
         assertTrue(saveResult(localWriteSucceeded, mirrorDelivered))
-        assertTrue("an undelivered mirror is a debt to retry", hostSyncPendingAfterSave(mirrorDelivered))
+        assertTrue(
+            "an unverified mirror is a debt to retry",
+            hostSyncPendingAfterSave(moduleAppInstalled = true)
+        )
     }
 
-    @Test fun aDeliveredMirrorLeavesNoPendingFlag() {
-        assertFalse(hostSyncPendingAfterSave(mirrorDelivered = true))
+    @Test fun aSaveLeavesTheMirrorOwedUntilTheModuleProvesItLanded() {
+        // The broadcast result is not proof — only the module writing the same
+        // revision back into remote preferences is, and that is checked on the
+        // next `:hld` start rather than during the save.
+        assertTrue(hostSyncPendingAfterSave(moduleAppInstalled = true))
+    }
+
+    @Test fun theLspatchEmbedOwesNothingBecauseThereIsNoMirrorToWaitFor() {
+        assertFalse(hostSyncPendingAfterSave(moduleAppInstalled = false))
+    }
+
+    @Test fun aRemoteMirrorCanOnlySeedAHostThatNeverSaved() {
+        assertTrue(remoteChangesTheHost(hostHasLocalSnapshot = false))
+        assertFalse(remoteChangesTheHost(hostHasLocalSnapshot = true))
+    }
+
+    @Test fun aStaleModuleCopyCannotOutrankTheHostByClockTime() {
+        // The host revision is a wall-clock stamp from a moment ago; the module's
+        // copy is one bridge cycle behind. The old `max(now, previous + 1)` handed
+        // the stale copy a *larger* revision than the host's, which is exactly how
+        // it used to overwrite freshly saved settings.
+        val hostRevision = System.currentTimeMillis() - 5_000L
+        assertFalse(
+            "a mirror a bridge cycle behind must stay behind",
+            moduleRevisionAfter(local = hostRevision - 500L, remote = 0L) > hostRevision
+        )
+        assertTrue(moduleRevisionAfter(local = hostRevision, remote = 0L) > hostRevision)
     }
 
     @Test fun aFailedLocalWriteIsNeverReportedAsSuccess() {

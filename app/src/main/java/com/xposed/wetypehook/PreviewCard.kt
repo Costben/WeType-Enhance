@@ -59,9 +59,11 @@ import androidx.compose.ui.unit.dp
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
+import com.xposed.wetypehook.wetype.graphics.WeTypeSelfDrawnEdgeLight
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeSmoothRoundedShape
 import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
+import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
@@ -81,7 +83,7 @@ internal fun PreviewSection(
     bottomCornerRadius: Int,
     keyCornerRadius: Int,
     edgeHighlightEnabled: Boolean,
-    edgeHighlightIntensity: Int,
+    backgroundLight: EdgeLightGroup,
     keyEdgeLight: ReplicaEdgeLight,
     lightKeyColor: Int,
     darkKeyColor: Int,
@@ -89,6 +91,7 @@ internal fun PreviewSection(
     systemMaterialEnabled: Boolean,
     hyperMaterialEnabled: Boolean = false,
     nativeEdgeLightEnabled: Boolean = false,
+    nativeEdgeLightIntensity: Int = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
     pinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
     keyboardPreviewEnabled: Boolean = false,
@@ -103,7 +106,7 @@ internal fun PreviewSection(
         bottomCornerRadius = bottomCornerRadius,
         keyCornerRadius = keyCornerRadius,
         edgeHighlightEnabled = edgeHighlightEnabled,
-        edgeHighlightIntensity = edgeHighlightIntensity,
+        backgroundLight = backgroundLight,
         keyEdgeLight = keyEdgeLight,
         lightKeyColor = lightKeyColor,
         darkKeyColor = darkKeyColor,
@@ -111,6 +114,7 @@ internal fun PreviewSection(
         systemMaterialEnabled = systemMaterialEnabled,
         hyperMaterialEnabled = hyperMaterialEnabled,
         nativeEdgeLightEnabled = nativeEdgeLightEnabled,
+        nativeEdgeLightIntensity = nativeEdgeLightIntensity,
         showPinToggle = onTogglePin != null,
         pinned = pinned,
         onTogglePin = onTogglePin,
@@ -129,7 +133,7 @@ internal fun PreviewCard(
     bottomCornerRadius: Int,
     keyCornerRadius: Int,
     edgeHighlightEnabled: Boolean,
-    edgeHighlightIntensity: Int,
+    backgroundLight: EdgeLightGroup,
     keyEdgeLight: ReplicaEdgeLight,
     lightKeyColor: Int,
     darkKeyColor: Int,
@@ -137,6 +141,7 @@ internal fun PreviewCard(
     systemMaterialEnabled: Boolean,
     hyperMaterialEnabled: Boolean = false,
     nativeEdgeLightEnabled: Boolean = false,
+    nativeEdgeLightIntensity: Int = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
     showPinToggle: Boolean = false,
     pinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
@@ -163,7 +168,7 @@ internal fun PreviewCard(
         colorOsBackend = WeTypeSystemMaterials.isColorOsBackend(),
         edgeHighlightEnabled = edgeHighlightEnabled,
         nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-        edgeHighlightIntensity = edgeHighlightIntensity
+        nativeEdgeLightIntensity = nativeEdgeLightIntensity
     )
     val displayColor = materialPanel.color
     val weTypeFontFamily = remember(context) {
@@ -228,8 +233,10 @@ internal fun PreviewCard(
                         color = displayColor,
                         topCornerRadius = previewCorner,
                         bottomCornerRadius = previewBottomCorner,
-                        edgeHighlightEnabled = materialPanel.moduleBloom,
-                        edgeHighlightIntensity = edgeHighlightIntensity,
+                        edgeHighlightEnabled = materialPanel.moduleBloom && backgroundLight.enabled,
+                        backgroundLight = backgroundLight,
+                        // 角度是三类共用的总控，取哪一位都一样；这里顺手用按键那份已传进来的值。
+                        angleDegrees = keyEdgeLight.angleDegrees,
                         isDark = isDark
                     )
                     .clip(previewShape)
@@ -501,7 +508,8 @@ internal fun Modifier.weTypePreviewBloom(
     topCornerRadius: androidx.compose.ui.unit.Dp,
     bottomCornerRadius: androidx.compose.ui.unit.Dp,
     edgeHighlightEnabled: Boolean,
-    edgeHighlightIntensity: Int,
+    backgroundLight: EdgeLightGroup,
+    angleDegrees: Int,
     isDark: Boolean
 ): Modifier {
     val context = LocalContext.current
@@ -526,11 +534,24 @@ internal fun Modifier.weTypePreviewBloom(
         // result, keeping the preview pixel-accurate.
         val overlayBitmap = if (edgeHighlightEnabled && widthPx > 0 && heightPx > 0) {
             runCatching {
+                // 与真机背板同一套映射：边缘、内发光各自的开关/强度/宽度，角度共用设置里的总控。
+                // 背板照旧只留亮层（innerShadowScale = 0），与 WeTypeWindowHooks 的两个调用点一致。
                 val bloomDrawable = WeTypeBloomStrokeDrawable(
                     context = previewContext,
                     cornerRadii = previewCornerRadii,
                     surfaceColor = color,
-                    intensityScale = edgeHighlightIntensity / 100f
+                    edgeIntensityScale = WeTypeSelfDrawnEdgeLight
+                        .intensityScale(backgroundLight.edgeIntensity),
+                    edgeWidthScale = WeTypeSelfDrawnEdgeLight
+                        .strokeWidthScale(backgroundLight.edgeWidth),
+                    glowIntensityScale = WeTypeSelfDrawnEdgeLight
+                        .glowLayerScale(backgroundLight.glowIntensity),
+                    glowWidthScale = WeTypeSelfDrawnEdgeLight
+                        .strokeWidthScale(backgroundLight.glowWidth),
+                    lightAngleDegrees = angleDegrees.toFloat(),
+                    innerShadowScale = 0f,
+                    edgeHighlightEnabled = backgroundLight.edgeEnabled,
+                    glowEnabled = backgroundLight.glowEnabled
                 )
                 bloomDrawable.setBounds(0, 0, widthPx, heightPx)
                 val clipPath = createWeTypeSmoothRoundedPath(

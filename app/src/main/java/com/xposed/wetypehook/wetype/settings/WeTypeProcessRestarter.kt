@@ -4,9 +4,11 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Process
 import android.util.Log
+import com.xposed.wetypehook.ModuleApplication
 
 /**
- * 让「保存」真正生效的那一步：把微信输入法的**输入法进程**杀掉，系统随即重新拉起。
+ * 让「保存」真正生效的那一步：优先请求 Xposed API 102 热重载，必要时再把微信输入法的
+ * **输入法进程**杀掉，让系统重新拉起。
  *
  * ## 为什么需要它
  *
@@ -41,13 +43,19 @@ internal object WeTypeProcessRestarter {
     /**
      * 杀掉当前应用所属 uid 下、进程名以 [IME_PROCESS_SUFFIX] 结尾的进程。
      *
-     * 必须是**同 uid**：`Process.sendSignal` 只对自己的 uid 有效，这正是
-     * 「LSPatch 内嵌模块跑在微信输入法进程里」这一前提带来的便利 —— 模块代码
-     * 本身就活在 `:hld` 的 uid 下，杀自己人无需任何权限。
+ * 这条兜底必须是**同 uid**：`Process.sendSignal` 只对自己的 uid 有效。独立模块设置进程
+ * 先走 Xposed API 102；LSPatch 内嵌设置则继续复用宿主 uid 下的直接信号。
      *
      * @return 是否至少成功发出了一次信号。
      */
     fun restartImeProcess(context: Context): Boolean {
+        // Standalone module settings run under u0_a480 while WeType runs under u0_a492. Use the
+        // Xposed API 102 reload channel first; same-uid process signalling remains the embedded
+        // host fallback below.
+        if (ModuleApplication.requestHotReloadForWeType()) {
+            Log.i(TAG, "Requested API 102 hot reload for $WETYPE_PACKAGE_NAME$IME_PROCESS_SUFFIX")
+            return true
+        }
         val appContext = context.applicationContext ?: context
         val myUid = Process.myUid()
         val activityManager = runCatching {

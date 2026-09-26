@@ -50,6 +50,32 @@ internal enum class WeTypeEdgeLightPreset {
             PANEL -> PANEL_BOX_SHADOWS
             COMPACT -> COMPACT_BOX_SHADOWS
         }
+
+    /**
+     * How strongly each layer of [boxShadows] is painted.
+     *
+     * Layer 0 is the crisp edge highlight; every later layer belongs to the inner glow (the white
+     * bloom layers and the stack's single black one). The two groups therefore answer to their own
+     * switch and their own intensity — a category can keep its inner glow while its edge highlight
+     * is off, and vice versa. [innerShadowScale] still damps the black layer alone.
+     */
+    internal fun layerScale(
+        index: Int,
+        edgeHighlightEnabled: Boolean,
+        glowEnabled: Boolean,
+        edgeIntensity: Float,
+        glowIntensity: Float,
+        innerShadowScale: Float
+    ): Float {
+        val scale = if (index == 0) {
+            if (edgeHighlightEnabled) edgeIntensity else 0f
+        } else if (glowEnabled) {
+            glowIntensity
+        } else {
+            0f
+        }
+        return scale * (if (index == boxShadows.lastIndex) innerShadowScale else 1f)
+    }
 }
 
 private class RenderedShadow(
@@ -71,10 +97,14 @@ private class RenderedShadow(
  * ```
  *
  * Outer shadows are clipped to the region outside the content shape so the overlay never darkens the
- * surface interior; inset shadows are clipped to the inside of the content shape. [intensityScale]
- * scales every layer's alpha, [strokeWidthScale] scales every layer's offset/blur/spread — that is,
- * the visible stroke width. [innerShadowScale] scales the stack's black layer alone, which is what
- * turns "less glow" into "more recessed" instead of "uniformly dimmer".
+ * surface interior; inset shadows are clipped to the inside of the content shape.
+ *
+ * The stack is split into two independently controlled groups. Layer 0 is the edge highlight
+ * ([edgeIntensityScale], [edgeWidthScale], gated by [edgeHighlightEnabled]); the remaining layers are
+ * the inner glow ([glowIntensityScale], [glowWidthScale], gated by [glowEnabled]). Width scales apply
+ * per group, so a wide soft glow no longer forces the crisp highlight wide as well. [innerShadowScale]
+ * scales the stack's black layer alone, which is what turns "less glow" into "more recessed" instead
+ * of "uniformly dimmer".
  *
  * [lightAngleDegrees] steers the whole stack. The layer offsets above are authored for a light source
  * 45° up and to the left, so every offset is rotated by `lightAngleDegrees - 45` around the panel
@@ -88,10 +118,14 @@ internal class WeTypeBloomStrokeDrawable(
     private val context: Context,
     private val cornerRadii: WeTypeCornerRadii,
     private val surfaceColor: Int,
-    private val intensityScale: Float = 1f,
-    private val strokeWidthScale: Float = 1f,
+    private val edgeIntensityScale: Float = 1f,
+    private val edgeWidthScale: Float = 1f,
+    private val glowIntensityScale: Float = 1f,
+    private val glowWidthScale: Float = 1f,
     private val lightAngleDegrees: Float = BASE_LIGHT_ANGLE_DEGREES,
     private val innerShadowScale: Float = 1f,
+    private val edgeHighlightEnabled: Boolean = true,
+    private val glowEnabled: Boolean = true,
     private val preset: WeTypeEdgeLightPreset = WeTypeEdgeLightPreset.PANEL
 ) : Drawable() {
     private val contentPath = Path()
@@ -143,7 +177,6 @@ internal class WeTypeBloomStrokeDrawable(
 
         val alphaScale = surfaceAlphaScale(surfaceColor) *
             (drawableAlpha / 255f) *
-            intensityScale.coerceAtLeast(0f) *
             if (isDarkMode()) DARK_MODE_ALPHA_SCALE else 1f
         if (alphaScale <= 0f) return
 
@@ -153,27 +186,32 @@ internal class WeTypeBloomStrokeDrawable(
 
         // CSS paints the first listed shadow on top, so build the list reversed: earlier list
         // entries are appended last and therefore drawn last (on top).
-        preset.boxShadows.asReversed().forEach { shadow ->
-            val layerScale = if (isDarkeningLayer(shadow)) innerShadowScale else 1f
-            buildShadow(shadow, contentRect, alphaScale * layerScale)?.let(renderedShadows::add)
+        preset.boxShadows.withIndex().toList().asReversed().forEach { (index, shadow) ->
+            val layerScale = preset.layerScale(
+                index = index,
+                edgeHighlightEnabled = edgeHighlightEnabled,
+                glowEnabled = glowEnabled,
+                edgeIntensity = edgeIntensityScale.coerceAtLeast(0f),
+                glowIntensity = glowIntensityScale.coerceAtLeast(0f),
+                innerShadowScale = innerShadowScale
+            )
+            val widthScale = (if (index == 0) edgeWidthScale else glowWidthScale)
+                .coerceAtLeast(0f)
+            buildShadow(shadow, contentRect, alphaScale * layerScale, widthScale)
+                ?.let(renderedShadows::add)
         }
     }
 
     /** The stack's single black layer: it recesses the surface while the white layers bloom on it. */
-    private fun isDarkeningLayer(shadow: BoxShadow): Boolean =
-        Color.red(shadow.color) == 0 &&
-            Color.green(shadow.color) == 0 &&
-            Color.blue(shadow.color) == 0
-
     private fun buildShadow(
         shadow: BoxShadow,
         contentRect: RectF,
-        alphaScale: Float
+        alphaScale: Float,
+        widthScale: Float
     ): RenderedShadow? {
         val color = scaleColorAlpha(shadow.color, alphaScale)
         if (Color.alpha(color) == 0) return null
 
-        val widthScale = strokeWidthScale.coerceAtLeast(0f)
         val baseOffsetX = dp(shadow.offsetX) * widthScale
         val baseOffsetY = dp(shadow.offsetY) * widthScale
         val rotation = Math.toRadians((lightAngleDegrees - BASE_LIGHT_ANGLE_DEGREES).toDouble())

@@ -16,10 +16,12 @@ import com.xposed.wetypehook.wetype.gesture.KeyGestureResolver
 import com.xposed.wetypehook.wetype.graphics.WeTypeColorOsKeyLight
 import com.xposed.wetypehook.wetype.graphics.WeTypeEdgeLightBackend
 import com.xposed.wetypehook.wetype.graphics.WeTypeEdgeLightSource
+import com.xposed.wetypehook.wetype.graphics.WeTypeNativeEdgeLightManager
 import com.xposed.wetypehook.wetype.graphics.WeTypeSelfDrawnEdgeLightCache
 import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.resolveEdgeLightBackend
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
+import com.xposed.wetypehook.wetype.settings.EdgeLightTarget
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -73,15 +75,14 @@ internal object WeTypeKeyLabelHooks {
     private val accessCache = ConcurrentHashMap<Class<*>, KeyDrawAccess?>()
     private val t9ClassCache = ConcurrentHashMap<Class<*>, Boolean>()
 
-    /** ColorOS 逐键光感后端；加载失败后不再重试。 */
-    @Volatile
-    private var keyLight: WeTypeColorOsKeyLight? = null
+    /** ColorOS 逐键光感后端（按宿主 keyView 弱引用缓存）。 */
+    private val keyLightByView = java.util.WeakHashMap<View, WeTypeColorOsKeyLight>()
 
     @Volatile
     private var keyLightResolved = false
 
     /** 非 ColorOS（或原生不可用）时的自绘逐键光感，按设置缓存。 */
-    private val selfDrawnLight = WeTypeSelfDrawnEdgeLightCache()
+    private val selfDrawnLight = WeTypeSelfDrawnEdgeLightCache(EdgeLightTarget.KEY)
 
     /**
      * 宿主按键真实的像素圆角 getter（混淆名，运行时解析）。
@@ -161,10 +162,11 @@ internal object WeTypeKeyLabelHooks {
 
     fun prepareForHotReload() {
         resetNestingLeakLogBudget()
-        keyLight = null
+        synchronized(keyLightByView) { keyLightByView.clear() }
         keyLightResolved = false
         selfDrawnLight.reset()
         bgCornerGetter = null
+        WeTypeNativeEdgeLightManager.reset()
     }
 
     fun install(sourceDir: String?, classLoader: ClassLoader) {
@@ -340,7 +342,8 @@ internal object WeTypeKeyLabelHooks {
      * 给单个按键叠边缘光：原生优先，拿不到就退回模块自绘。
      *
      * 「光感设置」是整条光感轨道的总控，关掉时按键光感与图标光感一并失效；总控开着时再由
-     * 「键盘按键光感」决定画不画。原生是 ColorOS 的 `COUIShadowEdgeDrawable`（观感基准，只在
+     * 「光感设置 → 按键」那一组决定画不画，组里的「边缘」「内发光」再决定画哪几层。原生是
+     * ColorOS 的 `COUIShadowEdgeDrawable`（观感基准，只在
      * ColorOS 且系统描边开关打开时拿得到），自绘源让按键光感在任何 ROM 上都画得出来。
      * 后端懒加载一次，加载失败即静默跳过，不影响宿主绘制。
      */
@@ -351,8 +354,10 @@ internal object WeTypeKeyLabelHooks {
         keyRadiusPx: Float
     ) {
         val selfDrawnEnabled = WeTypeSettings.isEdgeHighlightEnabledXposed(keyView.context)
-        val enabled = selfDrawnEnabled && WeTypeSettings.isKeyEdgeLightEnabledXposed()
-        val native = if (enabled) nativeKeyLight(keyView) else null
+        val nativeMode = WeTypeSettings.isSystemMaterialEnabledXposed() &&
+            WeTypeSettings.isNativeEdgeLightEnabledXposed() && !selfDrawnEnabled
+        val enabled = WeTypeSettings.isKeyEdgeLightEnabledXposed() && (selfDrawnEnabled || nativeMode)
+        val native = if (enabled && nativeMode) nativeKeyLight(keyView) else null
         val backend = resolveEdgeLightBackend(
             enabled = enabled,
             nativeSourceAvailable = native != null,
@@ -360,26 +365,50 @@ internal object WeTypeKeyLabelHooks {
         )
         val isDark = (keyView.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
+        val selfDrawn = if (enabled && selfDrawnEnabled) {
+            selfDrawnLight.resolve(keyView.context, keySurfaceColor(isDark))
+        } else {
+            null
+        }
         val light: WeTypeEdgeLightSource? = when (backend) {
             WeTypeEdgeLightBackend.NATIVE -> native
-            WeTypeEdgeLightBackend.SELF_DRAWN ->
-                selfDrawnLight.resolve(keyView.context, keySurfaceColor(isDark))
+            WeTypeEdgeLightBackend.SELF_DRAWN -> selfDrawn
             WeTypeEdgeLightBackend.NONE -> null
         }
-        light?.draw(canvas, rect, keyRadiusPx, isDark)
+        if (backend == WeTypeEdgeLightBackend.NATIVE &&
+            light?.draw(canvas, rect, keyRadiusPx, isDark) != true
+        ) {
+            WeTypeNativeEdgeLightManager.hideKeyOverlays(keyView)
+            selfDrawn?.draw(canvas, rect, keyRadiusPx, isDark)
+        } else if (backend == WeTypeEdgeLightBackend.SELF_DRAWN) {
+            WeTypeNativeEdgeLightManager.hideKeyOverlays(keyView)
+            light?.draw(canvas, rect, keyRadiusPx, isDark)
+        } else if (backend == WeTypeEdgeLightBackend.NONE) {
+            WeTypeNativeEdgeLightManager.hideKeyOverlays(keyView)
+        }
     }
 
-    /** ColorOS 原生逐键光感，懒加载一次；拿不到就永久放弃原生这条路。 */
+    /** ColorOS 原生逐键光感，通过 RenderNode 覆盖层渲染；拿不到就永久放弃原生这条路。 */
     private fun nativeKeyLight(keyView: View): WeTypeColorOsKeyLight? {
         if (!WeTypeSystemMaterials.isColorOsBackend() ||
-            !WeTypeSystemMaterials.isNativeStrokeEnabled(keyView.context)
+            !WeTypeSystemMaterials.isNativeStrokeEnabled(keyView.context) ||
+            !WeTypeSettings.isSystemMaterialEnabledXposed() ||
+            !WeTypeSettings.isNativeEdgeLightEnabledXposed() ||
+            WeTypeSettings.isEdgeHighlightEnabledXposed(keyView.context)
         ) {
             return null
         }
-        keyLight?.let { return it }
         if (keyLightResolved) return null
-        keyLightResolved = true
-        return WeTypeColorOsKeyLight.create(keyView.context).also { keyLight = it }
+        synchronized(keyLightByView) {
+            keyLightByView[keyView]?.let { return it }
+            val created = WeTypeColorOsKeyLight.forKeyView(keyView)
+            if (created != null) {
+                keyLightByView[keyView] = created
+            } else {
+                keyLightResolved = true
+            }
+            return created
+        }
     }
 
     /**
