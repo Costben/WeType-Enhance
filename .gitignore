@@ -21,3 +21,4 @@ work/
 artifacts/
 tools/
 .verification/
+/verification/
