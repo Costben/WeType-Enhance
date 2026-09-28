@@ -1,6 +1,9 @@
 package com.xposed.wetypehook.wetype.hook
 
 import android.util.Log as AndroidLog
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.ProceedWithOriginal
 import com.xposed.wetypehook.xposed.hookAfter
@@ -27,6 +30,10 @@ internal object WeTypeClipboardRetentionGuard {
     private const val DAO_FACTORY_CLASS = "com.tencent.wetype.plugin.hld.dao.c"
     private const val USER_DELETE_MEMORY_MS = 10_000L
 
+    /** 栈帧比较用的管理器二进制名：契约解析后写回真实名，未命中时保持写死的短名。 */
+    @Volatile
+    private var clipboardManagerName: String = CLIPBOARD_MGR_CLASS
+
     @Volatile
     private var installed = false
 
@@ -37,13 +44,12 @@ internal object WeTypeClipboardRetentionGuard {
 
     fun install(classLoader: ClassLoader) {
         if (installed) return
-        val manager = runCatching {
-            Class.forName(CLIPBOARD_MGR_CLASS, false, classLoader)
-        }.getOrNull()
+        val manager = resolveClipboardManager(classLoader)
         if (manager == null) {
             AndroidLog.e(TAG, "clipboard manager missing: $CLIPBOARD_MGR_CLASS")
             return
         }
+        clipboardManagerName = manager.name
         hookResourceCleanup(manager)
         hookDaoFactory(classLoader)
         installed = true
@@ -55,14 +61,12 @@ internal object WeTypeClipboardRetentionGuard {
      * 宿主任意业务首次访问 DAO 单例时立即安装 DAO hooks，做到零延迟拦截。
      */
     private fun hookDaoFactory(classLoader: ClassLoader) {
-        val factoryClass = runCatching {
-            Class.forName(DAO_FACTORY_CLASS, false, classLoader)
-        }.getOrNull() ?: run {
+        val factoryClass = resolveDaoFactory(classLoader) ?: run {
             AndroidLog.e(TAG, "dao factory class missing: $DAO_FACTORY_CLASS")
             return
         }
-        val aMethod = factoryClass.declaredMethods.firstOrNull {
-            it.name == "a" && it.parameterTypes.isEmpty() && !Modifier.isStatic(it.modifiers)
+        val aMethod = pickHostMethod(factoryClass, "a") {
+            it.parameterTypes.isEmpty() && !Modifier.isStatic(it.modifiers)
         } ?: run {
             AndroidLog.e(TAG, "dao factory method a() missing")
             return
@@ -97,8 +101,8 @@ internal object WeTypeClipboardRetentionGuard {
         val daoClass = dao.javaClass
 
         // 1. dao.o(long)
-        daoClass.declaredMethods.firstOrNull {
-            it.name == "o" && it.parameterTypes.size == 1 &&
+        pickHostMethod(daoClass, "o") {
+            it.parameterTypes.size == 1 &&
                 (it.parameterTypes[0] == Long::class.javaPrimitiveType || it.parameterTypes[0] == Long::class.java) &&
                 List::class.java.isAssignableFrom(it.returnType)
         }?.let { m ->
@@ -114,8 +118,8 @@ internal object WeTypeClipboardRetentionGuard {
         } ?: AndroidLog.e(TAG, "dao.o(long) method missing")
 
         // 2. dao.j(long)
-        daoClass.declaredMethods.firstOrNull {
-            it.name == "j" && it.parameterTypes.size == 1 &&
+        pickHostMethod(daoClass, "j") {
+            it.parameterTypes.size == 1 &&
                 (it.parameterTypes[0] == Long::class.javaPrimitiveType || it.parameterTypes[0] == Long::class.java) &&
                 List::class.java.isAssignableFrom(it.returnType)
         }?.let { m ->
@@ -131,13 +135,13 @@ internal object WeTypeClipboardRetentionGuard {
         } ?: AndroidLog.e(TAG, "dao.j(long) method missing")
 
         // 3. dao.d()
-        daoClass.declaredMethods.firstOrNull {
-            it.name == "d" && it.parameterTypes.isEmpty() &&
+        pickHostMethod(daoClass, "d") {
+            it.parameterTypes.isEmpty() &&
                 List::class.java.isAssignableFrom(it.returnType)
         }?.let { m ->
             m.isAccessible = true
             m.hookReplace {
-                if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed() && stackHasFrame(CLIPBOARD_MGR_CLASS, "u")) {
+                if (WeTypeSettings.isRemoveClipboardRetentionLimitXposed() && stackHasFrame(clipboardManagerName, "u")) {
                     AndroidLog.i(TAG, "intercepted dao.d() clear-shown-images query in B.u, returning empty list")
                     emptyList<Any>()
                 } else {
@@ -149,8 +153,8 @@ internal object WeTypeClipboardRetentionGuard {
 
     /** `void h(List<C>)`：宿主批量删除。窗口隐藏清理时剔除图片条目。 */
     private fun hookBatchDelete(dao: Any) {
-        val method = dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "h" && it.returnType == Void.TYPE &&
+        val method = pickHostMethod(dao.javaClass, "h") {
+            it.returnType == Void.TYPE &&
                 it.parameterTypes.size == 1 && it.parameterTypes[0] == List::class.java
         } ?: run {
             AndroidLog.e(TAG, "batch delete method missing: h(List)")
@@ -159,7 +163,7 @@ internal object WeTypeClipboardRetentionGuard {
         method.isAccessible = true
         method.hookBefore { param ->
             if (!WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) return@hookBefore
-            if (!stackHasFrame(CLIPBOARD_MGR_CLASS, "u")) return@hookBefore
+            if (!stackHasFrame(clipboardManagerName, "u")) return@hookBefore
             val list = param.args[0] as? List<*> ?: return@hookBefore
             val kept = list.filterNot { it != null && WeTypeClipboardImageHost.itemType(it) == 1L }
             if (kept.size == list.size) return@hookBefore
@@ -171,8 +175,8 @@ internal object WeTypeClipboardRetentionGuard {
 
     /** `void s(C)`：宿主清理条目资源（本地图片文件）。非用户删除时跳过图片。 */
     private fun hookResourceCleanup(manager: Class<*>) {
-        val method = manager.declaredMethods.firstOrNull {
-            it.name == "s" && it.returnType == Void.TYPE &&
+        val method = pickHostMethod(manager, "s") {
+            it.returnType == Void.TYPE &&
                 it.parameterTypes.size == 1 &&
                 !it.parameterTypes[0].isPrimitive &&
                 it.parameterTypes[0] != List::class.java &&
@@ -189,7 +193,7 @@ internal object WeTypeClipboardRetentionGuard {
             WeTypeClipboardImageHost.itemId(item)?.let { id ->
                 if (isRecentUserDelete(id)) return@hookBefore
             }
-            if (!stackHasFrame(manager.name, "u")) return@hookBefore
+            if (!stackHasFrame(clipboardManagerName, "u")) return@hookBefore
             AndroidLog.i(
                 TAG,
                 "kept image file id=${WeTypeClipboardImageHost.itemId(item)}"
@@ -200,8 +204,8 @@ internal object WeTypeClipboardRetentionGuard {
 
     /** `void f(C)`：用户/宿主单条删除。记录用户删除，供资源清理放行。 */
     private fun hookUserDelete(dao: Any) {
-        val method = dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "f" && it.returnType == Void.TYPE &&
+        val method = pickHostMethod(dao.javaClass, "f") {
+            it.returnType == Void.TYPE &&
                 it.parameterTypes.size == 1 &&
                 !it.parameterTypes[0].isPrimitive &&
                 it.parameterTypes[0] != List::class.java &&
@@ -238,4 +242,19 @@ internal object WeTypeClipboardRetentionGuard {
         }
         return false
     }
+
+    /**
+     * 契约优先、写死的短名兜底。契约解析出来的 Class 自带宿主 ClassLoader，不用再传 loader。
+     */
+    private fun resolveClipboardManager(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_MANAGER) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(CLIPBOARD_MGR_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolveDaoFactory(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_DAO_FACTORY) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(DAO_FACTORY_CLASS, false, it) }.getOrNull()
+            }
 }

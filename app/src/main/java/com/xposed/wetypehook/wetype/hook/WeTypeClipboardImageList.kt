@@ -4,6 +4,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log as AndroidLog
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
@@ -79,7 +82,8 @@ internal object WeTypeClipboardImageList {
         hostClassLoader = classLoader
         return try {
             // 只做零初始化加载；DAO 单例延后解析（宿主 DB 就绪后才安全）。
-            itemClass = Class.forName(CLIPBOARD_ITEM_CLASS, false, classLoader)
+            itemClass = resolveClipboardItem(classLoader)
+                ?: throw ClassNotFoundException(CLIPBOARD_ITEM_CLASS)
             hookSetList(classLoader)
             hookDelete(classLoader)
             WeTypeClipboardRetentionGuard.install(classLoader)
@@ -99,14 +103,14 @@ internal object WeTypeClipboardImageList {
      */
     fun onDaoResolved(dao: Any) {
         if (daoInstance != null) return
-        val images = dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "d" && it.parameterTypes.isEmpty() &&
+        val images = pickHostMethod(dao.javaClass, "d") {
+            it.parameterTypes.isEmpty() &&
                 List::class.java.isAssignableFrom(it.returnType)
-        }?.apply { isAccessible = true }
-        val unshown = dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "l" && it.parameterTypes.isEmpty() &&
+        }
+        val unshown = pickHostMethod(dao.javaClass, "l") {
+            it.parameterTypes.isEmpty() &&
                 List::class.java.isAssignableFrom(it.returnType)
-        }?.apply { isAccessible = true }
+        }
         if (images != null || unshown != null) {
             daoInstance = dao
             daoImages = images
@@ -142,7 +146,7 @@ internal object WeTypeClipboardImageList {
      * 否则在部分设备上会静默拿到错误 DAO、永远采不到图片。
      */
     private fun resolveDao(classLoader: ClassLoader) {
-        val factory = runCatching { Class.forName(DAO_FACTORY_CLASS, false, classLoader) }.getOrNull()
+        val factory = resolveDaoFactory(classLoader)
             ?: run {
                 AndroidLog.e(TAG, "clipboard dao factory missing: $DAO_FACTORY_CLASS")
                 return
@@ -167,12 +171,12 @@ internal object WeTypeClipboardImageList {
             if (getter.parameterTypes.isNotEmpty() || getter.returnType == Void.TYPE) continue
             getter.isAccessible = true
             val candidate = runCatching { getter.invoke(factoryInstance) }.getOrNull() ?: continue
-            val candidateImages = candidate.javaClass.declaredMethods.firstOrNull {
-                it.name == "d" && it.parameterTypes.isEmpty() &&
+            val candidateImages = pickHostMethod(candidate.javaClass, "d") {
+                it.parameterTypes.isEmpty() &&
                     List::class.java.isAssignableFrom(it.returnType)
             }
-            val candidateUnshown = candidate.javaClass.declaredMethods.firstOrNull {
-                it.name == "l" && it.parameterTypes.isEmpty() &&
+            val candidateUnshown = pickHostMethod(candidate.javaClass, "l") {
+                it.parameterTypes.isEmpty() &&
                     List::class.java.isAssignableFrom(it.returnType)
             }
             if (candidateImages != null || candidateUnshown != null) {
@@ -452,10 +456,10 @@ internal object WeTypeClipboardImageList {
     }
 
     private fun daoDeleteMethod(dao: Any): Method? {
-        return dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "f" && it.returnType == Void.TYPE && it.parameterTypes.size == 1 &&
+        return pickHostMethod(dao.javaClass, "f") {
+            it.returnType == Void.TYPE && it.parameterTypes.size == 1 &&
                 itemClass?.isAssignableFrom(it.parameterTypes[0]) == true
-        }?.apply { isAccessible = true }
+        }
     }
 
     /**
@@ -502,10 +506,10 @@ internal object WeTypeClipboardImageList {
     }
 
     private fun daoUpdateMethod(dao: Any): Method? {
-        return dao.javaClass.declaredMethods.firstOrNull {
-            it.name == "c" && it.parameterTypes.size == 1 &&
+        return pickHostMethod(dao.javaClass, "c") {
+            it.parameterTypes.size == 1 &&
                 itemClass?.isAssignableFrom(it.parameterTypes[0]) == true
-        }?.apply { isAccessible = true }
+        }
     }
 
     private fun currentApplicationContext(): Context? {
@@ -529,14 +533,14 @@ internal object WeTypeClipboardImageList {
                 resolveDao(cl)
                 daoInstance
             } ?: return false
-            val load = dao.javaClass.declaredMethods.firstOrNull {
-                it.name == "e" && it.parameterTypes.size == 1 &&
+            val load = pickHostMethod(dao.javaClass, "e") {
+                it.parameterTypes.size == 1 &&
                     (it.parameterTypes[0] == Long::class.javaPrimitiveType || it.parameterTypes[0] == Long::class.java)
-            }?.apply { isAccessible = true } ?: return false
-            val update = dao.javaClass.declaredMethods.firstOrNull {
-                it.name == "c" && it.parameterTypes.size == 1 &&
+            } ?: return false
+            val update = pickHostMethod(dao.javaClass, "c") {
+                it.parameterTypes.size == 1 &&
                     itemClass?.isAssignableFrom(it.parameterTypes[0]) == true
-            }?.apply { isAccessible = true } ?: return false
+            } ?: return false
             val record = load.invoke(dao, id) ?: return false
             WeTypeClipboardImageHost.setItemPath(record, path)
             WeTypeClipboardImageHost.setItemPathType(record, 0)
@@ -610,7 +614,8 @@ internal object WeTypeClipboardImageList {
     }
 
     private fun hookSetList(classLoader: ClassLoader) {
-        val scrollClass = Class.forName(SCROLLVIEW_CLASS, false, classLoader)
+        val scrollClass = resolveClipboardScrollView(classLoader)
+            ?: throw ClassNotFoundException(SCROLLVIEW_CLASS)
         var count = 0
         for (method in scrollClass.declaredMethods) {
             if (method.name != "setList") continue
@@ -640,37 +645,25 @@ internal object WeTypeClipboardImageList {
     /** 宿主删除单条：`ImeClipboardScrollView.j(int, C)` 或 `ImeClipboardMgr.y(C)`。 */
     private fun hookDelete(classLoader: ClassLoader) {
         runCatching {
-            val scrollClass = Class.forName(SCROLLVIEW_CLASS, false, classLoader)
-            for (method in scrollClass.declaredMethods) {
-                if (method.name != "j") continue
-                if (method.parameterTypes.size != 2) continue
-                if (!itemClass!!.isAssignableFrom(method.parameterTypes[1])) continue
-                method.isAccessible = true
-                method.hookAfter { param ->
-                    val item = param.args.getOrNull(1) ?: return@hookAfter
-                    WeTypeClipboardImageHost.itemId(item)?.let { forgetById(it) }
-                }
+            val scrollClass = resolveClipboardScrollView(classLoader) ?: return@runCatching
+            pickHostMethod(scrollClass, "j") {
+                it.parameterTypes.size == 2 && itemClass!!.isAssignableFrom(it.parameterTypes[1])
+            }?.hookAfter { param ->
+                val item = param.args.getOrNull(1) ?: return@hookAfter
+                WeTypeClipboardImageHost.itemId(item)?.let { forgetById(it) }
             }
         }
         runCatching {
-            val mgrClass = Class.forName(CLIPBOARD_MGR_CLASS, false, classLoader)
-            for (method in mgrClass.declaredMethods) {
-                if (method.name == "y" && method.parameterTypes.size == 1 &&
-                    itemClass!!.isAssignableFrom(method.parameterTypes[0])
-                ) {
-                    method.isAccessible = true
-                    method.hookAfter { param ->
-                        val item = param.args.getOrNull(0) ?: return@hookAfter
-                        WeTypeClipboardImageHost.itemId(item)?.let { forgetById(it) }
-                    }
-                }
-                if (method.name == "q" && method.parameterTypes.isEmpty() &&
-                    method.returnType == Void.TYPE
-                ) {
-                    method.isAccessible = true
-                    method.hookAfter { clearCache() }
-                }
+            val mgrClass = resolveClipboardManager(classLoader) ?: return@runCatching
+            pickHostMethod(mgrClass, "y") {
+                it.parameterTypes.size == 1 && itemClass!!.isAssignableFrom(it.parameterTypes[0])
+            }?.hookAfter { param ->
+                val item = param.args.getOrNull(0) ?: return@hookAfter
+                WeTypeClipboardImageHost.itemId(item)?.let { forgetById(it) }
             }
+            pickHostMethod(mgrClass, "q") {
+                it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
+            }?.hookAfter { clearCache() }
         }
     }
 
@@ -687,9 +680,7 @@ internal object WeTypeClipboardImageList {
         val getter = scrollView.javaClass.declaredMethods.firstOrNull { it.name == "getListAdapter" } ?: return
         getter.isAccessible = true
         val adapter = getter.invoke(scrollView) ?: return
-        val refresh = adapter.javaClass.declaredMethods.firstOrNull { it.name == "y" && it.parameterTypes.isEmpty() }
-            ?: return
-        refresh.isAccessible = true
+        val refresh = pickHostMethod(adapter.javaClass, "y") { it.parameterTypes.isEmpty() } ?: return
         refresh.invoke(adapter)
     }
 
@@ -703,4 +694,31 @@ internal object WeTypeClipboardImageList {
         notify.isAccessible = true
         notify.invoke(adapter)
     }
+
+    /**
+     * 契约优先、写死的短名兜底。契约解析出来的 Class 自带宿主 ClassLoader，不用再传 loader。
+     */
+    private fun resolveClipboardItem(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_ITEM) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(CLIPBOARD_ITEM_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolveDaoFactory(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_DAO_FACTORY) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(DAO_FACTORY_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolveClipboardManager(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_MANAGER) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(CLIPBOARD_MGR_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolveClipboardScrollView(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_SCROLLVIEW) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(SCROLLVIEW_CLASS, false, it) }.getOrNull()
+            }
 }

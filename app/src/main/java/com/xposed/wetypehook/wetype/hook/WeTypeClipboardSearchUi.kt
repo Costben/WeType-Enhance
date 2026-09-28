@@ -24,6 +24,10 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import com.xposed.wetypehook.wetype.host.HostContractId
 import com.xposed.wetypehook.wetype.host.HostResources
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
+import com.xposed.wetypehook.wetype.host.looksLikeLanguageListAdapter
+import com.xposed.wetypehook.wetype.host.pickHostField
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.wetype.host.requireClass
 import com.xposed.wetypehook.wetype.host.requireConstant
 import com.xposed.wetypehook.wetype.host.requireField
@@ -254,7 +258,9 @@ internal object WeTypeClipboardSearchUi {
         if (!submitSession.at(token, ClipboardSearchSubmitSession.Phase.EXITING)) return
         val root = currentImeRoot() ?: run { submitSession.fail(token); return }
         val mgr = searchManager ?: run { submitSession.fail(token); return }
-        val idle = runCatching { mgr.javaClass.getDeclaredMethod("t0").invoke(mgr) == false }.getOrDefault(false)
+        val idle = runCatching {
+            pickHostMethod(mgr.javaClass, "t0") { it.parameterTypes.isEmpty() }?.invoke(mgr) == false
+        }.getOrDefault(false)
         val detached = nativeKRefF41?.get()?.isAttachedToWindow == false || nativeKRefF41?.get()?.parent == null
         if (submitSession.shellExited(token, idle, detached)) {
             translatorShellByUs = false
@@ -352,13 +358,16 @@ internal object WeTypeClipboardSearchUi {
         val modeIconAlpha = runCatching { modeIcon?.alpha }.getOrNull() ?: 0.4f
         val modeCompounds = runCatching { parts.modeTv.compoundDrawables }.getOrNull()?.copyOf()
         val dropdown = parts.dropdown
-        val getter = dropdown.javaClass.getDeclaredMethod("getOnItemClick").apply { isAccessible = true }
+        val getter = pickHostMethod(dropdown.javaClass, "getOnItemClick") { it.parameterTypes.isEmpty() }
+            ?: throw NoSuchMethodException("getOnItemClick")
         val click = getter.invoke(dropdown)
-        val setter = dropdown.javaClass.declaredMethods.single { it.name == "setOnItemClick" && it.parameterTypes.size == 1 }
-            .apply { isAccessible = true }
+        val setter = pickHostMethod(dropdown.javaClass, "setOnItemClick") { it.parameterTypes.size == 1 }
+            ?: throw NoSuchElementException("setOnItemClick(1)")
         val adapter = resolveDropdownAdapterF41(dropdown) ?: error("Missing native language adapter")
         val languageList = (readNativeField(adapter, "c") as List<*>).toList()
-        val bind = adapter.javaClass.getDeclaredMethod("k", List::class.java).apply { isAccessible = true }
+        val bind = pickHostMethod(adapter.javaClass, "k") {
+            it.parameterTypes.size == 1 && it.parameterTypes[0] == List::class.java
+        } ?: throw NoSuchMethodException("k(List)")
         return {
             nativeKWatchersF41.remove(box)?.let { box.removeTextChangedListener(it) }
             val current = (readNativeField(box, "mListeners") as? List<*>)?.filterIsInstance<TextWatcher>().orEmpty()
@@ -424,7 +433,18 @@ internal object WeTypeClipboardSearchUi {
         "com.tencent.wetype.plugin.hld.view.ImeRadiusConstraintLayout"
     private const val NATIVE_TOPVIEW_CLASS =
         "com.tencent.wetype.plugin.hld.translatingwhilewriting.k"
+    private const val NATIVE_PANEL_ENUM_CLASS =
+        "com.tencent.wetype.plugin.hld.keyboard.t"
     private const val NATIVE_SKIN_UTILS_CLASS = "com.tencent.wetype.skin.utils.d"
+    private const val NATIVE_DROPDOWN_ITEM_CLASS =
+        "com.tencent.wetype.plugin.hld.translatingwhilewriting.m"
+    private const val NATIVE_DROPDOWN_LIST_CLASS =
+        "com.tencent.wetype.plugin.hld.translatingwhilewriting.d"
+    private const val NATIVE_IME_SERVICE_CLASS = "com.tencent.wetype.plugin.hld.WxHldService"
+    private const val NATIVE_CANDIDATE_VIEW_CLASS =
+        "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView"
+    private const val NATIVE_IME_EDIT_TEXT_CLASS =
+        "com.tencent.wetype.plugin.hld.view.imeedittext.ImeEditText"
     // 缩放/字号类名随版本漂移（设备 3.5.3 实证 q1/m1；3.5.4 基线 r1/n1，
     // 均为宿主原生静态/实例入口，按序取首个命中，禁任何非原生兜底）。
     private val NATIVE_SCALE_CLASSES = arrayOf(
@@ -741,9 +761,7 @@ internal object WeTypeClipboardSearchUi {
      */
     private fun hookCandidateWindowAfterJ3F31(classLoader: ClassLoader) {
         try {
-            val nClass = runCatching {
-                Class.forName(NATIVE_CAND_CTL_CLASS, false, classLoader)
-            }.getOrNull() ?: run {
+            val nClass = resolveCandidateController(classLoader) ?: run {
                 AndroidLog.e(TAG, "strip F31 window clamp: N missing, disabled")
                 return
             }
@@ -809,15 +827,11 @@ internal object WeTypeClipboardSearchUi {
      */
     private fun hookClipboardPanelToggle(classLoader: ClassLoader) {
         try {
-            val nClass = runCatching {
-                Class.forName(NATIVE_CAND_CTL_CLASS, false, classLoader)
-            }.getOrNull() ?: run {
+            val nClass = resolveCandidateController(classLoader) ?: run {
                 AndroidLog.e(TAG, "strip clipboard toggle hook: N missing, disabled")
                 return
             }
-            val panelClass = runCatching {
-                Class.forName("com.tencent.wetype.plugin.hld.keyboard.t", false, classLoader)
-            }.getOrNull() ?: run {
+            val panelClass = resolvePanelEnum(classLoader) ?: run {
                 AndroidLog.e(TAG, "strip clipboard toggle hook: panel class missing, disabled")
                 return
             }
@@ -911,11 +925,11 @@ internal object WeTypeClipboardSearchUi {
     private fun findCandidateViewForJ3F31(nHost: Any, decor: ViewGroup): ViewGroup? {
         return try {
             val cl = hostClassLoader ?: nHost.javaClass.classLoader
-            val candCls = runCatching {
-                Class.forName(
-                    "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView", false, cl
-                )
-            }.getOrNull()
+            val candCls = resolveHostClassByContract(
+                HostContractId.CLIPBOARD_CANDIDATE_VIEW,
+                NATIVE_CANDIDATE_VIEW_CLASS,
+                cl
+            )
             val fields = nHost.javaClass.declaredFields
             for (f in fields) {
                 if (f.name != "mCandidateView") continue
@@ -2080,9 +2094,11 @@ internal object WeTypeClipboardSearchUi {
 
     private fun hookSearchInputRouting(classLoader: ClassLoader) {
         try {
-            val svc = runCatching {
-                Class.forName("com.tencent.wetype.plugin.hld.WxHldService", false, classLoader)
-            }.getOrNull() ?: run {
+            val svc = resolveHostClassByContract(
+                HostContractId.CLIPBOARD_IME_SERVICE,
+                NATIVE_IME_SERVICE_CLASS,
+                classLoader
+            ) ?: run {
                 AndroidLog.e(TAG, "WxHldService not found, skip input routing")
                 return
             }
@@ -2127,9 +2143,11 @@ internal object WeTypeClipboardSearchUi {
     /** Finish 拆键盘页搜索条（防泄漏到别页）。 */
     private fun hookKeyboardTeardown(classLoader: ClassLoader) {
         try {
-            val svc = runCatching {
-                Class.forName("com.tencent.wetype.plugin.hld.WxHldService", false, classLoader)
-            }.getOrNull() ?: return
+            val svc = resolveHostClassByContract(
+                HostContractId.CLIPBOARD_IME_SERVICE,
+                NATIVE_IME_SERVICE_CLASS,
+                classLoader
+            ) ?: return
             for (method in svc.declaredMethods) {
                 if (method.name != "onFinishInputView") continue
                 try {
@@ -2151,9 +2169,11 @@ internal object WeTypeClipboardSearchUi {
      */
     private fun hookInsetsForStrip(classLoader: ClassLoader) {
         try {
-            val svc = runCatching {
-                Class.forName("com.tencent.wetype.plugin.hld.WxHldService", false, classLoader)
-            }.getOrNull() ?: return
+            val svc = resolveHostClassByContract(
+                HostContractId.CLIPBOARD_IME_SERVICE,
+                NATIVE_IME_SERVICE_CLASS,
+                classLoader
+            ) ?: return
             val m = svc.declaredMethods.firstOrNull {
                 it.name == "onComputeInsets" && it.parameterTypes.size == 1
             } ?: return
@@ -2564,8 +2584,8 @@ internal object WeTypeClipboardSearchUi {
 
     private fun findF1SingleInt(host: Any): java.lang.reflect.Method? {
         return try {
-            host.javaClass.declaredMethods.firstOrNull {
-                it.name == "f1" && it.parameterTypes.size == 1 &&
+            pickHostMethod(host.javaClass, "f1") {
+                it.parameterTypes.size == 1 &&
                     (it.parameterTypes[0] == Int::class.javaPrimitiveType ||
                         it.parameterTypes[0] == Integer::class.java)
             }
@@ -2576,8 +2596,8 @@ internal object WeTypeClipboardSearchUi {
 
     private fun findY0Bundle(host: Any): java.lang.reflect.Method? {
         return try {
-            host.javaClass.declaredMethods.firstOrNull {
-                it.name == "Y0" && it.parameterTypes.size == 1 &&
+            pickHostMethod(host.javaClass, "Y0") {
+                it.parameterTypes.size == 1 &&
                     it.parameterTypes[0] == android.os.Bundle::class.java
             }
         } catch (_: Throwable) {
@@ -2588,8 +2608,8 @@ internal object WeTypeClipboardSearchUi {
     /** S5e-A4：当前版本 f1 三参形 (int,boolean,boolean)，实证用户点图标行调 f1(0,false,false)。 */
     private fun findF1Triple(host: Any): java.lang.reflect.Method? {
         return try {
-            host.javaClass.declaredMethods.firstOrNull {
-                it.name == "f1" && it.parameterTypes.size == 3 &&
+            pickHostMethod(host.javaClass, "f1") {
+                it.parameterTypes.size == 3 &&
                     it.parameterTypes[0] == Int::class.javaPrimitiveType &&
                     it.parameterTypes[1] == java.lang.Boolean.TYPE &&
                     it.parameterTypes[2] == java.lang.Boolean.TYPE
@@ -2937,6 +2957,59 @@ internal object WeTypeClipboardSearchUi {
         return null
     }
 
+    /** 契约优先、写死的短名兜底。契约解析出来的 Class 自带宿主 ClassLoader，不用再传 loader。 */
+    private fun resolveHostClassByContract(
+        id: String,
+        fallbackName: String,
+        classLoader: ClassLoader?
+    ): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(id) }.getOrNull()
+            ?: classLoader?.let { runCatching { Class.forName(fallbackName, false, it) }.getOrNull() }
+
+    /** 候选控制器 `model.N`（契约 panel.manager）。 */
+    private fun resolveCandidateController(classLoader: ClassLoader?) =
+        resolveHostClassByContract(HostContractId.PANEL_MANAGER, NATIVE_CAND_CTL_CLASS, classLoader)
+
+    /** 面板枚举 `keyboard.t`（契约 panel.enum）。 */
+    private fun resolvePanelEnum(classLoader: ClassLoader?) =
+        resolveHostClassByContract(HostContractId.PANEL_ENUM, NATIVE_PANEL_ENUM_CLASS, classLoader)
+
+    /** 翻译条根视图 `translatingwhilewriting.k`（契约 translator.top.view）。 */
+    private fun resolveTranslatorTopView(classLoader: ClassLoader?) =
+        resolveHostClassByContract(HostContractId.TRANSLATOR_TOP_VIEW, NATIVE_TOPVIEW_CLASS, classLoader)
+
+    /** 翻译下拉列表（契约 translator.dropdown.list）：RecyclerView 子类，短名兜底。 */
+    private fun resolveDropdownList(classLoader: ClassLoader?) =
+        resolveHostClassByContract(
+            HostContractId.TRANSLATOR_DROPDOWN_LIST,
+            NATIVE_DROPDOWN_LIST_CLASS,
+            classLoader
+        )
+
+    /** 原生圆角容器 `view.ImeRadiusConstraintLayout`（契约 view.radius.layout）。 */
+    private fun resolveRadiusLayout(classLoader: ClassLoader?) =
+        resolveHostClassByContract(HostContractId.VIEW_RADIUS_LAYOUT, NATIVE_RADIUS_CLASS, classLoader)
+
+    /** 翻译条 k 的二进制名前缀（`k$…`）：契约优先，解析不到退回写死短名。 */
+    private fun translatorTopViewPrefix(classLoader: ClassLoader?): String =
+        resolveTranslatorTopView(classLoader)?.let { "${it.name}$" } ?: "$NATIVE_TOPVIEW_CLASS$"
+
+    /** 契约类优先、写死短名兜底的有序候选类（同一个类只留一次）。 */
+    private fun contractFirstClasses(
+        id: String,
+        names: Array<String>,
+        classLoader: ClassLoader?
+    ): List<Class<*>> {
+        val out = LinkedHashSet<Class<*>>()
+        runCatching { WeTypeHostContracts.classOf(id) }.getOrNull()?.let { out.add(it) }
+        if (classLoader != null) {
+            for (name in names) {
+                runCatching { Class.forName(name, false, classLoader) }.getOrNull()?.let { out.add(it) }
+            }
+        }
+        return out.toList()
+    }
+
     /** 翻译管理器单例（类走契约层解析，历史短名只作兜底；单例字段按型取，不写死字段名）。 */
     private fun translatingMgr(anchor: View): Any? {
         return try {
@@ -2955,8 +3028,7 @@ internal object WeTypeClipboardSearchUi {
     /** q.t0()：翻译进行中？ */
     private fun isTranslating(mgr: Any): Boolean {
         return try {
-            val t0 = mgr.javaClass.declaredMethods
-                .firstOrNull { it.name == "t0" && it.parameterTypes.isEmpty() }
+            val t0 = pickHostMethod(mgr.javaClass, "t0") { it.parameterTypes.isEmpty() }
                 ?: return false
             t0.isAccessible = true
             (t0.invoke(mgr) as? Boolean) ?: false
@@ -2976,8 +3048,8 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "translator shell: q missing")
                 return false
             }
-            val q0 = mgr.javaClass.declaredMethods.firstOrNull {
-                it.name == "Q0" && it.parameterTypes.size == 6 &&
+            val q0 = pickHostMethod(mgr.javaClass, "Q0") {
+                it.parameterTypes.size == 6 &&
                     java.lang.reflect.Modifier.isStatic(it.modifiers)
             } ?: run {
                 AndroidLog.e(TAG, "translator shell: Q0 missing")
@@ -2993,16 +3065,17 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** 在 decor 树按类名找翻译 k（宿主挂载结果）。 */
+    /** 在 decor 树按类找翻译 k（宿主挂载结果）。类走契约层解析，短名只作兜底。 */
     private fun findTranslatorTopView(decor: ViewGroup): View? {
         return try {
+            val topViewClass = resolveTranslatorTopView(decor.context?.classLoader) ?: return null
             val q: ArrayDeque<View> = ArrayDeque()
             q.add(decor)
             var hops = 0
             while (q.isNotEmpty() && hops < 600) {
                 val v = q.removeFirst()
                 hops++
-                if (v.javaClass.name == NATIVE_TOPVIEW_CLASS) return v
+                if (v.javaClass == topViewClass) return v
                 if (v is ViewGroup) {
                     for (i in 0 until minOf(v.childCount, 25)) {
                         v.getChildAt(i)?.let { q.add(it) }
@@ -3074,6 +3147,8 @@ internal object WeTypeClipboardSearchUi {
             var modeTv: android.widget.TextView? = null
             var exitTv: View? = null
             var dropdown: ViewGroup? = null
+            // dropdown 走契约 translator.dropdown.list（RecyclerView 子类）；契约没解析出来才退回短名比对。
+            val dropdownClass = resolveDropdownList(k.context?.classLoader)
             val q: ArrayDeque<View> = ArrayDeque()
             q.add(k)
             var hops = 0
@@ -3098,9 +3173,14 @@ internal object WeTypeClipboardSearchUi {
                         modeTv = v
                     }
                 }
-                // dropdown：translatingwhilewriting.d（二进制名$d）即RecyclerView子类。
-                if (dropdown == null && v.javaClass.name == "com.tencent.wetype.plugin.hld.translatingwhilewriting.d") {
-                    dropdown = v as? ViewGroup
+                // dropdown：翻译下拉列表（契约 translator.dropdown.list，RecyclerView 直接子类）。
+                if (dropdown == null) {
+                    val hit = if (dropdownClass != null) {
+                        v.javaClass == dropdownClass
+                    } else {
+                        v.javaClass.name == NATIVE_DROPDOWN_LIST_CLASS
+                    }
+                    if (hit) dropdown = v as? ViewGroup
                 }
                 if (v is ViewGroup) {
                     for (i in 0 until minOf(v.childCount, 25)) {
@@ -3390,9 +3470,7 @@ internal object WeTypeClipboardSearchUi {
     /** F41：原生k卡高（k#getCurrentHeight()，q1.e0(d0+156)；取不到返null fail-closed，不写死）。 */
     private fun nativeKHeightF41(k: View): Int? {
         return try {
-            val m = k.javaClass.declaredMethods.firstOrNull {
-                it.name == "getCurrentHeight" && it.parameterTypes.isEmpty()
-            } ?: run {
+            val m = pickHostMethod(k.javaClass, "getCurrentHeight") { it.parameterTypes.isEmpty() } ?: run {
                 AndroidLog.e(TAG, "strip F41 height: k#getCurrentHeight missing (fail-closed)")
                 return null
             }
@@ -3485,9 +3563,7 @@ internal object WeTypeClipboardSearchUi {
                         null
                     }
                     if (radius != null) {
-                        val setRadius = root.javaClass.declaredMethods.firstOrNull {
-                            it.name == "setRadius" && it.parameterTypes.size == 1
-                        }
+                        val setRadius = pickHostMethod(root.javaClass, "setRadius") { it.parameterTypes.size == 1 }
                         if (setRadius != null) {
                             setRadius.isAccessible = true
                             when (setRadius.parameterTypes[0]) {
@@ -3553,13 +3629,14 @@ internal object WeTypeClipboardSearchUi {
     private fun findNativeKRootContainerF41(k: View): ViewGroup? {
         return try {
             if (k !is ViewGroup) return null
+            val radiusClass = resolveRadiusLayout(hostClassLoader ?: k.context?.classLoader) ?: return null
             val q: ArrayDeque<View> = ArrayDeque()
             q.add(k)
             var hops = 0
             while (q.isNotEmpty() && hops < 120) {
                 val v = q.removeFirst()
                 hops++
-                if (v.javaClass.name == NATIVE_RADIUS_CLASS) return v as? ViewGroup
+                if (v.javaClass == radiusClass) return v as? ViewGroup
                 if (v is ViewGroup && v !== k) {
                     // k直系第一层即rootContainer（ConstraintLayout.LayoutParams），优先直系。
                 }
@@ -3579,7 +3656,11 @@ internal object WeTypeClipboardSearchUi {
     private fun wireNativeDropdownF41(parts: NativeKPartsF41): Boolean {
         return try {
             val cl = hostClassLoader ?: parts.k.context?.classLoader ?: return false
-            val mCls = runCatching { Class.forName("com.tencent.wetype.plugin.hld.translatingwhilewriting.m", false, cl) }.getOrNull() ?: run {
+            val mCls = resolveHostClassByContract(
+                HostContractId.TRANSLATOR_DROPDOWN_ITEM,
+                NATIVE_DROPDOWN_ITEM_CLASS,
+                cl
+            ) ?: run {
                 AndroidLog.e(TAG, "strip F41 dropdown: m missing (fail-closed)")
                 return false
             }
@@ -3594,8 +3675,8 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "strip F41 dropdown: adapter missing (fail-closed)")
                 return false
             }
-            val kMethod = adapter.javaClass.declaredMethods.firstOrNull {
-                it.name == "k" && it.parameterTypes.size == 1 && List::class.java.isAssignableFrom(it.parameterTypes[0])
+            val kMethod = pickHostMethod(adapter.javaClass, "k") {
+                it.parameterTypes.size == 1 && List::class.java.isAssignableFrom(it.parameterTypes[0])
             } ?: run {
                 AndroidLog.e(TAG, "strip F41 dropdown: b#k(List) missing (fail-closed)")
                 return false
@@ -3621,14 +3702,14 @@ internal object WeTypeClipboardSearchUi {
     /** C46：下拉adapter定位（只读）：getLanguageListAdapter优先，字段回退；取不到返null。 */
     private fun resolveDropdownAdapterF41(dropdown: ViewGroup): Any? {
         return try {
-            val getter = dropdown.javaClass.declaredMethods.firstOrNull {
-                it.name == "getLanguageListAdapter" && it.parameterTypes.isEmpty()
+            val getter = pickHostMethod(dropdown.javaClass, "getLanguageListAdapter") {
+                it.parameterTypes.isEmpty()
             }
             if (getter != null) {
                 getter.isAccessible = true
                 getter.invoke(dropdown)
             } else {
-                val f = dropdown.javaClass.declaredFields.firstOrNull { it.type.name.endsWith(".translatingwhilewriting.b") }
+                val f = dropdown.javaClass.declaredFields.firstOrNull { looksLikeLanguageListAdapter(it.type) }
                     ?: dropdown.javaClass.declaredFields.firstOrNull {
                         it.type.superclass?.name?.contains("RecyclerView") == true || it.type.name.contains("RecyclerView")
                     } ?: return null
@@ -3667,9 +3748,8 @@ internal object WeTypeClipboardSearchUi {
         if (!ownsSearchBox(parts.edit)) return false
         return try {
             val dropdown = parts.dropdown
-            val setCb = dropdown.javaClass.declaredMethods.firstOrNull {
-                it.name == "setOnItemClick" && it.parameterTypes.size == 1
-            } ?: return false
+            val setCb = pickHostMethod(dropdown.javaClass, "setOnItemClick") { it.parameterTypes.size == 1 }
+                ?: return false
             setCb.isAccessible = true
             val paramType = setCb.parameterTypes[0]
             val handler = java.lang.reflect.Proxy.newProxyInstance(cl, arrayOf(paramType)) { _, method, args ->
@@ -3677,8 +3757,8 @@ internal object WeTypeClipboardSearchUi {
                     if (method.name == "invoke" || method.name == "a") {
                         val info = args?.firstOrNull()
                         val id = runCatching {
-                            val g = info?.javaClass?.declaredMethods?.firstOrNull {
-                                (it.name == "getId" || it.name == "a") && it.parameterTypes.isEmpty()
+                            val g = info?.javaClass?.let { cls ->
+                                pickHostMethod(cls, "getId", "a") { m -> m.parameterTypes.isEmpty() }
                             }
                             g?.also { it.isAccessible = true }?.invoke(info) as? Number
                         }?.getOrNull()?.toInt()
@@ -3726,8 +3806,8 @@ internal object WeTypeClipboardSearchUi {
                     // 已是我方两项（1001/1002）则放行，防抖。
                     val ids = arg.mapNotNull {
                         runCatching {
-                            val g = it?.javaClass?.declaredMethods?.firstOrNull {
-                                (it.name == "getId" || it.name == "a") && it.parameterTypes.isEmpty()
+                            val g = it?.javaClass?.let { cls ->
+                                pickHostMethod(cls, "getId", "a") { m -> m.parameterTypes.isEmpty() }
                             }
                             g?.also { m -> m.isAccessible = true }?.invoke(it) as? Number
                         }.getOrNull()?.toInt()
@@ -3776,9 +3856,7 @@ internal object WeTypeClipboardSearchUi {
         if (f41ExpandHooked) return
         f41ExpandHooked = true
         try {
-            val s0 = parts.k.javaClass.declaredMethods.firstOrNull {
-                it.name == "s0" && it.parameterTypes.isEmpty()
-            } ?: run {
+            val s0 = pickHostMethod(parts.k.javaClass, "s0") { it.parameterTypes.isEmpty() } ?: run {
                 f41ExpandHooked = false
                 return
             }
@@ -3794,8 +3872,8 @@ internal object WeTypeClipboardSearchUi {
                             if (token != submitSession.id || nativeKRefF41?.get() !== cur || !translatorShellByUs) return@postDelayed
                             val fresh = runCatching { findNativeKPartsF41(cur) }.getOrNull() ?: return@postDelayed
                             val ad = runCatching { resolveDropdownAdapterF41(fresh.dropdown) }.getOrNull() ?: return@postDelayed
-                            val km = ad.javaClass.declaredMethods.firstOrNull {
-                                it.name == "k" && it.parameterTypes.size == 1 && List::class.java.isAssignableFrom(it.parameterTypes[0])
+                            val km = pickHostMethod(ad.javaClass, "k") {
+                                it.parameterTypes.size == 1 && List::class.java.isAssignableFrom(it.parameterTypes[0])
                             } ?: return@postDelayed
                             km.isAccessible = true
                             // 展开时重喂：直喂两项（feeding守卫内hookBefore自动放行）。
@@ -3821,14 +3899,12 @@ internal object WeTypeClipboardSearchUi {
     /** F41：收下拉（k#s0 toggle；当前展开态才调，状态经currentLanguageModeSelectionState读，缺失则反射t0(0)兜底）。 */
     private fun closeNativeDropdownF41(k: View) {
         try {
-            val s0 = k.javaClass.declaredMethods.firstOrNull {
-                it.name == "s0" && it.parameterTypes.isEmpty()
-            } ?: return
+            val s0 = pickHostMethod(k.javaClass, "s0") { it.parameterTypes.isEmpty() } ?: return
             s0.isAccessible = true
             // s0为toggle：仅当下拉展开（selection==2）才调关；否则不动防误开。
             val sel = runCatching {
-                val g = k.javaClass.declaredMethods.firstOrNull {
-                    it.name == "getCurrentLanguageModeSelectionState" && it.parameterTypes.isEmpty()
+                val g = pickHostMethod(k.javaClass, "getCurrentLanguageModeSelectionState") {
+                    it.parameterTypes.isEmpty()
                 }
                 g?.also { it.isAccessible = true }?.invoke(k)?.let { flow ->
                     val gv = flow.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.isEmpty() }
@@ -3935,6 +4011,7 @@ internal object WeTypeClipboardSearchUi {
     /** C47隔离：摘原生翻译watcher（只读快照+官方remove，禁动我方watcher；失败fail-closed只记日志）。 */
     private fun detachNativeTranslationWatchersF41(box: EditText, keep: TextWatcher): Int {
         return try {
+            val topViewPrefix = translatorTopViewPrefix(hostClassLoader ?: box.context?.classLoader)
             var c: Class<*>? = box.javaClass
             var f: java.lang.reflect.Field? = null
             while (c != null && c != Any::class.java) {
@@ -3956,7 +4033,7 @@ internal object WeTypeClipboardSearchUi {
             val snapshot = ArrayList(list)
             var removed = 0
             for (w in snapshot) {
-                if (w === keep || !w.javaClass.name.startsWith("$NATIVE_TOPVIEW_CLASS$")) continue
+                if (w === keep || !w.javaClass.name.startsWith(topViewPrefix)) continue
                 box.removeTextChangedListener(w)
                 removed++
             }
@@ -3982,6 +4059,7 @@ internal object WeTypeClipboardSearchUi {
                 return
             }
             add.isAccessible = true
+            val topViewPrefix = translatorTopViewPrefix(hostClassLoader)
             add.hookBefore { param ->
                 try {
                     val tv = param.thisObject as? EditText ?: return@hookBefore
@@ -3989,7 +4067,7 @@ internal object WeTypeClipboardSearchUi {
                     if (!translatorShellByUs) return@hookBefore
                     val incoming = param.args.firstOrNull() as? TextWatcher ?: return@hookBefore
                     val ours = synchronized(nativeKWatchersF41) { nativeKWatchersF41[tv] }
-                    if (incoming === ours || !incoming.javaClass.name.startsWith("$NATIVE_TOPVIEW_CLASS$")) return@hookBefore
+                    if (incoming === ours || !incoming.javaClass.name.startsWith(topViewPrefix)) return@hookBefore
                     param.result = null
                     AndroidLog.i(TAG, "strip F41 isolate: suppressed native watcher add in searchMode " +
                         "(fail-closed，只留搜索watcher)")
@@ -4132,9 +4210,9 @@ internal object WeTypeClipboardSearchUi {
     private fun ensureCollapseHookF41(anchor: View) {
         if (f41CollapseHooked) return
         val mgr = translatingMgr(anchor) ?: return
-        val q0 = mgr.javaClass.declaredMethods.single {
-            it.name == "Q0" && it.parameterTypes.size == 6 && java.lang.reflect.Modifier.isStatic(it.modifiers)
-        }
+        val q0 = pickHostMethod(mgr.javaClass, "Q0") {
+            it.parameterTypes.size == 6 && java.lang.reflect.Modifier.isStatic(it.modifiers)
+        } ?: return
         q0.isAccessible = true
         q0.hookAfter { param ->
             if (param.args.getOrNull(0) !== searchManager || param.args.getOrNull(1) != false) return@hookAfter
@@ -4341,7 +4419,8 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "host loader missing, cannot navigate back")
                 return false
             }
-            val nClass = Class.forName("com.tencent.wetype.plugin.hld.model.N", false, cl)
+            val nClass = resolveCandidateController(cl)
+                ?: throw ClassNotFoundException(NATIVE_CAND_CTL_CLASS)
             var singleton: Any? = null
             var singletonName = "?"
             for (f in nClass.declaredFields) {
@@ -4364,8 +4443,8 @@ internal object WeTypeClipboardSearchUi {
                 return false
             }
             // 3.5.3=N#O2(boolean)，3.5.4 更名=N#Q2(boolean)（O2 变为 (boolean, W) 需非空 source）。
-            val m = nClass.declaredMethods.firstOrNull {
-                (it.name == "O2" || it.name == "Q2") && it.parameterTypes.size == 1 &&
+            val m = pickHostMethod(nClass, "O2", "Q2") {
+                it.parameterTypes.size == 1 &&
                     it.parameterTypes[0] == Boolean::class.javaPrimitiveType &&
                     it.returnType == Void.TYPE
             } ?: run {
@@ -4576,11 +4655,11 @@ internal object WeTypeClipboardSearchUi {
     private fun mountStripInCandidateContainer(decor: ViewGroup, row: View): Boolean {
         try {
             val cl = hostClassLoader ?: return false
-            val candCls = runCatching {
-                Class.forName(
-                    "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView", false, cl
-                )
-            }.getOrNull() ?: run {
+            val candCls = resolveHostClassByContract(
+                HostContractId.CLIPBOARD_CANDIDATE_VIEW,
+                NATIVE_CANDIDATE_VIEW_CLASS,
+                cl
+            ) ?: run {
                 AndroidLog.e(TAG, "candidate view class not found")
                 return false
             }
@@ -7997,11 +8076,11 @@ internal object WeTypeClipboardSearchUi {
             }
             runCatching { loaders.add(Thread.currentThread().contextClassLoader) }
             runCatching { loaders.add(anchor.context?.classLoader) }
-            var nCls: Class<*>? = null
+            var nCls: Class<*>? = resolveCandidateController(hostClassLoader)
             for (cl in loaders) {
+                if (nCls != null) break
                 if (cl == null) continue
                 nCls = runCatching { Class.forName(NATIVE_CAND_CTL_CLASS, false, cl) }.getOrNull()
-                if (nCls != null) break
             }
             val nClass = nCls ?: run {
                 AndroidLog.e(TAG, "strip F23 noN2 refresh: N missing ($reason)")
@@ -8017,9 +8096,8 @@ internal object WeTypeClipboardSearchUi {
             var okA2 = true
             var okE0 = true
             runCatching {
-                val a2 = nClass.declaredMethods.firstOrNull {
-                    it.name == "A2" && it.parameterTypes.isEmpty()
-                } ?: throw NoSuchMethodException("A2")
+                val a2 = pickHostMethod(nClass, "A2") { it.parameterTypes.isEmpty() }
+                    ?: throw NoSuchMethodException("A2")
                 a2.isAccessible = true
                 a2.invoke(inst)
             }.onFailure {
@@ -8027,9 +8105,8 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "strip F23 noN2 refresh: A2 failed ($reason): $it")
             }
             runCatching {
-                val e0 = nClass.declaredMethods.firstOrNull {
-                    it.name == "e0" && it.parameterTypes.isEmpty()
-                } ?: throw NoSuchMethodException("e0")
+                val e0 = pickHostMethod(nClass, "e0") { it.parameterTypes.isEmpty() }
+                    ?: throw NoSuchMethodException("e0")
                 e0.isAccessible = true
                 e0.invoke(inst)
             }.onFailure {
@@ -12751,10 +12828,8 @@ internal object WeTypeClipboardSearchUi {
             var fCls: Class<*>? = null
             for (cl in loaders) {
                 if (cl == null) continue
-                for (name in NATIVE_FLOAT_CLASSES) {
-                    fCls = runCatching { Class.forName(name, false, cl) }.getOrNull()
-                    if (fCls != null) break
-                }
+                fCls = contractFirstClasses(HostContractId.STRIP_FLOAT_PANEL, NATIVE_FLOAT_CLASSES, cl)
+                    .firstOrNull()
                 if (fCls != null) break
             }
             // C50根因③（只补float缺分支诊断+直达fallback，其余N/高度/栏不动，fail-closed）：
@@ -12783,19 +12858,18 @@ internal object WeTypeClipboardSearchUi {
                     AndroidLog.e(TAG, "float refresh: float singleton missing")
                     return
                 }
-            val vis = fClass.declaredMethods
-                .firstOrNull { it.name == "V" && it.parameterTypes.isEmpty() } ?: run {
-                    AndroidLog.e(TAG, "float refresh: V() missing")
-                    return
-                }
+            val vis = pickHostMethod(fClass, "V") { it.parameterTypes.isEmpty() } ?: run {
+                AndroidLog.e(TAG, "float refresh: V() missing")
+                return
+            }
             vis.isAccessible = true
             val visible = runCatching { vis.invoke(inst) as? Boolean }.getOrNull() ?: false
             if (!visible) {
                 AndroidLog.i(TAG, "float refresh skipped (not visible): $reason")
                 return
             }
-            val u0 = fClass.declaredMethods.firstOrNull {
-                it.name == "u0" && it.parameterTypes.size == 9 &&
+            val u0 = pickHostMethod(fClass, "u0") {
+                it.parameterTypes.size == 9 &&
                     java.lang.reflect.Modifier.isStatic(it.modifiers)
             } ?: run {
                 AndroidLog.e(TAG, "float refresh: u0 missing")
@@ -12833,11 +12907,13 @@ internal object WeTypeClipboardSearchUi {
             }
             runCatching { loaders.add(Thread.currentThread().contextClassLoader) }
             runCatching { loaders.add(anchor.context?.classLoader) }
-            var qCls: Class<*>? = null
+            var qCls: Class<*>? = runCatching {
+                requireClass(HostContractId.CLIPBOARD_HEIGHT_MANAGER)
+            }.getOrNull()
             for (cl in loaders) {
+                if (qCls != null) break
                 if (cl == null) continue
                 qCls = runCatching { Class.forName(NATIVE_HEIGHT_MGR_CLASS, false, cl) }.getOrNull()
-                if (qCls != null) break
             }
             val qClass = qCls ?: run {
                 AndroidLog.e(TAG, "height flow: translating q missing")
@@ -12850,11 +12926,10 @@ internal object WeTypeClipboardSearchUi {
                     AndroidLog.e(TAG, "height flow: q singleton missing")
                     return
                 }
-            val y = qClass.declaredMethods
-                .firstOrNull { it.name == "Y" && it.parameterTypes.isEmpty() } ?: run {
-                    AndroidLog.e(TAG, "height flow: Y() missing")
-                    return
-                }
+            val y = pickHostMethod(qClass, "Y") { it.parameterTypes.isEmpty() } ?: run {
+                AndroidLog.e(TAG, "height flow: Y() missing")
+                return
+            }
             y.isAccessible = true
             val flow = y.invoke(mgr) ?: run {
                 AndroidLog.e(TAG, "height flow: Y() null")
@@ -12898,11 +12973,11 @@ internal object WeTypeClipboardSearchUi {
             }
             runCatching { loaders.add(Thread.currentThread().contextClassLoader) }
             runCatching { loaders.add(anchor.context?.classLoader) }
-            var nCls: Class<*>? = null
+            var nCls: Class<*>? = resolveCandidateController(hostClassLoader)
             for (cl in loaders) {
+                if (nCls != null) break
                 if (cl == null) continue
                 nCls = runCatching { Class.forName(NATIVE_CAND_CTL_CLASS, false, cl) }.getOrNull()
-                if (nCls != null) break
             }
             val nClass = nCls ?: run {
                 AndroidLog.e(TAG, "cand refresh: N missing ($reason)")
@@ -12917,9 +12992,8 @@ internal object WeTypeClipboardSearchUi {
                 }
             var ok = true
             runCatching {
-                val a2 = nClass.declaredMethods.firstOrNull {
-                    it.name == "A2" && it.parameterTypes.isEmpty()
-                } ?: throw NoSuchMethodException("A2")
+                val a2 = pickHostMethod(nClass, "A2") { it.parameterTypes.isEmpty() }
+                    ?: throw NoSuchMethodException("A2")
                 a2.isAccessible = true
                 a2.invoke(inst)
             }.onFailure {
@@ -12927,9 +13001,8 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "cand refresh: A2 failed ($reason): $it")
             }
             runCatching {
-                val e0 = nClass.declaredMethods.firstOrNull {
-                    it.name == "e0" && it.parameterTypes.isEmpty()
-                } ?: throw NoSuchMethodException("e0")
+                val e0 = pickHostMethod(nClass, "e0") { it.parameterTypes.isEmpty() }
+                    ?: throw NoSuchMethodException("e0")
                 e0.isAccessible = true
                 e0.invoke(inst)
             }.onFailure {
@@ -12937,8 +13010,8 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "cand refresh: e0 failed ($reason): $it")
             }
             runCatching {
-                val n2 = nClass.declaredMethods.firstOrNull {
-                    it.name == "N2" && it.parameterTypes.size == 5 &&
+                val n2 = pickHostMethod(nClass, "N2") {
+                    it.parameterTypes.size == 5 &&
                         java.lang.reflect.Modifier.isStatic(it.modifiers)
                 } ?: throw NoSuchMethodException("N2")
                 n2.isAccessible = true
@@ -14506,9 +14579,7 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "native root: host loader missing")
                 return null
             }
-            val rootCls = runCatching {
-                Class.forName(NATIVE_RADIUS_CLASS, false, cl)
-            }.getOrNull() ?: run {
+            val rootCls = resolveRadiusLayout(cl) ?: run {
                 AndroidLog.e(TAG, "native root: $NATIVE_RADIUS_CLASS missing")
                 return null
             }
@@ -14528,9 +14599,7 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "native root: newInstance failed")
                 return null
             }
-            val setRadius = rootCls.declaredMethods.firstOrNull {
-                it.name == "setRadius" && it.parameterTypes.size == 1
-            } ?: run {
+            val setRadius = pickHostMethod(rootCls, "setRadius") { it.parameterTypes.size == 1 } ?: run {
                 AndroidLog.e(TAG, "native root: setRadius missing")
                 return null
             }
@@ -14559,9 +14628,7 @@ internal object WeTypeClipboardSearchUi {
                     return null
                 }
             }
-            val setBorder = rootCls.declaredMethods.firstOrNull {
-                it.name == "setBorderWidth" && it.parameterTypes.size == 1
-            } ?: run {
+            val setBorder = pickHostMethod(rootCls, "setBorderWidth") { it.parameterTypes.size == 1 } ?: run {
                 AndroidLog.e(TAG, "native root: setBorderWidth missing")
                 return null
             }
@@ -14592,7 +14659,8 @@ internal object WeTypeClipboardSearchUi {
     private fun childLayoutParams(root: ViewGroup, w: Int, h: Int): ViewGroup.LayoutParams {
         try {
             val cl = hostClassLoader
-            if (cl != null && root.javaClass.name == NATIVE_RADIUS_CLASS) {
+            val radiusClass = resolveRadiusLayout(cl)
+            if (cl != null && radiusClass != null && root.javaClass == radiusClass) {
                 val lpCls = Class.forName(
                     "androidx.constraintlayout.widget.ConstraintLayout\$LayoutParams", false, cl
                 )
@@ -14617,15 +14685,14 @@ internal object WeTypeClipboardSearchUi {
     private fun applyNativeSkin(view: View, innerName: String): Boolean {
         return try {
             val cl = hostClassLoader ?: return false
-            val kCls = runCatching { Class.forName(NATIVE_TOPVIEW_CLASS, false, cl) }.getOrNull()
-                ?: run {
-                    AndroidLog.e(TAG, "native skin: topview class missing")
-                    return false
-                }
+            val kCls = resolveTranslatorTopView(cl) ?: run {
+                AndroidLog.e(TAG, "native skin: topview class missing")
+                return false
+            }
             // R8 抹 InnerClasses 属性（运行时 getDeclaredClasses 为空），按二进制名
             // `k$t` 直取内部皮肤单例类，不依赖 inner 反射。
             val inner = runCatching {
-                Class.forName(NATIVE_TOPVIEW_CLASS + "$" + innerName, false, cl)
+                Class.forName(kCls.name + "$" + innerName, false, cl)
             }.getOrNull() ?: run {
                 AndroidLog.e(TAG, "native skin: inner $innerName binary missing")
                 return false
@@ -14637,11 +14704,14 @@ internal object WeTypeClipboardSearchUi {
                     AndroidLog.e(TAG, "native skin: inner $innerName singleton missing")
                     return false
                 }
-            val dCls = runCatching { Class.forName(NATIVE_SKIN_UTILS_CLASS, false, cl) }.getOrNull()
-                ?: run {
-                    AndroidLog.e(TAG, "native skin: d class missing")
-                    return false
-                }
+            val dCls = resolveHostClassByContract(
+                HostContractId.STRIP_SKIN_BINDER,
+                NATIVE_SKIN_UTILS_CLASS,
+                cl
+            ) ?: run {
+                AndroidLog.e(TAG, "native skin: d class missing")
+                return false
+            }
             // 5 参绑定按形状找：4.0.0 把它从 `h` 改名成 `j`（`h` 只剩 2 参版本），
             // 形状是 (View, boolean, 皮肤单例, int, Object)，两版都只有这一条命中。
             val bind = dCls.declaredMethods.firstOrNull {
@@ -14673,9 +14743,7 @@ internal object WeTypeClipboardSearchUi {
         return try {
             val cl = hostClassLoader ?: return null
             var missing = true
-            for (clsName in NATIVE_SCALE_CLASSES) {
-                val r1 = runCatching { Class.forName(clsName, false, cl) }.getOrNull()
-                    ?: continue
+            for (r1 in contractFirstClasses(HostContractId.CLIPBOARD_SCALE_STATIC, NATIVE_SCALE_CLASSES, cl)) {
                 val cands = r1.declaredMethods.filter {
                     it.name == method && it.parameterTypes.size == 1
                 }
@@ -14685,7 +14753,7 @@ internal object WeTypeClipboardSearchUi {
                     ?: cands[0]
                 m.isAccessible = true
                 if (!java.lang.reflect.Modifier.isStatic(m.modifiers)) {
-                    AndroidLog.e(TAG, "native scale: $clsName.$method not static")
+                    AndroidLog.e(TAG, "native scale: ${r1.name}.$method not static")
                     return null
                 }
                 return (m.invoke(null, arg) as? Number)?.toInt()
@@ -14703,16 +14771,12 @@ internal object WeTypeClipboardSearchUi {
     private fun applyNativeFont(tv: android.widget.TextView, size: Int, fromCandidate: Boolean): Boolean {
         return try {
             val cl = hostClassLoader ?: return false
-            for (clsName in NATIVE_FONT_CLASSES) {
-                val n1 = runCatching { Class.forName(clsName, false, cl) }.getOrNull()
-                    ?: continue
+            for (n1 in contractFirstClasses(HostContractId.CLIPBOARD_SCALE_INSTANCE, NATIVE_FONT_CLASSES, cl)) {
                 val inst = n1.declaredFields
                     .firstOrNull { it.type == n1 }
                     ?.also { it.isAccessible = true }
                     ?.get(null) ?: continue
-                val m = n1.declaredMethods.firstOrNull {
-                    it.name == "A3" && it.parameterTypes.size == 3
-                } ?: continue
+                val m = pickHostMethod(n1, "A3") { it.parameterTypes.size == 3 } ?: continue
                 m.isAccessible = true
                 m.invoke(inst, tv, size, fromCandidate)
                 return true
@@ -15308,9 +15372,11 @@ internal object WeTypeClipboardSearchUi {
     private fun createHostBox(context: android.content.Context): EditText? {
         return try {
             val cl = hostClassLoader ?: return null
-            val cls = Class.forName(
-                "com.tencent.wetype.plugin.hld.view.imeedittext.ImeEditText", false, cl
-            )
+            val cls = resolveHostClassByContract(
+                HostContractId.IME_EDIT_TEXT,
+                NATIVE_IME_EDIT_TEXT_CLASS,
+                cl
+            ) ?: return null
             val ctor = cls.getDeclaredConstructor(android.content.Context::class.java)
             ctor.isAccessible = true
             ctor.newInstance(context) as? EditText

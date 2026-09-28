@@ -1,6 +1,11 @@
 package com.xposed.wetypehook.wetype.host
 
+import android.content.Context
+import android.inputmethodservice.InputMethodService
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import java.io.File
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
@@ -40,6 +45,28 @@ internal object HostContractId {
     const val RESOURCE_CLASS_ATTR = "resource.class.attr"
     const val RESOURCE_CLASS_COLOR = "resource.class.color"
     const val RESOURCE_CLASS_DIMEN = "resource.class.dimen"
+    const val CLIPBOARD_MANAGER = "clipboard.manager"
+    const val CLIPBOARD_ITEM = "clipboard.item"
+    const val CLIPBOARD_ENTRIES_HOST = "clipboard.entries.host"
+    const val CLIPBOARD_ADAPTER = "clipboard.adapter"
+    const val CLIPBOARD_DAO_FACTORY = "clipboard.dao.factory"
+    const val CLIPBOARD_SCROLLVIEW = "clipboard.scrollview"
+    const val CLIPBOARD_IMAGE_CARD = "clipboard.image.card"
+    const val CLIPBOARD_PREVIEW_HOST = "clipboard.preview.host"
+    const val CLIPBOARD_SCALE_INSTANCE = "clipboard.scale.instance"
+    const val CLIPBOARD_SCALE_STATIC = "clipboard.scale.static"
+    const val BITMAP_UTIL = "bitmap.util"
+    const val VIEW_RADIUS_LAYOUT = "view.radius.layout"
+    const val TRANSLATOR_TOP_VIEW = "translator.top.view"
+    const val STRIP_FLOAT_PANEL = "strip.float.panel"
+    const val STRIP_SKIN_BINDER = "strip.skin.binder"
+    const val TRANSLATOR_DROPDOWN_ITEM = "translator.dropdown.item"
+    const val IMAGE_PREVIEW_KEYBOARD = "image.preview.keyboard"
+    const val IME_EDIT_TEXT = "view.ime.edit.text"
+    const val TRANSLATOR_DROPDOWN_LIST = "translator.dropdown.list"
+    const val GLIDE_ENTRY = "glide.entry"
+    const val HOST_CRYPTO_FILE = "host.crypto.file"
+    const val HOST_HASH_FILE = "host.hash.file"
 }
 
 // 名字候选表：3.5.3 / 3.5.4 的实测值，仅作结构锚失效时的最后手段。
@@ -65,6 +92,121 @@ private const val PANEL_CUSTOM_PHRASE_AND_CLIPBOARD = "CustomPhraseAndClipboard"
 private const val PANEL_FIND_WORD_T9 = "HandwriteFindWordT9"
 private const val PANEL_IMAGE_PREVIEW = "ImagePreview"
 
+/**
+ * 剪贴板条目 / 图片 / 搜索链的短名候选表：3.5.3 / 3.5.4 / 4.0.0 的实测值，
+ * 只在结构锚失效时接手。这些位置以前散落在各 hook 文件里直接 `Class.forName`。
+ */
+private const val CLIPBOARD_MANAGER_CLASS = "com.tencent.wetype.plugin.hld.clipboard.B"
+private const val CLIPBOARD_ITEM_CLASS = "com.tencent.wetype.plugin.hld.clipboard.C"
+private const val CLIPBOARD_ENTRIES_HOST_CLASS = "com.tencent.wetype.plugin.hld.clipboard.z"
+private const val CLIPBOARD_ADAPTER_CLASS = "com.tencent.wetype.plugin.hld.clipboard.v"
+private const val CLIPBOARD_DAO_FACTORY_CLASS = "com.tencent.wetype.plugin.hld.dao.c"
+private const val CLIPBOARD_SCROLLVIEW_CLASS =
+    "com.tencent.wetype.plugin.hld.clipboard.ImeClipboardScrollView"
+private const val CLIPBOARD_IMAGE_CARD_CLASS = "com.tencent.wetype.plugin.hld.keyboard.k"
+private const val CLIPBOARD_PREVIEW_HOST_CLASS = "com.tencent.wetype.plugin.hld.keyboard.l"
+private const val BITMAP_UTIL_CLASS = "com.tencent.wetype.plugin.hld.utils.e"
+private const val VIEW_RADIUS_LAYOUT_CLASS =
+    "com.tencent.wetype.plugin.hld.view.ImeRadiusConstraintLayout"
+private const val TRANSLATOR_TOP_VIEW_CLASS =
+    "com.tencent.wetype.plugin.hld.translatingwhilewriting.k"
+
+/** 浮窗管理类的历史短名（3.5.3 / 3.5.4 是 `float.f`，jadx 反编译成 `p000float.f`）。 */
+private val FLOAT_PANEL_CLASSES = arrayOf(
+    "com.tencent.wetype.plugin.hld.float.f",
+    "com.tencent.wetype.plugin.hld.p000float.f"
+)
+
+/** 皮肤绑定工具类的历史短名。 */
+private const val SKIN_BINDER_CLASS = "com.tencent.wetype.skin.utils.d"
+
+/** 下拉语言项数据类的历史短名。 */
+private const val DROPDOWN_ITEM_CLASS = "com.tencent.wetype.plugin.hld.translatingwhilewriting.m"
+
+/** 图片预览页键盘的历史短名。 */
+private const val PREVIEW_KEYBOARD_CLASS = "com.tencent.wetype.plugin.hld.keyboard.S33ImagePreviewKeyboard"
+
+/** IME 输入框的历史短名。 */
+private const val IME_EDIT_TEXT_CLASS = "com.tencent.wetype.plugin.hld.view.imeedittext.ImeEditText"
+
+/** 翻译下拉列表（`translatingwhilewriting.d`，RecyclerView 子类）的历史短名。 */
+private const val DROPDOWN_LIST_CLASS =
+    "com.tencent.wetype.plugin.hld.translatingwhilewriting.d"
+
+/** Glide 入口类与 RequestListener 接口的历史短名（Glide 自带混淆，两版一致）。 */
+private const val GLIDE_ENTRY_CLASS = "com.bumptech.glide.c"
+private const val GLIDE_LISTENER_INTERFACE = "q1.h"
+
+/** 宿主文件加解密 / 摘要工具的历史短名（`k6` 包在 3.5.4 与 4.0.0 上一致）。 */
+private const val CRYPTO_FILE_CLASS = "k6.a"
+private const val HASH_FILE_CLASS = "k6.e"
+
+/**
+ * 整包扫描的包名。包名与成员形状一样能活过 R8 —— 混淆只改类名/成员名，不改包归属，
+ * 也不改方法签名里的类型关系。
+ */
+private const val FLOAT_PACKAGE = "com.tencent.wetype.plugin.hld.float"
+private const val SKIN_UTILS_PACKAGE = "com.tencent.wetype.skin.utils"
+private const val TRANSLATING_PACKAGE = "com.tencent.wetype.plugin.hld.translatingwhilewriting"
+private const val KEYBOARD_PACKAGE = "com.tencent.wetype.plugin.hld.keyboard"
+private const val IME_EDIT_TEXT_PACKAGE = "com.tencent.wetype.plugin.hld.view.imeedittext"
+
+/** Glide 用的是库自己的真实包名（不是宿主 R8 产物），包内按形状取入口类。 */
+private const val GLIDE_PACKAGE = "com.bumptech.glide"
+
+/** 宿主加解密 / 摘要工具所在的混淆包；包名比类名稳，但仍属兜底级锚点。 */
+private const val CRYPTO_PACKAGE = "k6"
+
+/** 尺寸换算：3.5.4 是实例单例 `n1`，4.0.0 换成 `m1`（形状不变，短名换了）。 */
+private val CLIPBOARD_SCALE_INSTANCE_CLASSES = arrayOf(
+    "com.tencent.wetype.plugin.hld.utils.n1",
+    "com.tencent.wetype.plugin.hld.utils.m1"
+)
+
+/** 原始像素换算：3.5.4 是静态工具 `r1`，4.0.0 换成 `q1`。 */
+private val CLIPBOARD_SCALE_STATIC_CLASSES = arrayOf(
+    "com.tencent.wetype.plugin.hld.utils.r1",
+    "com.tencent.wetype.plugin.hld.utils.q1"
+)
+
+/**
+ * 宿主自己写进日志的 TAG / 文本（`WxIme.ImeClipboardMgr` 这类）。
+ *
+ * R8 不改字符串常量，而这些串在实测里只出现在各自类体内 —— 是「不写死混淆类名」的首选锚。
+ * 每条给两个以上，是为了将来某条日志被删时判据整体失效并退回名字候选，而不是锚错类。
+ */
+private val CLIPBOARD_MANAGER_ANCHORS = listOf(
+    "WxIme.ImeClipboardMgr",
+    "clearExpireRecord start sort delete"
+)
+private val CLIPBOARD_ITEM_ANCHORS = listOf(", createTime:", ", expireTimestamp:", ", pathType:")
+private val CLIPBOARD_ENTRIES_HOST_ANCHORS = listOf(
+    "fillContent start uiOrder:",
+    "WxIme.ImeClipboardListAdapter"
+)
+private val CLIPBOARD_ADAPTER_ANCHORS = listOf("clipboardList[dataPos]", "onBindViewHolder ")
+private const val CLIPBOARD_DAO_FACTORY_ANCHOR = "DatabaseManager"
+private const val CLIPBOARD_SCROLLVIEW_ANCHOR = "WxIme.ImeClipboardScrollView"
+private const val CLIPBOARD_IMAGE_CARD_ANCHOR = "WxIme.ImagePreviewCardView"
+private val CLIPBOARD_PREVIEW_HOST_ANCHORS = listOf(
+    "mHeaderContainerLayout",
+    "Super calls with default arguments not supported in this target, function: refreshActionBtn"
+)
+private const val BITMAP_UTIL_ANCHOR = "WxIme.BitmapUtil"
+private val TRANSLATOR_TOP_VIEW_ANCHORS = listOf(
+    "输入要翻译的内容",
+    "sourceContentEditView focus changed!!!, hasFocus:"
+)
+
+/** `RecyclerView$…` 的公共前缀：Adapter 的 `onCreateViewHolder` 返回型一定落在它下面。 */
+private const val RECYCLER_VIEW_PREFIX = "androidx.recyclerview.widget.RecyclerView"
+
+/** `RecyclerView` 本身的二进制名：用来判「直接继承 RecyclerView」。 */
+private const val RECYCLER_VIEW_CLASS_NAME = "androidx.recyclerview.widget.RecyclerView"
+
+/** 原生圆角容器的父类；同形的 `ImeRadiusImageView` 不在这个子树里。 */
+private const val CONSTRAINT_LAYOUT_CLASS = "androidx.constraintlayout.widget.ConstraintLayout"
+
 /** 面板导航入口的历史候选名（3.5.3=p3、3.5.4=o3）。 */
 private val PANEL_SWITCH_ENUM_NAMES = listOf("n3", "p3", "o3", "k3", "l3")
 
@@ -83,11 +225,225 @@ private val PENDING_GETTER_NAMES = listOf("B2", "D2", "E2")
 /** 强制上屏 emit 的历史候选名（3.5.3=W1、3.5.4=Y1）。 */
 private val PENDING_EMIT_NAMES = listOf("W1", "Y1")
 
+/**
+ * R 类之间的分辨锚。这些资源名在两版宿主上都存在，且只被对应的那个 R 类声明。
+ *
+ * 判据要**至少命中两个**而不是一个：将来某个名字若被同族的另一个 R 类共用，单名判据会
+ * 静默锚错类，双名判据则会退回名字兜底并在自检里报出来。
+ */
+internal val RESOURCE_ATTR_MARKERS = listOf(
+    "Alphabet_text_color", "S10_text_color", "S11_img_type_icon_color_normal"
+)
+internal val RESOURCE_COLOR_MARKERS = listOf(
+    "ime_about_title_color", "ime_app_panel_text_color_normal", "S9_title_color"
+)
+internal val RESOURCE_DIMEN_MARKERS = listOf(
+    "S10_index_radius", "S10_index_margin_start", "S10_button_icon_width"
+)
+
 private fun contract(
     id: String,
     desc: String,
     resolve: (HostContext) -> HostHandle?
 ): HostContract = HostContract(id, desc, resolve)
+
+/**
+ * DAO 返回的条目是「十余个简单类型实例字段」的行对象；宿主引擎类（`i0`）字段全静态，
+ * 形状与条目高度重合也过不了这一关。字段名会被 R8 重排，所以只按类型判。
+ */
+internal fun looksLikeEntityRow(clazz: Class<*>): Boolean {
+    val instanceFields = clazz.declaredFields.filter { !Modifier.isStatic(it.modifiers) }
+    return instanceFields.size >= 10 && instanceFields.all { field ->
+        field.type.isPrimitive || field.type == String::class.java ||
+            Collection::class.java.isAssignableFrom(field.type)
+    }
+}
+
+/** Adapter 的 `onCreateViewHolder` 返回型落在 `androidx.recyclerview.widget.RecyclerView$…` 下。 */
+internal fun bindsRecyclerViewHolder(clazz: Class<*>): Boolean =
+    clazz.declaredMethods.any { it.returnType.name.startsWith(RECYCLER_VIEW_PREFIX) }
+
+/** 声明了 `setList(List)` —— 剪贴板列表容器与其它 RecyclerView 的分别。 */
+internal fun takesListSetter(clazz: Class<*>): Boolean =
+    clazz.declaredMethods.any {
+        it.returnType == Void.TYPE && it.parameterTypes.size == 1 &&
+            it.parameterTypes[0] == List::class.java
+    }
+
+/**
+ * 翻译条下拉的语言列表 adapter：RecyclerView.Adapter 子树 + `(List)` 直喂入口。
+ *
+ * 宿主把它的短名从 `b` 一路重排，而「Adapter 子树 + 能吃 List」这个形状不会变；
+ * 同包的 `d$a` 也是 RecyclerView 家族但吃不了 List，所以判据唯一。
+ */
+internal fun looksLikeLanguageListAdapter(clazz: Class<*>): Boolean {
+    var current: Class<*>? = clazz.superclass
+    while (current != null) {
+        if (current.name.startsWith(RECYCLER_VIEW_PREFIX)) return takesListSetter(clazz)
+        current = current.superclass
+    }
+    return false
+}
+
+/**
+ * 原生圆角容器是 `ConstraintLayout` 子树。
+ *
+ * 按父类**名字**走链，不加载 `androidx.constraintlayout.widget.ConstraintLayout`：宿主 APK 里
+ * androidx 的类是被 R8 处理过的，模块侧加载同名类拿到的不是同一个 Class。
+ */
+internal fun isConstraintLayoutSubclass(clazz: Class<*>): Boolean {
+    var current: Class<*>? = clazz
+    while (current != null) {
+        if (current.name == CONSTRAINT_LAYOUT_CLASS) return true
+        current = current.superclass
+    }
+    return false
+}
+
+/**
+ * 浮窗管理类的固定形状：静态自引用字段 + 静态 9 参重排入口，且首参就是本类。
+ *
+ * 「首参就是本类」这条必须留在 JVM 侧判 —— DexKit 的查询表达式只吃具体类型名，而本类的
+ * 混淆名每次发版都会变，写进查询就等于写死。整包扫描（含同前缀的 `floatview`）后它唯一命中。
+ */
+internal fun looksLikeFloatPanel(clazz: Class<*>): Boolean {
+    if (!hasStaticSelfField(clazz)) return false
+    return clazz.declaredMethods.any { method ->
+        Modifier.isStatic(method.modifiers) && method.returnType == Void.TYPE &&
+            method.parameterTypes.size == 9 &&
+            method.parameterTypes[0] == clazz &&
+            method.parameterTypes[1] == Int::class.javaPrimitiveType &&
+            method.parameterTypes[2] == Int::class.javaPrimitiveType &&
+            method.parameterTypes[3] == Int::class.javaPrimitiveType &&
+            method.parameterTypes[4] == Boolean::class.javaPrimitiveType &&
+            method.parameterTypes[5] == Boolean::class.javaPrimitiveType &&
+            method.parameterTypes[6] == Boolean::class.javaPrimitiveType &&
+            method.parameterTypes[7] == Int::class.javaPrimitiveType &&
+            method.parameterTypes[8] == Any::class.java
+    }
+}
+
+/**
+ * 皮肤绑定工具类的固定形状：没有实例字段、方法全静态，且声明了三条 View 操作形状。
+ *
+ * 同包的 `b` / `c` / `e` / `f` 都带实例字段或实例方法，所以「纯静态工具类 + 三条形状」
+ * 在整包扫描里唯一命中。方法名会随发版重排（4.0.0 把 `h` 改名成 `j`），形状不会。
+ */
+internal fun looksLikeSkinBinder(clazz: Class<*>): Boolean {
+    if (clazz.declaredFields.any { !Modifier.isStatic(it.modifiers) }) return false
+    val methods = clazz.declaredMethods
+    if (methods.isEmpty() || methods.any { !Modifier.isStatic(it.modifiers) }) return false
+    fun declares(returnType: Class<*>, vararg parameters: Class<*>): Boolean =
+        methods.any { method ->
+            method.returnType == returnType && method.parameterTypes.size == parameters.size &&
+                parameters.indices.all { method.parameterTypes[it] == parameters[it] }
+        }
+    return declares(
+        Void.TYPE,
+        ViewGroup::class.java,
+        View::class.java,
+        Int::class.javaPrimitiveType!!,
+        ViewGroup.LayoutParams::class.java
+    ) && declares(Void.TYPE, View::class.java) &&
+        declares(
+            Boolean::class.javaPrimitiveType!!,
+            View::class.java,
+            Float::class.javaPrimitiveType!!,
+            Float::class.javaPrimitiveType!!
+        )
+}
+
+/**
+ * 下拉语言项数据类的固定形状：只有 int 与 String 两个实例字段、构造 `(int, String)`、
+ * 两个零参取值方法。宿主里同形的只有这一个。
+ */
+internal fun looksLikeDropdownItem(clazz: Class<*>): Boolean {
+    if (clazz.declaredFields.any { Modifier.isStatic(it.modifiers) }) return false
+    val instance = clazz.declaredFields.filter { !Modifier.isStatic(it.modifiers) }
+    if (instance.size != 2) return false
+    if (instance.count { it.type == Int::class.javaPrimitiveType } != 1) return false
+    if (instance.count { it.type == String::class.java } != 1) return false
+    val hasConstructor = clazz.declaredConstructors.any { constructor ->
+        constructor.parameterTypes.size == 2 &&
+            constructor.parameterTypes[0] == Int::class.javaPrimitiveType &&
+            constructor.parameterTypes[1] == String::class.java
+    }
+    if (!hasConstructor) return false
+    val methods = clazz.declaredMethods
+    return methods.any { it.parameterTypes.isEmpty() && it.returnType == Int::class.javaPrimitiveType } &&
+        methods.any { it.parameterTypes.isEmpty() && it.returnType == String::class.java }
+}
+
+/**
+ * 图片预览页键盘的固定形状：预览宿主（`keyboard.l`）的**直接**子类，且同时持有剪贴板条目
+ * 与图片卡片两种实例字段。
+ *
+ * `keyboard.l` 在 3.5.4 / 4.0.0 上各有 5 个子类，只有图片预览页那个同时挂这两类字段；
+ * 两个字段类型都来自契约（`clipboard.item` / `clipboard.image.card`），所以判据里没有类名。
+ */
+internal fun looksLikeImagePreviewKeyboard(
+    clazz: Class<*>,
+    previewHost: Class<*>?,
+    itemType: Class<*>?,
+    cardType: Class<*>?
+): Boolean {
+    if (previewHost == null || itemType == null || cardType == null) return false
+    if (clazz.superclass != previewHost) return false
+    val instanceTypes = clazz.declaredFields
+        .filter { !Modifier.isStatic(it.modifiers) }
+        .mapTo(mutableSetOf()) { it.type }
+    return itemType in instanceTypes && cardType in instanceTypes
+}
+
+/** IME 输入框：`imeedittext` 包里唯一的 `TextView` 子树（同包的 `a` / `b` 是 InputConnection）。 */
+internal fun looksLikeImeEditText(clazz: Class<*>): Boolean =
+    android.widget.TextView::class.java.isAssignableFrom(clazz)
+
+/**
+ * 翻译下拉列表：`translatingwhilewriting` 包里唯一**直接**继承 `RecyclerView` 的类。
+ *
+ * 同包的 `a` 是 ViewHolder、`b` 是 Adapter、`d$a` 是 LayoutManager，都不是 RecyclerView 本身，
+ * 所以「直接父类等于 RecyclerView」在这个包里唯一命中。
+ * `androidx.recyclerview.widget.RecyclerView` 是库的真实类名（不是宿主 R8 产物），可以安全比对。
+ */
+internal fun looksLikeDropdownList(clazz: Class<*>): Boolean =
+    clazz.superclass?.name == RECYCLER_VIEW_CLASS_NAME
+
+/**
+ * 宿主文件解密工具：同一个类里同时声明 `([B,String) -> [B` 与 `(String,String,String) -> boolean`
+ * 两条静态方法。`k6` 包里只有 `a` 同时具备这两条形状。
+ */
+internal fun looksLikeFileCrypto(clazz: Class<*>): Boolean {
+    val methods = clazz.declaredMethods.filter { Modifier.isStatic(it.modifiers) }
+    fun declares(returnType: Class<*>, vararg parameters: Class<*>): Boolean =
+        methods.any { method ->
+            method.returnType == returnType && method.parameterTypes.size == parameters.size &&
+                parameters.indices.all { method.parameterTypes[it] == parameters[it] }
+        }
+    return declares(ByteArray::class.java, ByteArray::class.java, String::class.java) &&
+        declares(
+            Boolean::class.javaPrimitiveType!!,
+            String::class.java,
+            String::class.java,
+            String::class.java
+        )
+}
+
+/**
+ * 宿主文件摘要工具：同一个类里同时声明 `(File) -> String`、`(File,int) -> String` 与
+ * `(String) -> String` 三条静态方法。`k6` 包里只有 `e` 同时具备这三条形状。
+ */
+internal fun looksLikeFileHash(clazz: Class<*>): Boolean {
+    val methods = clazz.declaredMethods.filter { Modifier.isStatic(it.modifiers) }
+    fun declares(vararg parameters: Class<*>): Boolean =
+        methods.any { method ->
+            method.returnType == String::class.java && method.parameterTypes.size == parameters.size &&
+                parameters.indices.all { method.parameterTypes[it] == parameters[it] }
+        }
+    return declares(File::class.java) &&
+        declares(File::class.java, Int::class.javaPrimitiveType!!) &&
+        declares(String::class.java)
+}
 
 internal val HOST_CONTRACTS: List<HostContract> = listOf(
 
@@ -182,8 +538,20 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
 
     contract(
         HostContractId.CLIPBOARD_CANDIDATE_VIEW,
-        "候选视图类。由 XML 膨胀，名称不经 R8 改名，可直接按名加载"
+        "候选视图类。按「只有候选条容器才有的三条 View/ViewGroup 形状」锚定，不认类名"
     ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.CLIPBOARD_CANDIDATE_VIEW,
+            listOf(
+                MethodShape(listOf("boolean", "int", "int", "int", "int"), "void"),
+                MethodShape(listOf("android.graphics.Canvas", "android.view.View", "long"), "boolean"),
+                MethodShape(
+                    listOf("android.view.inputmethod.EditorInfo", "boolean", "boolean", "int"),
+                    "void"
+                )
+            )
+        ) { View::class.java.isAssignableFrom(it) }
+            ?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(CANDIDATE_VIEW_CLASS)?.let { HostHandle(owner = it) }
     },
 
@@ -272,17 +640,212 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
             ?.let { HostHandle(owner = owner, method = it) }
     },
 
+    // ---- 剪贴板条目 / 图片 / 搜索链 ----
+
+    contract(
+        HostContractId.CLIPBOARD_MANAGER,
+        "剪贴板管理器类。用只属于它的两条日志文本锚定，静态自引用字段校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_MANAGER,
+            CLIPBOARD_MANAGER_ANCHORS,
+            ::hasStaticSelfField
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_MANAGER_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_ITEM,
+        "剪贴板条目（DAO 查询返回的行）。用 toString 里的字段名文本锚定，实体行形状校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_ITEM,
+            CLIPBOARD_ITEM_ANCHORS,
+            ::looksLikeEntityRow
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_ITEM_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_ENTRIES_HOST,
+        "剪贴板行 ViewHolder。用只在它体内出现的两条文本锚定，并以点击/长按接口校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_ENTRIES_HOST,
+            CLIPBOARD_ENTRIES_HOST_ANCHORS
+        ) { clazz ->
+            View.OnClickListener::class.java.isAssignableFrom(clazz) &&
+                View.OnLongClickListener::class.java.isAssignableFrom(clazz)
+        }?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_ENTRIES_HOST_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_ADAPTER,
+        "剪贴板列表 Adapter。用只在它体内出现的两条文本锚定，并以返回 RecyclerView 家族校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_ADAPTER,
+            CLIPBOARD_ADAPTER_ANCHORS,
+            ::bindsRecyclerViewHolder
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_ADAPTER_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_DAO_FACTORY,
+        "Room DAO 工厂。用宿主自己的 TAG 文本锚定，静态自引用字段校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_DAO_FACTORY,
+            listOf(CLIPBOARD_DAO_FACTORY_ANCHOR),
+            ::hasStaticSelfField
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_DAO_FACTORY_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_SCROLLVIEW,
+        "剪贴板列表容器。用宿主自己的 TAG 文本锚定，并以 View 子树 + setList(List) 校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_SCROLLVIEW,
+            listOf(CLIPBOARD_SCROLLVIEW_ANCHOR)
+        ) { clazz ->
+            View::class.java.isAssignableFrom(clazz) && takesListSetter(clazz)
+        }?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_SCROLLVIEW_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_IMAGE_CARD,
+        "图片预览卡片视图。用宿主自己的 TAG 文本锚定，并以 View 子树校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_IMAGE_CARD,
+            listOf(CLIPBOARD_IMAGE_CARD_ANCHOR)
+        ) { View::class.java.isAssignableFrom(it) }?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_IMAGE_CARD_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_PREVIEW_HOST,
+        "图片预览宿主视图。用属性名文本与 Kotlin 默认参数桩的文本锚定，并以 View 子树校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.CLIPBOARD_PREVIEW_HOST,
+            CLIPBOARD_PREVIEW_HOST_ANCHORS
+        ) { View::class.java.isAssignableFrom(it) }?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CLIPBOARD_PREVIEW_HOST_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_SCALE_INSTANCE,
+        "尺寸换算单例（dp→px）。判据是 (Integer)->int + (int)->int + ()->double 三条形状的交集"
+    ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.CLIPBOARD_SCALE_INSTANCE,
+            listOf(
+                MethodShape(listOf("java.lang.Integer"), "int"),
+                MethodShape(listOf("int"), "int"),
+                MethodShape(emptyList(), "double")
+            ),
+            ::hasStaticSelfField
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(*CLIPBOARD_SCALE_INSTANCE_CLASSES)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_SCALE_STATIC,
+        "尺寸换算静态工具（设计像素→px）。判据是 (RecyclerView,float)->int + (Context,int)->int 的交集"
+    ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.CLIPBOARD_SCALE_STATIC,
+            listOf(
+                MethodShape(listOf("androidx.recyclerview.widget.RecyclerView", "float"), "int"),
+                MethodShape(listOf("android.content.Context", "int"), "int")
+            )
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(*CLIPBOARD_SCALE_STATIC_CLASSES)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.BITMAP_UTIL,
+        "宿主位图工具。用宿主自己的 TAG 文本锚定，静态自引用单例 + (String)->boolean 校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.BITMAP_UTIL,
+            listOf(BITMAP_UTIL_ANCHOR)
+        ) { clazz ->
+            hasStaticSelfField(clazz) && clazz.declaredMethods.any { method ->
+                method.parameterTypes.size == 1 &&
+                    method.parameterTypes[0] == String::class.java &&
+                    method.returnType == Boolean::class.javaPrimitiveType
+            }
+        }?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(BITMAP_UTIL_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.VIEW_RADIUS_LAYOUT,
+        "原生圆角容器。判据是 (int)void / (float)void / (Canvas)void / (int,int,int,int)void 的交集"
+    ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.VIEW_RADIUS_LAYOUT,
+            listOf(
+                MethodShape(listOf("int"), "void"),
+                MethodShape(listOf("float"), "void"),
+                MethodShape(listOf("android.graphics.Canvas"), "void"),
+                MethodShape(listOf("int", "int", "int", "int"), "void")
+            ),
+            ::isConstraintLayoutSubclass
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(VIEW_RADIUS_LAYOUT_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.TRANSLATOR_TOP_VIEW,
+        "翻译条根视图。用排版文案与只在它体内出现的日志文本锚定，并以 ViewGroup 子树校验"
+    ) { ctx ->
+        ctx.classByDexStrings(
+            HostContractId.TRANSLATOR_TOP_VIEW,
+            TRANSLATOR_TOP_VIEW_ANCHORS
+        ) { ViewGroup::class.java.isAssignableFrom(it) }?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(TRANSLATOR_TOP_VIEW_CLASS)?.let { HostHandle(owner = it) }
+    },
+
     // ---- IME 服务 ----
 
     contract(
         HostContractId.CLIPBOARD_IME_SERVICE,
-        "微信输入法 IME 服务类。由 AndroidManifest 声明，名称不经 R8 改名"
+        "微信输入法 IME 服务类。按「InputMethodService 子树 + 只有输入法才收到的回调形状」锚定"
     ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.CLIPBOARD_IME_SERVICE,
+            listOf(
+                MethodShape(listOf("android.view.inputmethod.EditorInfo", "boolean"), "void"),
+                MethodShape(emptyList(), "android.view.View")
+            )
+        ) { InputMethodService::class.java.isAssignableFrom(it) }
+            ?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(IME_SERVICE_CLASS)?.let { HostHandle(owner = it) }
     },
 
-    contract(HostContractId.CLIPBOARD_IME_SERVICE_KICK, "提交后送交宿主编辑器的入口（仍按短名取）") { ctx ->
+    contract(
+        HostContractId.CLIPBOARD_IME_SERVICE_KICK,
+        "提交后送交宿主编辑器的入口。判据是「零参 void 且体内含宿主自己的日志串」，与短名无关"
+    ) { ctx ->
         val owner = ctx.classOf(HostContractId.CLIPBOARD_IME_SERVICE) ?: return@contract null
+        ctx.methodsByDexStrings(
+            HostContractId.CLIPBOARD_IME_SERVICE_KICK,
+            owner,
+            listOf("handleActionKey actionType:")
+        ) { parameterTypes.isEmpty() && returnType == Void.TYPE }
+            .singleOrNull()
+            ?.let {
+                ctx.winner = "dexString:${owner.simpleName}#${it.name}"
+                return@contract HostHandle(owner = owner, method = it)
+            }
         ctx.methodByNames(owner, listOf("c")) {
             parameterTypes.isEmpty() && returnType == Void.TYPE
         }?.let { HostHandle(owner = owner, method = it) }
@@ -395,16 +958,158 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
         ctx.classByNames(RESOURCE_CLASS_DRAWABLE_NAME)?.let { HostHandle(owner = it) }
     },
 
-    contract(HostContractId.RESOURCE_CLASS_ATTR, "R.attr 类（无稳定字段名锚，仍按短名）") { ctx ->
+    contract(
+        HostContractId.RESOURCE_CLASS_ATTR,
+        "R.attr 类。类名是 R8 产物、字段名不是 —— 按「声明了下面这些属性名里的至少两个」锚定"
+    ) { ctx ->
+        ctx.classByFieldCandidates(HostContractId.RESOURCE_CLASS_ATTR, RESOURCE_ATTR_MARKERS) { clazz ->
+            looksLikeResourceTable(clazz) && declaresAtLeast(clazz, RESOURCE_ATTR_MARKERS, 2)
+        }?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(RESOURCE_CLASS_ATTR_NAME)?.let { HostHandle(owner = it) }
     },
 
-    contract(HostContractId.RESOURCE_CLASS_COLOR, "R.color 类（无稳定字段名锚，仍按短名）") { ctx ->
+    contract(
+        HostContractId.RESOURCE_CLASS_COLOR,
+        "R.color 类。同上，按「声明了这些颜色名里的至少两个」锚定"
+    ) { ctx ->
+        ctx.classByFieldCandidates(HostContractId.RESOURCE_CLASS_COLOR, RESOURCE_COLOR_MARKERS) { clazz ->
+            looksLikeResourceTable(clazz) && declaresAtLeast(clazz, RESOURCE_COLOR_MARKERS, 2)
+        }?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(RESOURCE_CLASS_COLOR_NAME)?.let { HostHandle(owner = it) }
     },
 
-    contract(HostContractId.RESOURCE_CLASS_DIMEN, "R.dimen 类（无稳定字段名锚，仍按短名）") { ctx ->
+    contract(
+        HostContractId.RESOURCE_CLASS_DIMEN,
+        "R.dimen 类。同上，按「声明了这些尺寸名里的至少两个」锚定"
+    ) { ctx ->
+        ctx.classByFieldCandidates(HostContractId.RESOURCE_CLASS_DIMEN, RESOURCE_DIMEN_MARKERS) { clazz ->
+            looksLikeResourceTable(clazz) && declaresAtLeast(clazz, RESOURCE_DIMEN_MARKERS, 2)
+        }?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(RESOURCE_CLASS_DIMEN_NAME)?.let { HostHandle(owner = it) }
+    },
+
+    // ---- 整包扫描：判据要看成员之间的相互关系，DexKit 查询表达式表达不了 ----
+
+    contract(
+        HostContractId.STRIP_FLOAT_PANEL,
+        "浮窗管理类。判据是静态自引用字段 + 静态 9 参重排入口（首参就是本类），整包扫描唯一命中"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.STRIP_FLOAT_PANEL,
+            "packageScan:float",
+            listOf(FLOAT_PACKAGE),
+            ::looksLikeFloatPanel
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(*FLOAT_PANEL_CLASSES)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.STRIP_SKIN_BINDER,
+        "皮肤绑定工具类。判据是无实例字段、方法全静态，且声明了三条 View 操作形状"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.STRIP_SKIN_BINDER,
+            "packageScan:skin.utils",
+            listOf(SKIN_UTILS_PACKAGE),
+            ::looksLikeSkinBinder
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(SKIN_BINDER_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.TRANSLATOR_DROPDOWN_ITEM,
+        "下拉语言项数据类。判据是 int + String 两个实例字段、构造 (int,String)、两个零参取值方法"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.TRANSLATOR_DROPDOWN_ITEM,
+            "packageScan:translatingwhilewriting",
+            listOf(TRANSLATING_PACKAGE),
+            ::looksLikeDropdownItem
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(DROPDOWN_ITEM_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.IMAGE_PREVIEW_KEYBOARD,
+        "图片预览页键盘。判据是预览宿主的直接子类，且同时持有条目与卡片实例字段（两个类型都来自契约）"
+    ) { ctx ->
+        val previewHost = ctx.classOf(HostContractId.CLIPBOARD_PREVIEW_HOST)
+        val itemType = ctx.classOf(HostContractId.CLIPBOARD_ITEM)
+        val cardType = ctx.classOf(HostContractId.CLIPBOARD_IMAGE_CARD)
+        ctx.classByPackageScan(
+            HostContractId.IMAGE_PREVIEW_KEYBOARD,
+            "packageScan:keyboard+previewHost",
+            listOf(KEYBOARD_PACKAGE)
+        ) { looksLikeImagePreviewKeyboard(it, previewHost, itemType, cardType) }
+            ?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(PREVIEW_KEYBOARD_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.IME_EDIT_TEXT,
+        "IME 输入框。判据是 imeedittext 包里唯一的 TextView 子树，与类名无关"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.IME_EDIT_TEXT,
+            "packageScan:imeedittext",
+            listOf(IME_EDIT_TEXT_PACKAGE),
+            ::looksLikeImeEditText
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(IME_EDIT_TEXT_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.TRANSLATOR_DROPDOWN_LIST,
+        "翻译下拉列表。判据是 translatingwhilewriting 包里直接继承 RecyclerView 的那个类，整包扫描唯一命中"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.TRANSLATOR_DROPDOWN_LIST,
+            "packageScan:translatingwhilewriting+recycler",
+            listOf(TRANSLATING_PACKAGE),
+            ::looksLikeDropdownList
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(DROPDOWN_LIST_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    // ---- 第三方库与宿主工具类：包名是真实包名/稳定包名，包内按形状取 ----
+
+    contract(
+        HostContractId.GLIDE_ENTRY,
+        "Glide 入口类。判据是 com.bumptech.glide 包里的单例 + 静态 (Context) -> RequestManager"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.GLIDE_ENTRY,
+            "packageScan:glide",
+            listOf(GLIDE_PACKAGE)
+        ) { GlideShape.looksLikeGlideEntry(it, Context::class.java) }
+            ?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(GLIDE_ENTRY_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.HOST_CRYPTO_FILE,
+        "宿主文件解密工具。判据是 ([B,String)->[B 与 (String,String,String)->boolean 两条静态方法同在一类"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.HOST_CRYPTO_FILE,
+            "packageScan:k6+crypto",
+            listOf(CRYPTO_PACKAGE),
+            ::looksLikeFileCrypto
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(CRYPTO_FILE_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.HOST_HASH_FILE,
+        "宿主文件摘要工具。判据是 (File)->String、(File,int)->String、(String)->String 三条静态方法同在一类"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.HOST_HASH_FILE,
+            "packageScan:k6+hash",
+            listOf(CRYPTO_PACKAGE),
+            ::looksLikeFileHash
+        )?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(HASH_FILE_CLASS)?.let { HostHandle(owner = it) }
     }
 )
 

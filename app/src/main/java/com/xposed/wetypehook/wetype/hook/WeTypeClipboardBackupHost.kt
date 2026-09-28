@@ -13,6 +13,7 @@ import com.xposed.wetypehook.wetype.clipboard.BackupManifest
 import com.xposed.wetypehook.wetype.clipboard.BackupTextItem
 import com.xposed.wetypehook.wetype.clipboard.ClipboardBackupArchive
 import com.xposed.wetypehook.wetype.clipboard.ClipboardBackupMergeLogic
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -560,12 +561,9 @@ internal object WeTypeClipboardBackupHost {
         val method = if (cached != null && cached.declaringClass == item.javaClass) {
             cached
         } else {
-            item.javaClass.declaredMethods.firstOrNull {
-                it.name == "a" && it.parameterTypes.isEmpty() && it.returnType == String::class.java
-            }?.apply {
-                isAccessible = true
-                contentAccessor = this
-            }
+            pickHostMethod(item.javaClass, "a") {
+                it.parameterTypes.isEmpty() && it.returnType == String::class.java
+            }?.apply { contentAccessor = this }
         }
         return runCatching { method?.invoke(item) as? String }.getOrNull()
     }

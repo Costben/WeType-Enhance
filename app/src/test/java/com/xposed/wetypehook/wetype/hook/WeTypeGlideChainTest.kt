@@ -194,6 +194,28 @@ class WeTypeGlideChainTest {
     }
 
     @Test
+    fun `RequestListener 接口由构建器形状反推, 不必先知道接口名`() {
+        val derived = WeTypeGlideChain.resolveListenerInterface(FakeBuilder::class.java)
+        assertEquals(FakeRequestListener::class.java, derived)
+    }
+
+    @Test
+    fun `持有器与构建器工厂都能在不知道 RequestListener 时解析`() {
+        val manager = WeTypeGlideChain.resolveManager(FakeGlide::class.java, FakeContext::class.java)
+        assertNotNull("静态 (Context) -> RequestManager 应当命中", manager)
+        assertEquals("不能把 get / retriever 当成 RequestManager", "with", manager!!.name)
+        assertEquals(FakeManager::class.java, manager.returnType)
+
+        val factory = WeTypeGlideChain.resolveBuilderFactory(FakeManager(), File::class.java)
+        assertNotNull("应当挑到能给出 File 转码的那一个", factory)
+        val builder = factory!!.invoke(FakeManager())
+        assertTrue(
+            "选中的构建器转码类型必须是 File",
+            WeTypeGlideChain.transcodeTypes(builder).any { it == File::class.java }
+        )
+    }
+
+    @Test
     fun `启动按无参返回接口与 int,int 同返回类型配对, 不依赖两个重载同名`() {
         val start = WeTypeGlideChain.resolveStart(FakeBuilder::class.java)
         assertNotNull("R8 下 submit 与 submit(int,int) 短名不同，仍必须命中", start)

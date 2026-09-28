@@ -13,6 +13,9 @@ import android.view.ViewGroup
 import android.widget.HorizontalScrollView
 import android.widget.TextView
 import com.xposed.wetypehook.wetype.clipboard.ClipboardSearchEngine
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookAfter
 import java.lang.reflect.Method
@@ -329,8 +332,8 @@ internal object WeTypeClipboardSearchFilter {
     private fun invokeAdapterRefresh(scrollView: Any) {
         try {
             val adapter = resolveAdapter(scrollView) ?: return
-            val refresh = adapter.javaClass.declaredMethods.firstOrNull { m ->
-                m.name == "y" && m.parameterTypes.isEmpty()
+            val refresh = pickHostMethod(adapter.javaClass, "y") { m ->
+                m.parameterTypes.isEmpty() && m.returnType == Void.TYPE
             } ?: run {
                 AndroidLog.e(TAG, "adapter y() not found on ${adapter.javaClass.name}")
                 return
@@ -385,7 +388,8 @@ internal object WeTypeClipboardSearchFilter {
     // ---- 高亮（onBindViewHolder 后处理，主线程碰 View） ----
 
     private fun hookSetList(classLoader: ClassLoader) {
-        val scrollClass = Class.forName(SCROLLVIEW_CLASS, false, classLoader)
+        val scrollClass = resolveClipboardScrollView(classLoader)
+            ?: throw ClassNotFoundException(SCROLLVIEW_CLASS)
         var count = 0
         for (method in scrollClass.declaredMethods) {
             if (method.name != "setList") continue
@@ -410,9 +414,7 @@ internal object WeTypeClipboardSearchFilter {
     }
 
     private fun hookBind(classLoader: ClassLoader) {
-        val adapterClass = runCatching {
-            Class.forName(ADAPTER_CLASS, false, classLoader)
-        }.getOrNull() ?: run {
+        val adapterClass = resolveClipboardAdapter(classLoader) ?: run {
             AndroidLog.e(TAG, "clipboard adapter class not found, skip highlight hook")
             return
         }
@@ -632,8 +634,8 @@ internal object WeTypeClipboardSearchFilter {
                 // S7o：装机版 C.getType 改名（NoSuchMethod 导致全保留、过滤无事
                 // 发生）。jadx 354 批注 `renamed from: q` + 真机普查 q():long=0
                 // 在文本条目上吻合 type==0，三重印证，直接绑 q。
-                m = item.javaClass.declaredMethods.firstOrNull { c ->
-                    c.name == "q" && c.parameterTypes.isEmpty() &&
+                m = pickHostMethod(item.javaClass, "q") { c ->
+                    c.parameterTypes.isEmpty() &&
                         (c.returnType == Long::class.javaPrimitiveType ||
                             c.returnType == Long::class.java ||
                             c.returnType == Int::class.javaPrimitiveType ||
@@ -667,8 +669,8 @@ internal object WeTypeClipboardSearchFilter {
             if (m == null || m.declaringClass != item.javaClass) {
                 // S7o：同上，content 绑 a()（普查 a() 即条目正文，三重印证）。
                 // 绑不上返回 null，调用方保留条目。
-                m = item.javaClass.declaredMethods.firstOrNull { c ->
-                    c.name == "a" && c.parameterTypes.isEmpty() &&
+                m = pickHostMethod(item.javaClass, "a") { c ->
+                    c.parameterTypes.isEmpty() &&
                         c.returnType == String::class.java
                 }
                 if (m == null) {
@@ -685,4 +687,17 @@ internal object WeTypeClipboardSearchFilter {
             return null
         }
     }
+
+    /** 契约优先、写死的短名兜底。契约解析出来的 Class 自带宿主 ClassLoader。 */
+    private fun resolveClipboardScrollView(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_SCROLLVIEW) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(SCROLLVIEW_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolveClipboardAdapter(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_ADAPTER) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(ADAPTER_CLASS, false, it) }.getOrNull()
+            }
 }

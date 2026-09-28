@@ -1,14 +1,16 @@
 package com.xposed.wetypehook.wetype.hook
 
+import com.xposed.wetypehook.wetype.host.GlideShape
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 /**
  * Glide 图片下载链的结构化解析。
  *
- * 只把入口类名（`com.bumptech.glide.c`、RequestListener 接口）当定位起点，链上每一步都按
- * 方法形状 + 返回值自校验定位，方法名只在多个同形候选之间做优先排序。宿主 R8 重排方法名
- * 时（4.0.0 的 `L0/G0/Q0` 与 3.5.4 是同一组形状、不同短名）整条链仍然成立。
+ * 链上每一步都按方法形状 + 返回值自校验定位，方法名只在多个同形候选之间做优先排序。
+ * 入口类与 RequestListener 接口同样按形状认（见 [GlideShape]），
+ * 只在结构锚失效时才退回写死的混淆名。宿主 R8 重排名字时（4.0.0 的 `L0/G0/Q0` 与 3.5.4
+ * 是同一组形状、不同短名）整条链仍然成立。
  */
 internal object WeTypeGlideChain {
 
@@ -22,18 +24,9 @@ internal object WeTypeGlideChain {
     private fun prefer(candidates: List<Method>, nameHint: String): Method? =
         candidates.firstOrNull { it.name == nameHint } ?: candidates.minByOrNull { it.name }
 
-    fun hierarchy(cls: Class<*>): List<Class<*>> {
-        val out = ArrayList<Class<*>>(8)
-        var current: Class<*>? = cls
-        while (current != null && current != Any::class.java) {
-            out.add(current)
-            current = current.superclass
-        }
-        return out
-    }
+    fun hierarchy(cls: Class<*>): List<Class<*>> = GlideShape.hierarchy(cls)
 
-    fun declaredInHierarchy(cls: Class<*>): List<Method> =
-        hierarchy(cls).flatMap { it.declaredMethods.asIterable() }
+    fun declaredInHierarchy(cls: Class<*>): List<Method> = GlideShape.declaredInHierarchy(cls)
 
     /** Glide 持有器：静态、单参 Context、返回类型具备 RequestManager 指纹。 */
     fun resolveManager(
@@ -75,6 +68,46 @@ internal object WeTypeGlideChain {
                 it.returnType != Any::class.java && relatedTo(cls, it.returnType)
         }
         return loads && listens
+    }
+
+    // ---- 不依赖已知类名的形状：入口类、RequestListener 接口（判据在 [GlideShape]） ----
+
+    /**
+     * RequestListener 接口（从 RequestBuilder 反推）：单参、参数是接口、返回自身类型族。
+     *
+     * 只在 [GlideShape.looksLikeRequestBuilder] 已经确认过构建器时调用，所以这里不必再挑名字。
+     */
+    fun resolveListenerInterface(builderClass: Class<*>): Class<*>? =
+        declaredInHierarchy(builderClass).firstOrNull {
+            !Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 1 &&
+                it.parameterTypes[0].isInterface && GlideShape.looksLikeRequestListener(it.parameterTypes[0]) &&
+                it.returnType != Any::class.java && relatedTo(builderClass, it.returnType)
+        }?.parameterTypes?.get(0)
+
+    /** [resolveManager] 的不依赖 RequestListener 版本：按 RequestManager 形状认。 */
+    fun resolveManager(glideClass: Class<*>, contextType: Class<*>): Method? {
+        val candidates = glideClass.declaredMethods.filter {
+            Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 1 &&
+                it.parameterTypes[0] == contextType && GlideShape.looksLikeRequestManager(it.returnType)
+        }
+        return prefer(candidates, MANAGER_NAME_HINT)?.apply { isAccessible = true }
+    }
+
+    /**
+     * [resolveBuilderFactory] 的不依赖 RequestListener 版本：逐个同形候选真调用一次，
+     * 读回构建器自声明的转码类型，只有等于 [fileType] 的才算命中。
+     */
+    fun resolveBuilderFactory(manager: Any, fileType: Class<*>): Method? {
+        val candidates = declaredInHierarchy(manager.javaClass).filter {
+            !Modifier.isStatic(it.modifiers) && it.parameterTypes.isEmpty() &&
+                it.returnType != Void.TYPE && GlideShape.looksLikeRequestBuilder(it.returnType)
+        }.sortedBy { if (it.name == BUILDER_NAME_HINT) 0 else 1 }
+        for (method in candidates) {
+            method.isAccessible = true
+            val builder = runCatching { method.invoke(manager) }.getOrNull() ?: continue
+            if (transcodeTypes(builder).any { it == fileType }) return method
+        }
+        return null
     }
 
     /**
@@ -139,7 +172,7 @@ internal object WeTypeGlideChain {
 
     /** 返回值与自身同类族（自身、子类、或覆写前的父类型）都算相关。 */
     private fun relatedTo(cls: Class<*>, returnType: Class<*>): Boolean =
-        cls.isAssignableFrom(returnType) || returnType.isAssignableFrom(cls)
+        GlideShape.relatedTo(cls, returnType)
 
     /**
      * 启动请求：无参、返回接口，且同一类族里存在 `(int, int)` 重载返回同一接口。

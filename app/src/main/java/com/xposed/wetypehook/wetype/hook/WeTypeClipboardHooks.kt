@@ -1,6 +1,8 @@
 package com.xposed.wetypehook.wetype.hook
 
 import com.xposed.wetypehook.wetype.host.HOST_PACKAGE
+import com.xposed.wetypehook.wetype.host.pickHostField
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.ProceedWithOriginal
@@ -243,12 +245,18 @@ internal object WeTypeClipboardHooks {
 
             val targetClass = classLoader.loadClass(classData.name)
             val staticFields = targetClass.declaredFields.filter { Modifier.isStatic(it.modifiers) }
-            val instanceField = staticFields.firstOrNull { it.name == "g" }
-                ?: staticFields.firstOrNull { field ->
-                    field.isAccessible = true
-                    val obj: Any = runCatching { field.get(null) }.getOrNull() ?: return@firstOrNull false
-                    obj.javaClass.declaredFields.any { it.type == java.lang.Long.TYPE && !Modifier.isStatic(it.modifiers) }
+            val holdsRetentionInstance: (Field) -> Boolean = { field ->
+                field.isAccessible = true
+                val obj: Any? = runCatching { field.get(null) }.getOrNull()
+                obj != null && obj.javaClass.declaredFields.any {
+                    it.type == java.lang.Long.TYPE && !Modifier.isStatic(it.modifiers)
                 }
+            }
+            val instanceField = pickHostField(targetClass, "g") {
+                Modifier.isStatic(it.modifiers) && holdsRetentionInstance(it)
+            }
+                ?: staticFields.firstOrNull { it.name == "g" }
+                ?: staticFields.firstOrNull(holdsRetentionInstance)
 
             if (instanceField == null) {
                 Log.e("[$TAG] Failed to locate retention instance field")
@@ -353,9 +361,8 @@ internal object WeTypeClipboardHooks {
 
     private fun isItemImage(item: Any): Boolean {
         return runCatching {
-            val typeM = item.javaClass.declaredMethods.firstOrNull {
-                (it.name == "i" || it.name == "getType") &&
-                    it.parameterTypes.isEmpty() &&
+            val typeM = pickHostMethod(item.javaClass, "i", "getType") {
+                it.parameterTypes.isEmpty() &&
                     (it.returnType == Int::class.javaPrimitiveType || it.returnType == Long::class.javaPrimitiveType)
             }
             if (typeM != null) {

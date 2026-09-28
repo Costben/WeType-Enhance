@@ -15,6 +15,8 @@ import android.widget.ImageView
 import android.widget.TextView
 import com.xposed.wetypehook.wetype.clipboard.ClipboardImageEntryLogic
 import com.xposed.wetypehook.wetype.clipboard.ClipboardImageRowState
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookBefore
 import java.io.File
@@ -426,7 +428,8 @@ internal object WeTypeClipboardImageEntries {
     // ---- 点击路由（禁止图片条目直接粘贴） ----
 
     private fun hookHolderClick(classLoader: ClassLoader) {
-        val holderClass = Class.forName(Z_CLASS, false, classLoader)
+        val holderClass = resolveEntriesHost(classLoader)
+            ?: throw ClassNotFoundException(Z_CLASS)
         var count = 0
         for (method in holderClass.declaredMethods) {
             if (method.name != "onClick") continue
@@ -485,4 +488,11 @@ internal object WeTypeClipboardImageEntries {
         }
         return null
     }
+
+    /** 契约优先、写死的短名兜底。契约解析出来的 Class 自带宿主 ClassLoader。 */
+    private fun resolveEntriesHost(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_ENTRIES_HOST) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(Z_CLASS, false, it) }.getOrNull()
+            }
 }

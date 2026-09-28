@@ -6,6 +6,7 @@ import android.view.View
 import com.xposed.wetypehook.wetype.host.HostContractId
 import com.xposed.wetypehook.wetype.host.HostResources
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import java.lang.reflect.Field
@@ -21,6 +22,8 @@ import java.util.concurrent.ConcurrentHashMap
  *   f()=id、z(String)=setPath、A(int)=setPathType；
  * - 尺寸换算类 3.5.3=`...utils.m1`、3.5.4=`...utils.n1`（实例单例 + l0(Integer)）；
  *   原始设计 px 换算 3.5.3=`...utils.q1.e0`、3.5.4=`...utils.r1.e0`（静态）；
+ *   两条都先走 HostContract（`clipboard.scale.instance` / `clipboard.scale.static`），
+ *   下面的候选表只作兜底，取类后仍按 l0/e0 形状复核。
  * - 面板枚举二进制名一致 `...keyboard.t`（含 ImagePreview(509)）；
  * - 面板导航：3.5.4 上 `(面板枚举, Bundle) -> void` 命中的是 `N#o3`
  *   （`N#t3` 形状相同但语义是切键盘，不在候选表内、不能选它）；
@@ -40,11 +43,17 @@ internal object WeTypeClipboardImageHost {
     private const val N_CLASS = "com.tencent.wetype.plugin.hld.model.N"
     private const val CLIPBOARD_ITEM_CLASS = "com.tencent.wetype.plugin.hld.clipboard.C"
     private const val IMAGE_CARD_CLASS = "com.tencent.wetype.plugin.hld.keyboard.k"
+    private const val PREVIEW_HOST_CLASS = "com.tencent.wetype.plugin.hld.keyboard.l"
+    private const val PREVIEW_KEYBOARD_CLASS =
+        "com.tencent.wetype.plugin.hld.keyboard.S33ImagePreviewKeyboard"
 
+    /** 尺寸换算单例的候选短名（`clipboard.scale.instance` 契约失效时的最后手段）。 */
     private val SCALE_INSTANCE_CLASSES = arrayOf(
         "com.tencent.wetype.plugin.hld.utils.n1",
         "com.tencent.wetype.plugin.hld.utils.m1"
     )
+
+    /** 原始像素换算静态工具的候选短名（`clipboard.scale.static` 契约失效时的最后手段）。 */
     private val RAW_SCALE_CLASSES = arrayOf(
         "com.tencent.wetype.plugin.hld.utils.r1",
         "com.tencent.wetype.plugin.hld.utils.q1"
@@ -138,7 +147,8 @@ internal object WeTypeClipboardImageHost {
         if (installed) return true
         hostClassLoader = classLoader
         return try {
-            itemClass = Class.forName(CLIPBOARD_ITEM_CLASS, false, classLoader)
+            itemClass = resolveClipboardItem(classLoader)
+                ?: throw ClassNotFoundException(CLIPBOARD_ITEM_CLASS)
             resolveIds(classLoader)
             runCatching { hookImagePreviewBack(classLoader) }
                 .onFailure { AndroidLog.e(TAG, "image preview back hook failed: ${it.message}") }
@@ -160,14 +170,14 @@ internal object WeTypeClipboardImageHost {
      * 由于剪贴板页只是被隐藏、未被销毁，返回后保留原滚动位置。
      */
     private fun hookImagePreviewBack(classLoader: ClassLoader) {
-        val previewClass = Class.forName(
-            "com.tencent.wetype.plugin.hld.keyboard.S33ImagePreviewKeyboard", false, classLoader
-        )
-        val baseClass = Class.forName(
-            "com.tencent.wetype.plugin.hld.keyboard.l", false, classLoader
-        )
-        val backMethod = baseClass.declaredMethods.firstOrNull {
-            it.name == "B0" && it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
+        val previewClass = resolvePreviewKeyboard(classLoader) ?: run {
+            AndroidLog.e(TAG, "image preview keyboard class missing")
+            return
+        }
+        val baseClass = resolvePreviewHost(classLoader)
+            ?: throw ClassNotFoundException(PREVIEW_HOST_CLASS)
+        val backMethod = pickHostMethod(baseClass, "B0") {
+            it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
         } ?: run {
             AndroidLog.e(TAG, "image preview back method missing (keyboard.l#B0)")
             return
@@ -195,9 +205,10 @@ internal object WeTypeClipboardImageHost {
      * 系统相册 `Pictures/WeType`（MediaStore），即宿主原有路径。
      */
     private fun hookImagePreviewSaveAction(classLoader: ClassLoader) {
-        val cardClass = Class.forName(IMAGE_CARD_CLASS, false, classLoader)
-        val bindMethod = cardClass.declaredMethods.firstOrNull {
-            it.name == "e" && it.returnType == Void.TYPE &&
+        val cardClass = resolveImageCard(classLoader)
+            ?: throw ClassNotFoundException(IMAGE_CARD_CLASS)
+        val bindMethod = pickHostMethod(cardClass, "e") {
+            it.returnType == Void.TYPE &&
                 it.parameterTypes.size == 3 &&
                 it.parameterTypes[1] == String::class.java &&
                 it.parameterTypes[2] == Boolean::class.javaPrimitiveType
@@ -205,8 +216,8 @@ internal object WeTypeClipboardImageHost {
             AndroidLog.e(TAG, "image preview card bind method missing (keyboard.k#e)")
             return
         }
-        val refreshMethod = cardClass.declaredMethods.firstOrNull {
-            it.name == "c" && it.returnType == Void.TYPE &&
+        val refreshMethod = pickHostMethod(cardClass, "c") {
+            it.returnType == Void.TYPE &&
                 it.parameterTypes.size == 1 &&
                 it.parameterTypes[0] == Boolean::class.javaPrimitiveType
         } ?: run {
@@ -274,11 +285,10 @@ internal object WeTypeClipboardImageHost {
     }
 
     private fun resolveScaleHandles(classLoader: ClassLoader) {
-        for (name in SCALE_INSTANCE_CLASSES) {
-            val cls = runCatching { Class.forName(name, false, classLoader) }.getOrNull() ?: continue
+        for (cls in scaleCandidates(HostContractId.CLIPBOARD_SCALE_INSTANCE, SCALE_INSTANCE_CLASSES, classLoader)) {
             val instance = staticSelfInstance(cls) ?: continue
-            val l0 = cls.declaredMethods.firstOrNull {
-                it.name == "l0" && it.parameterTypes.size == 1 &&
+            val l0 = pickHostMethod(cls, "l0") {
+                it.parameterTypes.size == 1 &&
                     (it.parameterTypes[0] == Integer::class.java || it.parameterTypes[0] == Int::class.javaPrimitiveType) &&
                     (it.returnType == Int::class.javaPrimitiveType || it.returnType == Integer::class.java)
             } ?: continue
@@ -287,10 +297,9 @@ internal object WeTypeClipboardImageHost {
             scaleL0Method = l0
             break
         }
-        for (name in RAW_SCALE_CLASSES) {
-            val cls = runCatching { Class.forName(name, false, classLoader) }.getOrNull() ?: continue
-            val e0 = cls.declaredMethods.firstOrNull {
-                it.name == "e0" && Modifier.isStatic(it.modifiers) &&
+        for (cls in scaleCandidates(HostContractId.CLIPBOARD_SCALE_STATIC, RAW_SCALE_CLASSES, classLoader)) {
+            val e0 = pickHostMethod(cls, "e0") {
+                Modifier.isStatic(it.modifiers) &&
                     (it.parameterTypes.size == 1) &&
                     (it.parameterTypes[0] == Int::class.javaPrimitiveType || it.parameterTypes[0] == Integer::class.java) &&
                     (it.returnType == Int::class.javaPrimitiveType || it.returnType == Integer::class.java)
@@ -302,6 +311,21 @@ internal object WeTypeClipboardImageHost {
         if (scaleL0Method == null || rawScaleMethod == null) {
             AndroidLog.e(TAG, "scale handles missing: l0=${scaleL0Method != null} e0=${rawScaleMethod != null}")
         }
+    }
+
+    /**
+     * 取一组「先契约、后短名表」的候选类。
+     *
+     * 契约类排在最前，命中即先复核形状；契约没解析出来（DexKit 不可用或判据不唯一）才逐条试
+     * 写死的短名 —— 与改动前的行为逐字一致。
+     */
+    private fun scaleCandidates(id: String, names: Array<String>, classLoader: ClassLoader): List<Class<*>> {
+        val classes = LinkedHashSet<Class<*>>()
+        WeTypeHostContracts.classOf(id)?.let { classes.add(it) }
+        for (name in names) {
+            runCatching { Class.forName(name, false, classLoader) }.getOrNull()?.let { classes.add(it) }
+        }
+        return classes.toList()
     }
 
     private fun resolveNavigation(classLoader: ClassLoader) {
@@ -348,6 +372,33 @@ internal object WeTypeClipboardImageHost {
             field.get(null)
         }.getOrNull()
     }
+
+    /**
+     * 契约优先、写死的短名兜底。契约解析出来的 Class 自带宿主 ClassLoader，不用再传 loader。
+     */
+    private fun resolveClipboardItem(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_ITEM) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(CLIPBOARD_ITEM_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolveImageCard(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_IMAGE_CARD) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(IMAGE_CARD_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolvePreviewHost(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_PREVIEW_HOST) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(PREVIEW_HOST_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolvePreviewKeyboard(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.IMAGE_PREVIEW_KEYBOARD) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(PREVIEW_KEYBOARD_CLASS, false, it) }.getOrNull()
+            }
 
     fun openImagePreview(item: Any): Boolean {
         return try {

@@ -7,6 +7,9 @@ import android.os.SystemClock
 import android.util.Log as AndroidLog
 import com.xposed.wetypehook.wetype.clipboard.ClipboardImageEntryLogic
 import com.xposed.wetypehook.wetype.clipboard.ClipboardRemoteImagePayload
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
+import com.xposed.wetypehook.wetype.host.pickHostMethod
 import java.io.File
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -18,27 +21,29 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 /**
- * 跨设备图片后台下载/解密落盘管线（复用宿主 Glide + k6.a AES 解密 + B.P 持久化）。
+ * 跨设备图片后台下载/解密落盘管线（复用宿主 Glide + 宿主 AES 解密工具 + B.P 持久化）。
  *
  * 宿主同款链路（3.5.4 与 4.0.0 逐指令一致）：
  * 1. path 含 "version" 时为 JSON：{key, md5, path(原图 URL)}；
- * 2. `com.bumptech.glide.c.u(context).r().L0(url).G0(listener).Q0()`；
+ * 2. `Glide 入口.u(context).r().L0(url).G0(listener).Q0()`；
  * 3. onResourceReady(File) 后 `k6.a.b(key, 下载文件, 目标文件)` AES/CTR 解密；
  * 4. `k6.e.d(目标文件)` 与 md5 比对；
  * 5. heic/heif 经 `com.tencent.wetype.plugin.hld.utils.e` 转 jpeg；
  * 6. `clipboard.B.P(id, path, Continuation)` 持久化，成功后回写内存 C 的 path/pathType。
  *
- * 第 2 步的短名随 R8 重排（4.0.0 由 `M0/H0/R0` 变成 `L0/G0/Q0`），所以整条链交给
- * [WeTypeGlideChain] 按方法形状定位，这里只保留两个稳定的入口类名。
+ * 链上的短名随 R8 重排（4.0.0 由 `M0/H0/R0` 变成 `L0/G0/Q0`），所以整条链交给
+ * [WeTypeGlideChain] 按方法形状定位；Glide 入口类、RequestListener 接口、两个 `k6` 工具类
+ * 也都走契约层的形状锚，写死短名只在结构锚失效时兜底。
  */
 internal object WeTypeClipboardImageLoader {
 
     private const val TAG = WeTypeClipboardImageHost.TAG
 
-    private const val GLIDE_CLASS = "com.bumptech.glide.c"
+    /** 入口类的历史短名；正常路径走契约层的形状锚，这几个只在结构锚失效时兜底。 */
+    private const val GLIDE_ENTRY_CLASS = "com.bumptech.glide.c"
     private const val LISTENER_INTERFACE = "q1.h"
-    private const val DECRYPT_CLASS = "k6.a"
-    private const val MD5_CLASS = "k6.e"
+    private const val CRYPTO_CLASS = "k6.a"
+    private const val HASH_CLASS = "k6.e"
     private const val WX_IME_UTIL_CLASS = "com.tencent.wetype.plugin.hld.utils.WxImeUtil"
     private const val BITMAP_UTIL_CLASS = "com.tencent.wetype.plugin.hld.utils.e"
     private const val CLIPBOARD_MGR_CLASS = "com.tencent.wetype.plugin.hld.clipboard.B"
@@ -123,20 +128,17 @@ internal object WeTypeClipboardImageLoader {
     fun install(classLoader: ClassLoader): Boolean {
         hostClassLoader = classLoader
         return try {
-            val listener = Class.forName(LISTENER_INTERFACE, false, classLoader)
-            listenerInterface = listener
-            val glide = Class.forName(GLIDE_CLASS, false, classLoader)
-            glideWith = WeTypeGlideChain.resolveManager(glide, Context::class.java, listener)
-            val decrypt = Class.forName(DECRYPT_CLASS, false, classLoader)
-            decryptMethod = decrypt.declaredMethods.firstOrNull {
+            val glide = resolveGlideEntry(classLoader)
+                ?: throw ClassNotFoundException(GLIDE_ENTRY_CLASS)
+            glideWith = WeTypeGlideChain.resolveManager(glide, Context::class.java)
+            decryptMethod = resolveCryptoClass(classLoader)?.declaredMethods?.firstOrNull {
                 Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 3 &&
                     it.parameterTypes[0] == String::class.java &&
                     it.parameterTypes[1] == String::class.java &&
                     it.parameterTypes[2] == String::class.java &&
                     (it.returnType == Boolean::class.javaPrimitiveType || it.returnType == Boolean::class.java)
             }?.apply { isAccessible = true }
-            val md5 = Class.forName(MD5_CLASS, false, classLoader)
-            md5Method = md5.declaredMethods.firstOrNull {
+            md5Method = resolveHashClass(classLoader)?.declaredMethods?.firstOrNull {
                 Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 1 &&
                     it.parameterTypes[0] == String::class.java && it.returnType == String::class.java
             }?.apply { isAccessible = true }
@@ -151,6 +153,45 @@ internal object WeTypeClipboardImageLoader {
             AndroidLog.e(TAG, "image loader install failed: ${t.message}")
             false
         }
+    }
+
+    /** Glide 入口类：契约优先（`com.bumptech.glide` 包内按形状认），写死短名兜底。 */
+    private fun resolveGlideEntry(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.GLIDE_ENTRY) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(GLIDE_ENTRY_CLASS, false, it) }.getOrNull()
+            }
+
+    /** 宿主文件解密工具：契约优先，写死短名兜底。 */
+    private fun resolveCryptoClass(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.HOST_CRYPTO_FILE) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(CRYPTO_CLASS, false, it) }.getOrNull()
+            }
+
+    /** 宿主文件摘要工具：契约优先，写死短名兜底。 */
+    private fun resolveHashClass(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.HOST_HASH_FILE) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(HASH_CLASS, false, it) }.getOrNull()
+            }
+
+    /**
+     * RequestListener 接口：先按形状从 RequestBuilder 反推，失败才退回写死的 `q1.h`。
+     *
+     * 反推成功即缓存，同一条链后续不再重算。
+     */
+    private fun resolveListenerInterface(builderClass: Class<*>): Class<*>? {
+        listenerInterface?.let { return it }
+        val resolved = WeTypeGlideChain.resolveListenerInterface(builderClass)
+            ?: hostClassLoader?.let {
+                runCatching { Class.forName(LISTENER_INTERFACE, false, it) }.getOrNull()
+            }
+        if (resolved != null) {
+            listenerInterface = resolved
+            AndroidLog.i(TAG, "glide listener interface: ${resolved.name}")
+        }
+        return resolved
     }
 
     @Volatile
@@ -177,10 +218,10 @@ internal object WeTypeClipboardImageLoader {
         x1Extension = resolveTempPathExtension(classLoader)
         val util = runCatching { Class.forName(WX_IME_UTIL_CLASS, false, classLoader) }.getOrNull() ?: return
         wxImeUtil = staticSelfInstance(util)
-        wxImeUtilX = util.declaredMethods.firstOrNull {
-            it.name == "X" && it.parameterTypes.size == 1 &&
+        wxImeUtilX = pickHostMethod(util, "X") {
+            it.parameterTypes.size == 1 &&
                 it.parameterTypes[0] == String::class.java && it.returnType == String::class.java
-        }?.apply { isAccessible = true } ?: util.declaredMethods.firstOrNull {
+        } ?: util.declaredMethods.firstOrNull {
             it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java &&
                 it.returnType == String::class.java
         }?.apply { isAccessible = true }
@@ -203,19 +244,19 @@ internal object WeTypeClipboardImageLoader {
     }
 
     private fun resolveBitmapUtil(classLoader: ClassLoader) {
-        val util = runCatching { Class.forName(BITMAP_UTIL_CLASS, false, classLoader) }.getOrNull() ?: return
+        val util = resolveBitmapUtilClass(classLoader) ?: return
         bitmapUtil = staticSelfInstance(util)
-        bitmapUtilIsHeic = util.declaredMethods.firstOrNull {
-            it.name == "a" && it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java &&
+        bitmapUtilIsHeic = pickHostMethod(util, "a") {
+            it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java &&
                 (it.returnType == Boolean::class.javaPrimitiveType || it.returnType == Boolean::class.java)
-        }?.apply { isAccessible = true } ?: util.declaredMethods.firstOrNull {
+        } ?: util.declaredMethods.firstOrNull {
             it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java &&
                 (it.returnType == Boolean::class.javaPrimitiveType || it.returnType == Boolean::class.java)
         }?.apply { isAccessible = true }
-        bitmapUtilTranscode = util.declaredMethods.firstOrNull {
-            it.name == "b" && it.parameterTypes.size == 2 && it.parameterTypes[0] == String::class.java &&
+        bitmapUtilTranscode = pickHostMethod(util, "b") {
+            it.parameterTypes.size == 2 && it.parameterTypes[0] == String::class.java &&
                 isContinuationType(it.parameterTypes[1])
-        }?.apply { isAccessible = true } ?: util.declaredMethods.firstOrNull {
+        } ?: util.declaredMethods.firstOrNull {
             it.parameterTypes.size == 2 && it.parameterTypes[0] == String::class.java &&
                 isContinuationType(it.parameterTypes[1])
         }?.apply { isAccessible = true }
@@ -228,7 +269,7 @@ internal object WeTypeClipboardImageLoader {
     }
 
     private fun resolvePersistHandle(classLoader: ClassLoader) {
-        val mgr = runCatching { Class.forName(CLIPBOARD_MGR_CLASS, false, classLoader) }.getOrNull() ?: return
+        val mgr = resolveClipboardManager(classLoader) ?: return
         clipboardMgr = staticSelfInstance(mgr)
         val persistMatch: (Method) -> Boolean = {
             !Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 3 &&
@@ -236,9 +277,8 @@ internal object WeTypeClipboardImageLoader {
                 it.parameterTypes[1] == String::class.java &&
                 isContinuationType(it.parameterTypes[2])
         }
-        clipboardPersistPath = mgr.declaredMethods.firstOrNull {
-            it.name == "P" && persistMatch(it)
-        }?.apply { isAccessible = true } ?: mgr.declaredMethods.firstOrNull(persistMatch)?.apply { isAccessible = true }
+        clipboardPersistPath = pickHostMethod(mgr, "P") { persistMatch(it) }
+            ?: mgr.declaredMethods.firstOrNull(persistMatch)?.apply { isAccessible = true }
     }
 
     private fun staticSelfInstance(cls: Class<*>): Any? {
@@ -250,6 +290,22 @@ internal object WeTypeClipboardImageLoader {
             field.get(null)
         }.getOrNull()
     }
+
+    /**
+     * 宿主位图工具：契约优先、写死的短名兜底（与 [WeTypeTempPath.resolve] 同一分工 ——
+     * 结构判据在契约层，这里只负责取类）。
+     */
+    private fun resolveBitmapUtilClass(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.BITMAP_UTIL) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(BITMAP_UTIL_CLASS, false, it) }.getOrNull()
+            }
+
+    private fun resolveClipboardManager(classLoader: ClassLoader?): Class<*>? =
+        runCatching { WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_MANAGER) }.getOrNull()
+            ?: classLoader?.let {
+                runCatching { Class.forName(CLIPBOARD_MGR_CLASS, false, it) }.getOrNull()
+            }
 
     /**
      * 触发一次后台下载；同一 id 去重，失败 30s 内不重试（支持 [forceRetry] 强制重试）。
@@ -289,6 +345,10 @@ internal object WeTypeClipboardImageLoader {
         onUpdated: (Any) -> Unit
     ) {
         val output = makeOutputPath(context, id, WeTypeClipboardImageHost.itemPath(item) ?: "")
+        val manager = glideWith?.invoke(null, context) ?: error("Glide.with unavailable")
+        val builder = resolveBuilder(manager)
+        // 先解析链：RequestListener 接口是从构建器形状反推出来的，必须在造监听器之前就位。
+        val chain = resolveChain(builder.javaClass)
         val listener = createListener(
             onReady = { file ->
                 executor.execute {
@@ -312,9 +372,6 @@ internal object WeTypeClipboardImageLoader {
                 AndroidLog.e(TAG, "image download failed id=$id url=${payload.url}")
             }
         )
-        val manager = glideWith?.invoke(null, context) ?: error("Glide.with unavailable")
-        val builder = resolveBuilder(manager)
-        val chain = resolveChain(builder.javaClass)
         val loaded = chain.load.invoke(builder, payload.url) ?: error("load() unavailable")
         val withListener = chain.listener.invoke(loaded, listener) ?: error("listener() unavailable")
         val target = chain.start.invoke(withListener) ?: error("submit() unavailable")
@@ -327,8 +384,7 @@ internal object WeTypeClipboardImageLoader {
     /** RequestManager -> RequestBuilder<File>：按转码类型挑，避免误选 asBitmap / asDrawable。 */
     private fun resolveBuilder(manager: Any): Any {
         val factory = glideBuilderFactory ?: run {
-            val listener = listenerInterface ?: error("listener interface missing")
-            WeTypeGlideChain.resolveBuilderFactory(manager, listener, File::class.java)
+            WeTypeGlideChain.resolveBuilderFactory(manager, File::class.java)
                 ?.also {
                     glideBuilderFactory = it
                     AndroidLog.i(TAG, "glide builder factory: ${it.declaringClass.name}#${it.name}")
@@ -339,7 +395,7 @@ internal object WeTypeClipboardImageLoader {
 
     private fun resolveChain(builderClass: Class<*>): GlideChain {
         glideChain?.takeIf { it.builderClass == builderClass }?.let { return it }
-        val listener = listenerInterface ?: error("listener interface missing")
+        val listener = resolveListenerInterface(builderClass) ?: error("listener interface missing")
         val resolved = GlideChain(
             builderClass = builderClass,
             load = WeTypeGlideChain.resolveLoad(builderClass) ?: error("load() unavailable"),
@@ -537,7 +593,10 @@ internal object WeTypeTempPath {
                     it.returnType == String::class.java
             }
             if (stringTo.size < 2 || !noArgString) continue
-            val picked = stringTo.firstOrNull { it.name == "a" } ?: stringTo.minByOrNull { it.name }
+            val picked = pickHostMethod(cls, "a") {
+                Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0] == String::class.java && it.returnType == String::class.java
+            } ?: stringTo.minByOrNull { it.name }
             picked?.isAccessible = true
             return picked
         }

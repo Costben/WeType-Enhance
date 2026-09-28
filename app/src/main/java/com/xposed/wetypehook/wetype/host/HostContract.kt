@@ -180,6 +180,38 @@ internal fun HostContext.classByDexFields(
 }
 
 /**
+ * 有序字段名候选：命中第一个「声明了该字段、且通过语义校验的类」即采用。
+ *
+ * R 类之间没有能跨版本分辨的方法形状，唯一稳定的东西就是字段名（R8 从不改资源标识符）。
+ * 某个资源被删掉时换下一个候选，全落空才交给名字兜底。
+ */
+internal fun HostContext.classByFieldCandidates(
+    label: String,
+    fieldNames: List<String>,
+    accept: (Class<*>) -> Boolean
+): Class<*>? {
+    for (name in fieldNames) {
+        classByDexFields(label, listOf(name), accept)?.let { return it }
+    }
+    return null
+}
+
+/** R 类都是「清一色静态 int」的资源表；字段类型不对或数量太少就不是。 */
+internal fun looksLikeResourceTable(clazz: Class<*>, minFields: Int = 300): Boolean {
+    val statics = clazz.declaredFields.filter { Modifier.isStatic(it.modifiers) }
+    return statics.size >= minFields &&
+        statics.all { it.type == Int::class.javaPrimitiveType || it.type == Integer::class.java }
+}
+
+/** 类里有没有声明其中至少 [min] 个字段名 —— 用来把同族的几个 R 类区分开。 */
+internal fun declaresAtLeast(clazz: Class<*>, names: List<String>, min: Int): Boolean {
+    val declared = clazz.declaredFields.asSequence()
+        .filter { Modifier.isStatic(it.modifiers) }
+        .mapTo(mutableSetOf()) { it.name }
+    return names.count { it in declared } >= min
+}
+
+/**
  * 一条方法形状：参数类型全列 + 返回类型。两者都用 Java 名（`boolean`、`java.lang.String`），
  * 与 DexKit 的查询参数同一套写法。
  */
@@ -237,6 +269,28 @@ internal fun HostContext.classByMethodShapes(
 /** 类里有没有「类型等于本类自己」的静态字段 —— 宿主单例的固定形状，与命名无关。 */
 internal fun hasStaticSelfField(clazz: Class<*>): Boolean =
     clazz.declaredFields.any { Modifier.isStatic(it.modifiers) && it.type == clazz }
+
+/**
+ * 按包取全部类，交给 Kotlin 侧做结构筛选。
+ *
+ * DexKit 的查询表达式只吃**具体类型名**，表达不了「字段类型就是本类」「第一个参数就是本类」
+ * 这类成员之间的相互关系；这类判据只能先取整包类、再在 JVM 侧判。包名与成员形状都能活过 R8，
+ * 所以它和 [classByMethodShapes] 一样跨版本成立。
+ */
+internal fun HostContext.classesInPackages(vararg packages: String): List<Class<*>> {
+    val dexKit = bridge ?: return emptyList()
+    return runCatching {
+        dexKit.findClass { searchPackages(*packages) }
+    }.getOrNull().orEmpty().mapNotNull { classByName(it.name, classLoader) }
+}
+
+/** [classesInPackages] 之后按 [accept] 取唯一命中；不唯一即返回 null 交给名字候选。 */
+internal fun HostContext.classByPackageScan(
+    label: String,
+    strategy: String,
+    packages: List<String>,
+    accept: (Class<*>) -> Boolean
+): Class<*>? = pickUniqueClass(label, strategy, classesInPackages(*packages.toTypedArray()), accept)
 
 private fun HostContext.dexDeclaringClasses(
     label: String,

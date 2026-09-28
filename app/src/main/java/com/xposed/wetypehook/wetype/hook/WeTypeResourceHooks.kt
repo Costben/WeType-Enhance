@@ -28,6 +28,7 @@ import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLight
 import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLightLayer
 import com.xposed.wetypehook.wetype.host.HostResources
+import com.xposed.wetypehook.wetype.host.pickHostField
 import com.xposed.wetypehook.wetype.logo.LogoImageRenderer
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorMode
@@ -599,9 +600,9 @@ internal object WeTypeResourceHooks {
             } else {
                 // WeType 3.4 and earlier stripped Kotlin metadata. Keep the old field as a narrow
                 // compatibility fallback, while locating the draw call by its stable signature.
-                val legacyCornerField = candidateViewClass.getDeclaredField("g").also {
-                    it.isAccessible = true
-                }
+                val legacyCornerField = pickHostField(candidateViewClass, "g") {
+                    it.type == Int::class.javaPrimitiveType && !Modifier.isStatic(it.modifiers)
+                } ?: throw NoSuchFieldException("g")
                 resolveCandidateBackgroundDrawMethod(candidateViewClass).hookBefore { param ->
                     legacyCornerField.setInt(
                         param.thisObject,
