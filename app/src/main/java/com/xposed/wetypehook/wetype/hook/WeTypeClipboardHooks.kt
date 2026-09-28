@@ -1,5 +1,6 @@
 package com.xposed.wetypehook.wetype.hook
 
+import com.xposed.wetypehook.wetype.host.HOST_PACKAGE
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.ProceedWithOriginal
@@ -7,6 +8,7 @@ import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.hookReplace
 import org.luckypray.dexkit.DexKitBridge
+import org.luckypray.dexkit.query.matchers.MethodMatcher
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -26,6 +28,12 @@ internal object WeTypeClipboardHooks {
     private const val UNLIMITED_RETENTION_COUNT = 100000L
     private const val UNLIMITED_TEXT_SIZE = 100000000
     private const val UNLIMITED_RETENTION_DURATION_NS = 8640000000000L
+
+    /** 条数上限的开关名。源码里的配置键，R8 不改字符串常量，可当跨版本锚。 */
+    private const val CONFIG_CLIPBOARD_ADJUST_MAX_TIME = "ime_enable_clipboard_adjust_max_time"
+
+    /** 条数上限 getter 所在的包（`model.l0$d`）。 */
+    private const val CLIPBOARD_LIMIT_PACKAGE = "com.tencent.wetype.plugin.hld.model"
 
     private var durationField: Field? = null
     private var durationInstance: Any? = null
@@ -167,58 +175,53 @@ internal object WeTypeClipboardHooks {
     }
 
     /**
-     * 3. 剪贴板条数上限解除 (返回 100000)
-     * 优先用字符串锚收窄到返回 long 的方法；锚失效时回退到「第一个返回 long 的方法」。
+     * 3. 剪贴板条数上限解除。
+     *
+     * 宿主默认上限 500 条，取法在 `…model.l0$d#a()I`：读配置键
+     * `ime_enable_clipboard_adjust_max_time`，开则 10、否则 500。
+     *
+     * 定位与类名无关：先用**配置键字符串**（R8 不改字符串常量）找到读它的无参 boolean 开关，
+     * 再找 `…model` 包里「调用该开关、无参、返回 int」的方法。
+     *
+     * 旧实现按「clipboard 包里第一个返回 long 的 getter」退化，实际挂到了单条记录的
+     * `getContentSizeBytes()` 上并把体积强制改成 100000（宿主按总体积淘汰时会误删记录），
+     * 而真正的条数上限一次都没被拦下。这里不再保留那条退化路径：定位不出来就只报错。
      */
     private fun hookRetentionCount(bridge: DexKitBridge, classLoader: ClassLoader) {
         runCatching {
-            // usingStrings(a, b) 要求两个字符串同时命中，所以逐个锚单独查询再合并。
-            val anchorHits = listOf("clipboard_text_max_size_new", "THREE_MONTHS").flatMap { anchor ->
-                bridge.findMethod {
-                    searchPackages("com.tencent.wetype.plugin.hld.clipboard")
-                    matcher {
-                        usingStrings(anchor)
-                        returnType = "long"
-                    }
+            val switches = bridge.findMethod {
+                searchPackages(HOST_PACKAGE)
+                matcher {
+                    usingStrings(CONFIG_CLIPBOARD_ADJUST_MAX_TIME)
+                    paramCount = 0
+                    returnType = "boolean"
                 }
-            }
-            val longCandidates = if (anchorHits.isNotEmpty()) {
-                anchorHits
-            } else {
-                Log.i("[$TAG] No retention count string anchor hit; falling back to first long getter")
-                bridge.findMethod {
-                    searchPackages("com.tencent.wetype.plugin.hld.clipboard")
-                    matcher {
-                        returnType = "long"
-                    }
-                }
-            }
-            if (longCandidates.size > 1) {
-                val names = longCandidates.map { "${it.declaredClassName}#${it.name}" }
-                Log.e("[$TAG] Multiple long retention candidates $names; using ${names.first()}")
-            }
-            val method = longCandidates.firstOrNull()?.getMethodInstance(classLoader)
-                ?: bridge.findMethod {
-                    searchPackages("com.tencent.wetype.plugin.hld.clipboard")
-                    matcher {
-                        returnType = "int"
-                    }
-                }.firstOrNull()?.getMethodInstance(classLoader)
-
-            if (method == null) {
-                Log.e("[$TAG] Failed to locate retention limit method")
+            }.mapNotNull { runCatching { it.getMethodInstance(classLoader) }.getOrNull() }.distinct()
+            if (switches.isEmpty()) {
+                Log.e("[$TAG] 条数上限开关未找到（锚 $CONFIG_CLIPBOARD_ADJUST_MAX_TIME），跳过")
                 return
             }
-
+            val candidates = switches.flatMap { switch ->
+                bridge.findMethod {
+                    searchPackages(CLIPBOARD_LIMIT_PACKAGE)
+                    matcher {
+                        paramCount = 0
+                        returnType = "int"
+                        invokeMethods { add(MethodMatcher(switch)) }
+                    }
+                }.mapNotNull { runCatching { it.getMethodInstance(classLoader) }.getOrNull() }
+            }.distinct()
+            if (candidates.size != 1) {
+                val names = candidates.map { "${it.declaringClass.name}#${it.name}" }
+                Log.e("[$TAG] 条数上限 getter 定位不唯一 $names，跳过（不再退化到瞎猜）")
+                return
+            }
+            val method = candidates[0].apply { isAccessible = true }
             method.hookReplace {
                 if (!WeTypeSettings.isRemoveClipboardRetentionLimitXposed()) {
                     return@hookReplace ProceedWithOriginal
                 }
-                if (method.returnType == java.lang.Long.TYPE) {
-                    UNLIMITED_RETENTION_COUNT
-                } else {
-                    UNLIMITED_RETENTION_COUNT.toInt()
-                }
+                UNLIMITED_RETENTION_COUNT.toInt()
             }
             Log.i("[$TAG] Hooked retentionCount: ${method.declaringClass.name}#${method.name}")
         }.onFailure {

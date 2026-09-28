@@ -199,13 +199,17 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /** Observe native commit completion, never turn ordinary text delivery into intention. */
-    private fun awaitSearchCommit(token: Long, source: String) {
+    private fun awaitSearchCommit(token: Long, source: String, settledFrames: Int = 0) {
         if (!submitSession.at(token, ClipboardSearchSubmitSession.Phase.COMMITTING)) return
         val box = nativeKEditRefF41?.get() ?: return
         if (!ownsSearchBox(box)) { submitSession.fail(token); return }
         if (android.os.SystemClock.uptimeMillis() >= submitDeadline) {
-            submitSession.fail(token)
-            AndroidLog.e(TAG, "search submit did not finish native commit before deadline")
+            // 兜底：宿主提交不经条框 IC 时回执永不出现，按当前条框文本落定，避免回车无响应。
+            AndroidLog.w(TAG, "search submit: native commit unobserved before deadline, " +
+                "using box text (source=$source)")
+            submitSession.nativeCommitGrace(token)
+            if (!submitSession.readyToSnapshot(token, true, true)) { submitSession.fail(token); return }
+            commitSearchSnapshot(token, box)
             return
         }
         box.postOnAnimation {
@@ -215,18 +219,29 @@ internal object WeTypeClipboardSearchUi {
             }.getOrDefault(false)
             val noComposing = android.view.inputmethod.BaseInputConnection.getComposingSpanStart(box.text) < 0
             if (!submitSession.readyToSnapshot(token, noPending, noComposing)) {
-                awaitSearchCommit(token, source)
+                // 回执缺失时，pending 清空且组词结束后宽限数帧即放行（见 nativeCommitGrace）。
+                val next = if (noPending && noComposing) settledFrames + 1 else 0
+                if (next >= COMMIT_GRACE_FRAMES) {
+                    AndroidLog.w(TAG, "search submit: no native text delivered, grace expired (source=$source)")
+                    submitSession.nativeCommitGrace(token)
+                }
+                awaitSearchCommit(token, source, next)
                 return@postOnAnimation
             }
-            if (!submitSession.committed(token, box.text?.toString().orEmpty())) return@postOnAnimation
-            pendingKeyword = submitSession.keyword
-            overlayPending = false
-            val anchor = overlayParentRef?.get() ?: return@postOnAnimation
-            box.clearFocus()
-            // Q0 merely schedules exit. Keep isolation/restoration state until the card is detached.
-            driveTranslatorShell(anchor, false)
-            awaitSearchShellExit(token)
+            commitSearchSnapshot(token, box)
         }
+    }
+
+    /** Snapshot the committed keyword and leave the strip; the sole successful-commit transition. */
+    private fun commitSearchSnapshot(token: Long, box: EditText) {
+        if (!submitSession.committed(token, box.text?.toString().orEmpty())) return
+        pendingKeyword = submitSession.keyword
+        overlayPending = false
+        val anchor = overlayParentRef?.get() ?: return
+        box.clearFocus()
+        // Q0 merely schedules exit. Keep isolation/restoration state until the card is detached.
+        driveTranslatorShell(anchor, false)
+        awaitSearchShellExit(token)
     }
 
     private fun currentImeRoot(): ViewGroup? = runCatching {
@@ -391,6 +406,9 @@ internal object WeTypeClipboardSearchUi {
     private const val S15_CLASS = "com.tencent.wetype.plugin.hld.keyboard.S15CustomPhraseAndClipboardKeyboard"
     private const val WETYPE_ID_CLASS = "com.tencent.wetype.plugin.hld.s"
     private const val WETYPE_DRAWABLE_CLASS = "com.tencent.wetype.plugin.hld.r"
+
+    /** 提交回执缺失时，pending 清空且组词结束后再等这么多帧即视为已投递。 */
+    private const val COMMIT_GRACE_FRAMES = 5
 
     private const val TAG_SEARCH_BUTTON = "wetype_clipboard_search_btn_s4"
     private const val TAG_SEARCH_BOX = "wetype_clipboard_search_box_s4"
@@ -2068,37 +2086,38 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "WxHldService not found, skip input routing")
                 return
             }
-            for (method in svc.declaredMethods) {
-                if (method.name != "A") continue
-                val pt = method.parameterTypes
-                if (pt.size != 1 || pt[0] != java.lang.Boolean.TYPE) continue
-                if (!InputConnection::class.java.isAssignableFrom(method.returnType)) continue
-                try {
-                    method.isAccessible = true
-                    method.hookReplace { param ->
-                        try {
-                            activeImeService = java.lang.ref.WeakReference(param.thisObject)
-                            val forceReal = param.args.firstOrNull() as? Boolean ?: false
-                            // S5b-A5：路由保留供吃字（commitText 透传不动）；删由
-                            // StripInputConnection wrapper 直删条框并消费（不依赖路由旁路）。
-                            // 候选可见可点：forceReal=true 是宿主取真 IC 弹候选/选词通道，
-                            // 条禁抢占（此前含 forceReal 一律回条 IC 会致候选不弹），
-                            // 此路直接放行原生；仅 forceReal=false 且条聚焦可见才回条 IC。
-                            if (forceReal && submitSession.phase != ClipboardSearchSubmitSession.Phase.COMMITTING) {
-                                return@hookReplace ProceedWithOriginal
-                            }
-                            searchInputConnection()?.let {
-                                return@hookReplace it
-                            }
-                        } catch (t: Throwable) {
-                            AndroidLog.e(TAG, "search input routing failed: ${t.message}")
+            // 宿主取 InputConnection 的入口。旧代码写死的名字在 3.5.4 与 4.0.0 上都不存在，
+            // 因此只认形状 (boolean) -> InputConnection，不锁名字。
+            val router = svc.declaredMethods.firstOrNull(::isInputConnectionRouter) ?: run {
+                AndroidLog.e(TAG, "input routing entry (boolean)->InputConnection not found on " +
+                    svc.name)
+                return
+            }
+            try {
+                router.isAccessible = true
+                router.hookReplace { param ->
+                    try {
+                        activeImeService = java.lang.ref.WeakReference(param.thisObject)
+                        val forceReal = param.args.firstOrNull() as? Boolean ?: false
+                        // S5b-A5：路由保留供吃字（commitText 透传不动）；删由
+                        // StripInputConnection wrapper 直删条框并消费（不依赖路由旁路）。
+                        // 候选可见可点：forceReal=true 是宿主取真 IC 弹候选/选词通道，
+                        // 条禁抢占（此前含 forceReal 一律回条 IC 会致候选不弹），
+                        // 此路直接放行原生；仅 forceReal=false 且条聚焦可见才回条 IC。
+                        if (forceReal && submitSession.phase != ClipboardSearchSubmitSession.Phase.COMMITTING) {
+                            return@hookReplace ProceedWithOriginal
                         }
-                        ProceedWithOriginal
+                        searchInputConnection()?.let {
+                            return@hookReplace it
+                        }
+                    } catch (t: Throwable) {
+                        AndroidLog.e(TAG, "search input routing failed: ${t.message}")
                     }
-                    AndroidLog.i(TAG, "hooked WxHldService#A for search input routing")
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "hook WxHldService#A failed: ${t.message}")
+                    ProceedWithOriginal
                 }
+                AndroidLog.i(TAG, "hooked ${svc.simpleName}#${router.name} for search input routing")
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "hook ${svc.simpleName}#${router.name} failed: ${t.message}")
             }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "install input routing failed: ${t.message}")
@@ -14580,9 +14599,10 @@ internal object WeTypeClipboardSearchUi {
     }
 
     /**
-     * 原生皮肤绑定：`d.h(view, false, k$<inner>.singleton, 1, null)`。
+     * 原生皮肤绑定：`d.<bind>(view, false, k$<inner>.singleton, 1, null)`。
      * inner 按名取翻译条 k 的内部皮肤 lambda（j=收起字色/ime_color_06，
-     * t=条底/ime_color_09+16，w=输入字色），单例按型扫描不写死 f 号。
+     * t=条底/ime_color_09+16，w=输入字色），单例按型扫描不写死 f 号；
+     * 绑定方法按形状取（R8 重排过：4.0.0 由 `h` 改叫 `j`）。
      * 失败返 false（上层整条 fail-closed）。
      */
     private fun applyNativeSkin(view: View, innerName: String): Boolean {
@@ -14613,17 +14633,23 @@ internal object WeTypeClipboardSearchUi {
                     AndroidLog.e(TAG, "native skin: d class missing")
                     return false
                 }
+            // 5 参绑定按形状找：4.0.0 把它从 `h` 改名成 `j`（`h` 只剩 2 参版本），
+            // 形状是 (View, boolean, 皮肤单例, int, Object)，两版都只有这一条命中。
             val bind = dCls.declaredMethods.firstOrNull {
-                it.name == "h" && it.parameterTypes.size == 5
+                java.lang.reflect.Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 5 &&
+                    it.parameterTypes[0].isAssignableFrom(view.javaClass) &&
+                    it.parameterTypes[1] == Boolean::class.javaPrimitiveType &&
+                    it.parameterTypes[2].isAssignableFrom(singleton.javaClass) &&
+                    it.parameterTypes[3] == Int::class.javaPrimitiveType
             } ?: run {
-                AndroidLog.e(TAG, "native skin: d.h(5) missing")
+                AndroidLog.e(TAG, "native skin: 5-arg bind missing on ${dCls.name}")
                 return false
             }
             bind.isAccessible = true
             try {
                 bind.invoke(null, view, false, singleton, 1, null)
             } catch (t: Throwable) {
-                AndroidLog.e(TAG, "native skin: d.h invoke failed: $t")
+                AndroidLog.e(TAG, "native skin: ${bind.name} invoke failed: $t")
                 return false
             }
             true
@@ -15572,4 +15598,16 @@ internal object WeTypeClipboardSearchUi {
             resources.displayMetrics
         ).roundToInt()
     }
+}
+
+/**
+ * 宿主取输入连接（InputConnection）的入口形状：`(boolean) -> InputConnection`。
+ *
+ * 该方法名逐版漂移（3.5.4 与 4.0.0 实测为 `B`），因此只认形状不认名字。
+ * 参数是「要不要真 IC」：宿主弹候选/选词通道取真 IC，我们只在条框聚焦可见时接管。
+ */
+internal fun isInputConnectionRouter(method: java.lang.reflect.Method): Boolean {
+    val pt = method.parameterTypes
+    return pt.size == 1 && pt[0] == java.lang.Boolean.TYPE &&
+        InputConnection::class.java.isAssignableFrom(method.returnType)
 }

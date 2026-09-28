@@ -43,6 +43,15 @@ internal class ClipboardSearchSubmitSession {
         keyword = text
     }
 
+    /**
+     * 宿主自持 IC 提交时 commitText 不经条框 wrapper，回执永不出现。宽限帧数用尽或到点仍无回执，
+     * 即按已投递放行，避免回车永久停在 COMMITTING。调用方负责判定 pending/组词已结束。
+     */
+    fun nativeCommitGrace(token: Long) {
+        if (!at(token, Phase.COMMITTING)) return
+        nativeCommitDelivered = true
+    }
+
     fun readyToSnapshot(token: Long, pendingEmpty: Boolean, composingEnded: Boolean): Boolean =
         at(token, Phase.COMMITTING) && pendingEmpty && composingEnded &&
             (!nativeCommitRequired || nativeCommitDelivered)

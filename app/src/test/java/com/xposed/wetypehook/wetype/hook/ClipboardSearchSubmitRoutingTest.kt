@@ -43,4 +43,22 @@ class ClipboardSearchSubmitRoutingTest {
         assertTrue("must save original drawable bounds", body.contains("val savedBounds = android.graphics.Rect(d.bounds)"))
         assertTrue("must restore original drawable bounds", body.contains("d.bounds = savedBounds"))
     }
+
+    @Test fun inputRoutingResolvesByShapeNotByObfuscatedName() {
+        assertFalse("input routing must not pin the obfuscated method name",
+            source.contains("method.name != \"A\""))
+        assertTrue("input routing must resolve (boolean)->InputConnection by shape",
+            source.contains("declaredMethods.firstOrNull(::isInputConnectionRouter)"))
+    }
+
+    private interface RouterShapes {
+        fun route(forceReal: Boolean): android.view.inputmethod.InputConnection?
+        fun commitText(text: CharSequence?, pos: Int): Boolean
+    }
+
+    @Test fun routerShapeAcceptsBooleanToInputConnectionOnly() {
+        val byName = RouterShapes::class.java.declaredMethods.associateBy { it.name }
+        assertTrue(isInputConnectionRouter(byName.getValue("route")))
+        assertFalse(isInputConnectionRouter(byName.getValue("commitText")))
+    }
 }

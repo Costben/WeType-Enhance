@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import org.luckypray.dexkit.DexKitBridge
+import org.luckypray.dexkit.query.matchers.MethodMatcher
 import java.io.File
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -68,6 +69,16 @@ internal class HostContext(
     /** 命中的策略标签，供报告使用。 */
     var winner: String? = null
 
+    /**
+     * 靠写死的混淆名命中时记下的来源（类名如 `names:com.tencent.wetype.plugin.hld.model.i0`，
+     * 方法名如 `names:l0$d#a`）。
+     *
+     * 非空表示这条契约的位置是**抄下来的短名**，而不是算出来的形状 —— 宿主下次重排名字就会
+     * 断，且断得无声无息。报告里会单独汇总成一行警告；这就是「保留条数」那类锚失效退化能
+     * 潜伏两个版本的成因。
+     */
+    var nameFallback: String? = null
+
     fun note(text: String) {
         if (notes.size < 8) notes += text
     }
@@ -99,6 +110,7 @@ internal fun HostContext.classByNames(vararg names: String): Class<*>? {
     for (name in names) {
         val clazz = loadClassOrNull(name, classLoader) ?: continue
         winner = "names:$name"
+        nameFallback = winner
         return clazz
     }
     return null
@@ -166,6 +178,65 @@ internal fun HostContext.classByDexFields(
         .mapNotNull { data -> runCatching { data.getFieldInstance(classLoader).declaringClass }.getOrNull() }
     return pickUniqueClass(label, "fieldName:${fieldNames.first()}", classes, accept)
 }
+
+/**
+ * 一条方法形状：参数类型全列 + 返回类型。两者都用 Java 名（`boolean`、`java.lang.String`），
+ * 与 DexKit 的查询参数同一套写法。
+ */
+internal data class MethodShape(val paramTypes: List<String>, val returnType: String) {
+    /** 报告用的短标签，例如 `(String,boolean,boolean)void`。 */
+    val label: String
+        get() = "(${paramTypes.joinToString(",") { it.substringAfterLast('.') }})" +
+            returnType.substringAfterLast('.')
+}
+
+/**
+ * 方法**形状**锚定位类：要求同一个类同时声明若干条形状，再按 [accept] 做语义校验。
+ *
+ * 这是「不写死类名」的主力。宿主每次发版都会重排混淆名，但方法签名是源码形状，跨版本稳定：
+ * 实测 `(boolean)CharSequence` 与 `(String,boolean,boolean)void` 的交集在 3.5.4 与 4.0.0 上
+ * 都唯一命中输入引擎类，`(int,Object)void` + 静态自引用字段唯一命中动作分发器。
+ *
+ * 单条形状通常不唯一（`(CharSequence)void` 在 4.0.0 命中 116 个类），所以判据是
+ * **若干条形状的交集**再叠 [accept] 的结构校验；任一环节不唯一就返回 null 交给下一级策略。
+ */
+internal fun HostContext.classByMethodShapes(
+    label: String,
+    shapes: List<MethodShape>,
+    accept: (Class<*>) -> Boolean = { true }
+): Class<*>? {
+    val dexKit = bridge ?: return null
+    var names: Set<String>? = null
+    for (shape in shapes) {
+        val hits = runCatching {
+            dexKit.findMethod {
+                searchPackages(HOST_PACKAGE)
+                matcher {
+                    returnType = shape.returnType
+                    paramCount = shape.paramTypes.size
+                    shape.paramTypes.forEach { addParamType(it) }
+                }
+            }
+        }.getOrNull().orEmpty()
+            .mapNotNull { data ->
+                runCatching { data.getMethodInstance(classLoader).declaringClass }.getOrNull()
+            }
+            .mapTo(mutableSetOf()) { it.name }
+        names = names?.intersect(hits) ?: hits
+        if (names.isEmpty()) return null
+    }
+    val classes = names.orEmpty().mapNotNull { loadClassOrNull(it, classLoader) }
+    return pickUniqueClass(
+        label,
+        "shapeClass:${shapes.joinToString("+") { it.label }}",
+        classes,
+        accept
+    )
+}
+
+/** 类里有没有「类型等于本类自己」的静态字段 —— 宿主单例的固定形状，与命名无关。 */
+internal fun hasStaticSelfField(clazz: Class<*>): Boolean =
+    clazz.declaredFields.any { Modifier.isStatic(it.modifiers) && it.type == clazz }
 
 private fun HostContext.dexDeclaringClasses(
     label: String,
@@ -298,6 +369,62 @@ internal fun HostContext.uniqueMethodExcluding(
 }
 
 /**
+ * 同形候选里取「原始方法」：包装方法一定转调原始方法，原始方法不转调包装。
+ *
+ * 引擎类上会同时存在原始取法与门控包装，两者形状完全相同，形状挑不出唯一；方法名又会随
+ * 宿主更新重排（3.5.4 的 `D2` 在 4.0.0 变成 `E2`，旧名还被别的同形方法占用），所以唯一
+ * 能跨版本成立的判据是调用关系。
+ *
+ * [callersOf] 给出「[owner] 内调用该方法的其它方法名」，默认走 DexKit；拿不到 bridge 时
+ * 返回空集，本函数随即返回 null，由名字候选表接手。
+ */
+internal fun HostContext.uniqueShapePrimitive(
+    label: String,
+    owner: Class<*>,
+    predicate: Method.() -> Boolean,
+    callersOf: (Method) -> Set<String> = { dexCallerNames(owner, it) }
+): Method? {
+    var searchClass: Class<*>? = owner
+    while (searchClass != null) {
+        val hits = searchClass.declaredMethods.filter(predicate)
+        if (hits.isNotEmpty()) {
+            if (hits.size == 1) {
+                hits[0].isAccessible = true
+                winner = "shape:${searchClass.simpleName}#${hits[0].name}"
+                return hits[0]
+            }
+            val primitives = hits.filter { candidate ->
+                val callers = callersOf(candidate)
+                hits.any { sibling -> sibling !== candidate && sibling.name in callers }
+            }
+            if (primitives.size == 1) {
+                primitives[0].isAccessible = true
+                winner = "shape-primitive:${searchClass.simpleName}#${primitives[0].name}"
+                return primitives[0]
+            }
+            note("$label shape 在 ${searchClass.simpleName} 命中 ${hits.map { it.name }}")
+            return null
+        }
+        searchClass = searchClass.superclass
+    }
+    return null
+}
+
+/** [owner] 内调用 [callee] 的方法名。走 DexKit；无 bridge 或无命中时返回空集。 */
+private fun HostContext.dexCallerNames(owner: Class<*>, callee: Method): Set<String> {
+    val dexKit = bridge ?: return emptySet()
+    return runCatching {
+        dexKit.findMethod {
+            searchPackages(HOST_PACKAGE)
+            matcher {
+                declaredClass = owner.name
+                invokeMethods { add(MethodMatcher(callee)) }
+            }
+        }
+    }.getOrNull().orEmpty().mapTo(mutableSetOf()) { it.name }
+}
+
+/**
  * 有序方法名候选 + 形状校验：命中第一个即采用。这是既有候选表的语义，不算歧义。
  */
 internal fun HostContext.methodByNames(
@@ -309,6 +436,7 @@ internal fun HostContext.methodByNames(
         val hit = owner.declaredMethods.firstOrNull { it.name == name && it.predicate() } ?: continue
         hit.isAccessible = true
         winner = "names:${owner.simpleName}#$name"
+        nameFallback = winner
         return hit
     }
     return null
@@ -400,7 +528,12 @@ internal sealed class ContractOutcome {
         override val id: String,
         val handle: HostHandle,
         val strategy: String,
-        override val notes: List<String>
+        override val notes: List<String>,
+        /**
+         * 本条是靠名字候选兜住的（非空即退化）。缓存恢复的分支拿不到这个信息，只有走
+         * 完整解析的那一轮才知道；报告里据此单独汇总一行警告。
+         */
+        val degraded: String? = null
     ) : ContractOutcome()
 
     class Unresolved(
@@ -498,6 +631,7 @@ internal object WeTypeHostContracts {
         for (contract in HOST_CONTRACTS) {
             context.notes.clear()
             context.winner = null
+            context.nameFallback = null
             val handle = runCatching { contract.resolve(context) }.getOrElse { error ->
                 context.note("exception: ${error.javaClass.simpleName}: ${error.message}")
                 null
@@ -508,7 +642,8 @@ internal object WeTypeHostContracts {
                     id = contract.id,
                     handle = handle,
                     strategy = context.winner ?: "?",
-                    notes = context.notes.toList()
+                    notes = context.notes.toList(),
+                    degraded = context.nameFallback
                 )
             } else {
                 outcomes[contract.id] = ContractOutcome.Unresolved(
@@ -523,6 +658,7 @@ internal object WeTypeHostContracts {
     private fun logReport() {
         var resolved = 0
         var unresolved = 0
+        val degraded = mutableListOf<String>()
         for (contract in HOST_CONTRACTS) {
             when (val outcome = outcomes[contract.id]) {
                 is ContractOutcome.Resolved -> {
@@ -533,6 +669,12 @@ internal object WeTypeHostContracts {
                         ?.let { " field=${(outcome.handle.owner ?: it.declaringClass).simpleName}#${it.name}" }
                         .orEmpty()
                     Log.i(TAG, "contract[${outcome.id}]=${outcome.handle.label}$field by=${outcome.strategy}$notes")
+                    // 靠写死的短名命中时单独提一行警告：以前这种位置只能在 by= 里看出来，
+                    // 容易漏读，宿主更新前扫一眼就知道哪几条该补形状判据。
+                    outcome.degraded?.let {
+                        degraded += outcome.id
+                        Log.w(TAG, "contract[${outcome.id}] 靠写死的混淆名命中: $it")
+                    }
                 }
                 is ContractOutcome.Unresolved -> {
                     unresolved++
@@ -551,6 +693,13 @@ internal object WeTypeHostContracts {
             "host contract self-check: $resolved/${HOST_CONTRACTS.size} resolved, " +
                 "$unresolved unresolved, fingerprint=$fingerprint"
         )
+        if (degraded.isNotEmpty()) {
+            Log.w(
+                TAG,
+                "host contract 靠写死的混淆名 ${degraded.size}/${HOST_CONTRACTS.size} 条 $degraded" +
+                    " —— 宿主重排名字后这几条会断，优先补形状判据"
+            )
+        }
     }
 
     /**

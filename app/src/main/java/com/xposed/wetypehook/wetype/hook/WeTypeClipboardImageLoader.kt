@@ -20,13 +20,16 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 /**
  * 跨设备图片后台下载/解密落盘管线（复用宿主 Glide + k6.a AES 解密 + B.P 持久化）。
  *
- * 宿主 S33 同款链路（3.5.3/3.5.4 二进制名一致）：
+ * 宿主同款链路（3.5.4 与 4.0.0 逐指令一致）：
  * 1. path 含 "version" 时为 JSON：{key, md5, path(原图 URL)}；
- * 2. `com.bumptech.glide.c.u(context).r().M0(url).H0(listener).R0()`；
+ * 2. `com.bumptech.glide.c.u(context).r().L0(url).G0(listener).Q0()`；
  * 3. onResourceReady(File) 后 `k6.a.b(key, 下载文件, 目标文件)` AES/CTR 解密；
  * 4. `k6.e.d(目标文件)` 与 md5 比对；
  * 5. heic/heif 经 `com.tencent.wetype.plugin.hld.utils.e` 转 jpeg；
  * 6. `clipboard.B.P(id, path, Continuation)` 持久化，成功后回写内存 C 的 path/pathType。
+ *
+ * 第 2 步的短名随 R8 重排（4.0.0 由 `M0/H0/R0` 变成 `L0/G0/Q0`），所以整条链交给
+ * [WeTypeGlideChain] 按方法形状定位，这里只保留两个稳定的入口类名。
  */
 internal object WeTypeClipboardImageLoader {
 
@@ -36,17 +39,21 @@ internal object WeTypeClipboardImageLoader {
     private const val LISTENER_INTERFACE = "q1.h"
     private const val DECRYPT_CLASS = "k6.a"
     private const val MD5_CLASS = "k6.e"
-    private const val X1_CLASS = "com.tencent.wetype.plugin.hld.utils.x1"
     private const val WX_IME_UTIL_CLASS = "com.tencent.wetype.plugin.hld.utils.WxImeUtil"
     private const val BITMAP_UTIL_CLASS = "com.tencent.wetype.plugin.hld.utils.e"
     private const val CLIPBOARD_MGR_CLASS = "com.tencent.wetype.plugin.hld.clipboard.B"
 
-    private const val GLIDE_MANAGER_METHOD = "u"
-    private const val GLIDE_BUILDER_METHOD = "r"
-    private const val GLIDE_LOAD_METHOD = "M0"
-    private const val GLIDE_LISTENER_METHOD = "H0"
-    private const val GLIDE_SUBMIT_METHOD = "R0"
-    private const val TARGET_REQUEST_METHOD = "a"
+    /**
+     * 宿主临时路径工具类候选。4.0.0 把 `utils.x1` 改成了 ReplacementSpan 子类，同形的
+     * 静态 `(String)->String` 工具搬到了 `utils.w1`。判据是形状（见 [resolveTempPathExtension]），
+     * 不是类名，所以同一份列表在两版都能命中正确的那个。
+     */
+    private val TEMP_PATH_CLASSES = arrayOf(
+        "com.tencent.wetype.plugin.hld.utils.x1",
+        "com.tencent.wetype.plugin.hld.utils.w1",
+        "com.tencent.wetype.plugin.hld.utils.j0",
+        "com.tencent.wetype.plugin.hld.utils.y1"
+    )
 
     private const val FAILURE_BACKOFF_MS = 30_000L
     private const val SUSPEND_WAIT_MS = 5_000L
@@ -99,15 +106,27 @@ internal object WeTypeClipboardImageLoader {
     @Volatile
     private var clipboardPersistPath: Method? = null
 
+    @Volatile
+    private var glideBuilderFactory: Method? = null
+
+    @Volatile
+    private var glideChain: GlideChain? = null
+
+    /** 一次解析出来的 Glide 链：构建器上的载入 / 监听 / 启动三个方法，按形状定位。 */
+    private class GlideChain(
+        val builderClass: Class<*>,
+        val load: Method,
+        val listener: Method,
+        val start: Method
+    )
+
     fun install(classLoader: ClassLoader): Boolean {
         hostClassLoader = classLoader
         return try {
-            listenerInterface = Class.forName(LISTENER_INTERFACE, false, classLoader)
+            val listener = Class.forName(LISTENER_INTERFACE, false, classLoader)
+            listenerInterface = listener
             val glide = Class.forName(GLIDE_CLASS, false, classLoader)
-            glideWith = glide.declaredMethods.firstOrNull {
-                Modifier.isStatic(it.modifiers) && it.name == GLIDE_MANAGER_METHOD &&
-                    it.parameterTypes.size == 1 && it.parameterTypes[0] == Context::class.java
-            }?.apply { isAccessible = true }
+            glideWith = WeTypeGlideChain.resolveManager(glide, Context::class.java, listener)
             val decrypt = Class.forName(DECRYPT_CLASS, false, classLoader)
             decryptMethod = decrypt.declaredMethods.firstOrNull {
                 Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 3 &&
@@ -123,8 +142,9 @@ internal object WeTypeClipboardImageLoader {
             }?.apply { isAccessible = true }
             AndroidLog.i(
                 TAG,
-                "image loader installed: glide=${glideWith != null} decrypt=${decryptMethod != null} " +
-                    "md5=${md5Method != null}"
+                "image loader installed: glide=${glideWith != null}" +
+                    " manager=${glideWith?.declaringClass?.name}#${glideWith?.name}" +
+                    " decrypt=${decryptMethod != null} md5=${md5Method != null}"
             )
             true
         } catch (t: Throwable) {
@@ -154,11 +174,7 @@ internal object WeTypeClipboardImageLoader {
     }
 
     private fun resolveTempPathHandles(classLoader: ClassLoader) {
-        val x1 = runCatching { Class.forName(X1_CLASS, false, classLoader) }.getOrNull()
-        x1Extension = x1?.declaredMethods?.firstOrNull {
-            Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 1 &&
-                it.parameterTypes[0] == String::class.java && it.returnType == String::class.java
-        }?.apply { isAccessible = true }
+        x1Extension = resolveTempPathExtension(classLoader)
         val util = runCatching { Class.forName(WX_IME_UTIL_CLASS, false, classLoader) }.getOrNull() ?: return
         wxImeUtil = staticSelfInstance(util)
         wxImeUtilX = util.declaredMethods.firstOrNull {
@@ -168,6 +184,22 @@ internal object WeTypeClipboardImageLoader {
             it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java &&
                 it.returnType == String::class.java
         }?.apply { isAccessible = true }
+    }
+
+    /**
+     * 临时路径工具：在候选类里找「至少两条静态 `(String)->String` + 至少一条静态 `()->String`
+     * 且没有静态字段」的那个。3.5.4 命中 `utils.x1`，4.0.0 的 `x1` 已变成 ReplacementSpan
+     * 子类、`j0` 多了静态 Map 字段且缺 `()->String`，只有 `utils.w1` 满足。
+     * 都不满足就返回 null，退回宿主 cacheDir（见 [makeOutputPath]），不猜。
+     */
+    private fun resolveTempPathExtension(classLoader: ClassLoader): Method? {
+        val picked = WeTypeTempPath.resolve(classLoader, TEMP_PATH_CLASSES)
+        if (picked != null) {
+            AndroidLog.i(TAG, "temp path extension: ${picked.declaringClass.name}#${picked.name}")
+        } else {
+            AndroidLog.e(TAG, "temp path extension: none of ${TEMP_PATH_CLASSES.joinToString()} matched")
+        }
+        return picked
     }
 
     private fun resolveBitmapUtil(classLoader: ClassLoader) {
@@ -281,39 +313,48 @@ internal object WeTypeClipboardImageLoader {
             }
         )
         val manager = glideWith?.invoke(null, context) ?: error("Glide.with unavailable")
-        val builder = findMethod(manager.javaClass, GLIDE_BUILDER_METHOD) {
-            it.parameterTypes.isEmpty()
-        }?.invoke(manager) ?: error("RequestBuilder unavailable")
-        val loaded = findMethod(builder.javaClass, GLIDE_LOAD_METHOD) {
-            it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java
-        }?.invoke(builder, payload.url) ?: error("load() unavailable")
-        val withListener = findMethod(loaded.javaClass, GLIDE_LISTENER_METHOD) {
-            it.parameterTypes.size == 1 && it.parameterTypes[0].isInstance(listener)
-        }?.invoke(loaded, listener) ?: error("listener() unavailable")
-        val target = findMethod(withListener.javaClass, GLIDE_SUBMIT_METHOD) {
-            it.parameterTypes.isEmpty()
-        }?.invoke(withListener) ?: error("submit() unavailable")
-        // 持有 Request 引用直到回调，防止 submit 目标被提前回收。
-        val request = findMethod(target.javaClass, TARGET_REQUEST_METHOD) {
-            it.parameterTypes.isEmpty()
-        }?.invoke(target)
+        val builder = resolveBuilder(manager)
+        val chain = resolveChain(builder.javaClass)
+        val loaded = chain.load.invoke(builder, payload.url) ?: error("load() unavailable")
+        val withListener = chain.listener.invoke(loaded, listener) ?: error("listener() unavailable")
+        val target = chain.start.invoke(withListener) ?: error("submit() unavailable")
+        // 持有 Request 引用直到回调：Glide 的请求表是弱引用，会被提前回收。
+        val request = runCatching { WeTypeGlideChain.resolveRequest(target.javaClass)?.invoke(target) }
+            .getOrNull()
         activeTargets[id] = request ?: target
     }
 
-    private inline fun findMethod(
-        cls: Class<*>,
-        name: String,
-        predicate: (Method) -> Boolean
-    ): Method? {
-        var current: Class<*>? = cls
-        while (current != null) {
-            current.declaredMethods.firstOrNull { it.name == name && predicate(it) }?.let {
-                it.isAccessible = true
-                return it
-            }
-            current = current.superclass
+    /** RequestManager -> RequestBuilder<File>：按转码类型挑，避免误选 asBitmap / asDrawable。 */
+    private fun resolveBuilder(manager: Any): Any {
+        val factory = glideBuilderFactory ?: run {
+            val listener = listenerInterface ?: error("listener interface missing")
+            WeTypeGlideChain.resolveBuilderFactory(manager, listener, File::class.java)
+                ?.also {
+                    glideBuilderFactory = it
+                    AndroidLog.i(TAG, "glide builder factory: ${it.declaringClass.name}#${it.name}")
+                } ?: error("RequestBuilder unavailable")
         }
-        return null
+        return factory.invoke(manager) ?: error("RequestBuilder unavailable")
+    }
+
+    private fun resolveChain(builderClass: Class<*>): GlideChain {
+        glideChain?.takeIf { it.builderClass == builderClass }?.let { return it }
+        val listener = listenerInterface ?: error("listener interface missing")
+        val resolved = GlideChain(
+            builderClass = builderClass,
+            load = WeTypeGlideChain.resolveLoad(builderClass) ?: error("load() unavailable"),
+            listener = WeTypeGlideChain.resolveListener(builderClass, listener)
+                ?: error("listener() unavailable"),
+            start = WeTypeGlideChain.resolveStart(builderClass) ?: error("submit() unavailable")
+        )
+        AndroidLog.i(
+            TAG,
+            "glide chain: builder=${builderClass.name} load=${resolved.load.name}" +
+                " listener=${resolved.listener.name} start=${resolved.start.name}" +
+                " startType=${resolved.start.returnType.name}"
+        )
+        glideChain = resolved
+        return resolved
     }
 
     private fun makeOutputPath(context: Context, id: Long, sourcePath: String): File {
@@ -472,5 +513,34 @@ internal object WeTypeClipboardImageLoader {
             holder.proxy = proxy
             holder
         }.getOrNull()
+    }
+}
+
+/**
+ * 宿主临时路径工具类解析：只认形状，不认类名。
+ *
+ * 判据是「至少两条静态 `(String)->String` + 至少一条静态 `()->String`」。3.5.4 命中 `utils.x1`；
+ * 4.0.0 把 `utils.x1` 改成了 `android.text.style.ReplacementSpan` 子类（没有静态 String 方法），
+ * 同形工具搬到 `utils.w1`（`utils.j0` 缺无参 String 方法、`utils.y1` 只有一条，都不满足）。
+ */
+internal object WeTypeTempPath {
+
+    fun resolve(classLoader: ClassLoader, candidates: Array<String>): Method? {
+        for (name in candidates) {
+            val cls = runCatching { Class.forName(name, false, classLoader) }.getOrNull() ?: continue
+            val stringTo = cls.declaredMethods.filter {
+                Modifier.isStatic(it.modifiers) && it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0] == String::class.java && it.returnType == String::class.java
+            }
+            val noArgString = cls.declaredMethods.any {
+                Modifier.isStatic(it.modifiers) && it.parameterTypes.isEmpty() &&
+                    it.returnType == String::class.java
+            }
+            if (stringTo.size < 2 || !noArgString) continue
+            val picked = stringTo.firstOrNull { it.name == "a" } ?: stringTo.minByOrNull { it.name }
+            picked?.isAccessible = true
+            return picked
+        }
+        return null
     }
 }

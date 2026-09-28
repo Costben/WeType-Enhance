@@ -75,6 +75,23 @@ class ClipboardSearchSubmitSessionTest {
         assertFalse(s.readyToSnapshot(id,true,true))
         assertEquals(ClipboardSearchSubmitSession.Phase.EDITING,s.phase)
     }
+    @Test fun unobservedNativeCommitIsReleasedByGraceWithoutStayingStuck() {
+        val s=ClipboardSearchSubmitSession(); s.open(); s.edit("ni"); val id=s.confirm()!!
+        s.requireNativeCommit(id)
+        assertFalse("delivery still outstanding", s.readyToSnapshot(id, true, true))
+        s.nativeCommitGrace(id)
+        assertTrue("grace releases the snapshot", s.readyToSnapshot(id, true, true))
+        s.committed(id, s.keyword)
+        s.nativeCommitGrace(id)
+        assertFalse("grace must not reopen a finished session", s.readyToSnapshot(id, true, true))
+    }
+    @Test fun graceOnStaleTokenCannotSatisfyFreshCommit() {
+        val s=ClipboardSearchSubmitSession(); s.open(); val stale=s.confirm()!!
+        s.cancel(); s.open(); s.edit("new"); val id=s.confirm()!!
+        s.requireNativeCommit(id)
+        s.nativeCommitGrace(stale)
+        assertFalse("stale grace must not release the new commit", s.readyToSnapshot(id, true, true))
+    }
     @Test fun cardCornerRadiusIs8dpLessThanKeyboardCornerRadiusWithZeroFloor() {
         assertEquals(8f, CARD_CORNER_RADIUS_OFFSET_DP, 0.001f)
         assertEquals(16f, resolveCardCornerRadiusDp(24f), 0.001f)

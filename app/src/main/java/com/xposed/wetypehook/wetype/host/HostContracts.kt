@@ -71,8 +71,8 @@ private val PANEL_SWITCH_ENUM_NAMES = listOf("n3", "p3", "o3", "k3", "l3")
 /** 切键盘入口的日志字符串：用来把同形的 `N#t3` 从面板导航候选里排除。 */
 private val SWITCH_KEYBOARD_ANCHOR = listOf("switchKeyboardNoAnimation ")
 
-/** 待上屏文本 getter 的历史候选名（3.5.3=B2、3.5.4=D2）。 */
-private val PENDING_GETTER_NAMES = listOf("B2", "D2")
+/** 待上屏文本 getter 的历史候选名（3.5.3=B2、3.5.4=D2、4.0.0=E2）。 */
+private val PENDING_GETTER_NAMES = listOf("B2", "D2", "E2")
 
 /** 强制上屏 emit 的历史候选名（3.5.3=W1、3.5.4=Y1）。 */
 private val PENDING_EMIT_NAMES = listOf("W1", "Y1")
@@ -189,7 +189,18 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
         }?.let { HostHandle(owner = owner, method = it) }
     },
 
-    contract(HostContractId.CLIPBOARD_ENGINE, "输入引擎类（待上屏文本 + 强制上屏）") { ctx ->
+    contract(
+        HostContractId.CLIPBOARD_ENGINE,
+        "输入引擎类。判据是两条方法形状的交集（待上屏 getter + 强制上屏），与类名无关"
+    ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.CLIPBOARD_ENGINE,
+            listOf(
+                MethodShape(listOf("boolean"), "java.lang.CharSequence"),
+                MethodShape(listOf("java.lang.String", "boolean", "boolean"), "void")
+            ),
+            ::hasStaticSelfField
+        )?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(CLIPBOARD_ENGINE_CLASS)?.let { HostHandle(owner = it) }
     },
 
@@ -205,7 +216,7 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
             parameterTypes.size == 1 && parameterTypes[0] == Boolean::class.javaPrimitiveType &&
                 CharSequence::class.java.isAssignableFrom(returnType)
         }
-        ctx.uniqueMethod(HostContractId.CLIPBOARD_PENDING_GETTER, owner, shape)
+        ctx.uniqueShapePrimitive(HostContractId.CLIPBOARD_PENDING_GETTER, owner, shape)
             ?.let { return@contract HostHandle(owner = owner, method = it) }
         ctx.methodByNames(owner, PENDING_GETTER_NAMES, shape)
             ?.let { HostHandle(owner = owner, method = it) }
@@ -224,7 +235,16 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
             ?.let { HostHandle(owner = owner, method = it) }
     },
 
-    contract(HostContractId.CLIPBOARD_ACTION, "原生动作分发器类") { ctx ->
+    contract(
+        HostContractId.CLIPBOARD_ACTION,
+        "原生动作分发器类。判据是 (int, Object) -> void 形状 + 静态自引用字段；同形的 selfview 类"
+            + "没有自引用字段，所以唯一命中"
+    ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.CLIPBOARD_ACTION,
+            listOf(MethodShape(listOf("int", "java.lang.Object"), "void")),
+            ::hasStaticSelfField
+        )?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(CLIPBOARD_ACTION_CLASS)?.let { HostHandle(owner = it) }
     },
 
@@ -287,7 +307,17 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
 
     // ---- 翻译条高度流 ----
 
-    contract(HostContractId.CLIPBOARD_HEIGHT_MANAGER, "翻译条高度流管理类") { ctx ->
+    contract(
+        HostContractId.CLIPBOARD_HEIGHT_MANAGER,
+        "翻译条高度流管理类。判据是单参 / 双参 CharSequence 两条形状的交集，唯一命中"
+    ) { ctx ->
+        ctx.classByMethodShapes(
+            HostContractId.CLIPBOARD_HEIGHT_MANAGER,
+            listOf(
+                MethodShape(listOf("java.lang.CharSequence"), "void"),
+                MethodShape(listOf("java.lang.CharSequence", "java.lang.CharSequence"), "void")
+            )
+        )?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(HEIGHT_MANAGER_CLASS)?.let { HostHandle(owner = it) }
     },
 
