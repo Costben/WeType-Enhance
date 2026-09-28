@@ -2937,10 +2937,12 @@ internal object WeTypeClipboardSearchUi {
         return null
     }
 
-    /** 翻译管理器单例（q.fXXXX 按型取，不写死字段名）。 */
+    /** 翻译管理器单例（类走契约层解析，历史短名只作兜底；单例字段按型取，不写死字段名）。 */
     private fun translatingMgr(anchor: View): Any? {
         return try {
-            val qCls = loadHostClass(anchor, NATIVE_HEIGHT_MGR_CLASS) ?: return null
+            val qCls = runCatching { requireClass(HostContractId.CLIPBOARD_HEIGHT_MANAGER) }.getOrNull()
+                ?: loadHostClass(anchor, NATIVE_HEIGHT_MGR_CLASS)
+                ?: return null
             qCls.declaredFields
                 .firstOrNull { it.type == qCls }
                 ?.also { it.isAccessible = true }
@@ -4002,14 +4004,21 @@ internal object WeTypeClipboardSearchUi {
         }
     }
 
-    /** 3.5.3 T0 schedules translation; T commits translation. Layout and ordinary translation stay native. */
+    /**
+     * 拦翻译的两个入口：调度（`clipboard.height.set.text`）与提交（`clipboard.height.set.char`）。
+     * 位置一律由契约层解析（形状 / 方法体字符串锚 / synthetic 排除），本函数不写死任何混淆名。
+     * 布局与普通翻译照走原生。
+     */
     private fun ensureTranslationNetGuardF41(anchor: View) {
         if (f41TransGuardHooked) return
-        val mgr = translatingMgr(anchor) ?: return
-        val source = mgr.javaClass.getDeclaredMethod("T0", CharSequence::class.java)
-        val commit = mgr.javaClass.getDeclaredMethod("T", java.lang.Boolean.TYPE)
+        translatingMgr(anchor) ?: return
+        val source = runCatching { requireMethod(HostContractId.CLIPBOARD_HEIGHT_SET_TEXT) }.getOrNull() ?: return
+        val commit = runCatching { requireMethod(HostContractId.CLIPBOARD_HEIGHT_SET_CHAR) }.getOrNull() ?: return
+        if (source.returnType != Void.TYPE || commit.returnType != Void.TYPE) {
+            AndroidLog.e(TAG, "translation guard: unexpected return type ${source.returnType} / ${commit.returnType}")
+            return
+        }
         for (method in listOf(source, commit)) {
-            check(method.returnType == Void.TYPE)
             method.isAccessible = true
             method.hookBefore { param ->
                 if (param.thisObject === searchManager && nativeKEditRefF41?.get()?.let(::ownsSearchBox) == true) {

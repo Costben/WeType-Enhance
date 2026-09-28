@@ -71,6 +71,12 @@ private val PANEL_SWITCH_ENUM_NAMES = listOf("n3", "p3", "o3", "k3", "l3")
 /** 切键盘入口的日志字符串：用来把同形的 `N#t3` 从面板导航候选里排除。 */
 private val SWITCH_KEYBOARD_ANCHOR = listOf("switchKeyboardNoAnimation ")
 
+/**
+ * 翻译提交入口的日志字符串（3.5.4 / 4.0.0 逐字相同，两版都只在 `q#T` 一处）：
+ * 该入口与另外 3 个同形方法形状完全一致，只能用方法体内的文本区分。
+ */
+private val TRANSLATION_COMMIT_ANCHOR = listOf("commitTranslation, isWindowShownFromWindowHidden:")
+
 /** 待上屏文本 getter 的历史候选名（3.5.3=B2、3.5.4=D2、4.0.0=E2）。 */
 private val PENDING_GETTER_NAMES = listOf("B2", "D2", "E2")
 
@@ -321,26 +327,40 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
         ctx.classByNames(HEIGHT_MANAGER_CLASS)?.let { HostHandle(owner = it) }
     },
 
-    contract(HostContractId.CLIPBOARD_HEIGHT_SET_TEXT, "发布条高到原生高度流 (CharSequence) -> void") { ctx ->
+    contract(
+        HostContractId.CLIPBOARD_HEIGHT_SET_TEXT,
+        "调度翻译 (CharSequence) -> void。同形的另一个是编译器生成的静态存取器，按 synthetic 排除"
+    ) { ctx ->
         val owner = ctx.classOf(HostContractId.CLIPBOARD_HEIGHT_MANAGER) ?: return@contract null
         val shape: Method.() -> Boolean = {
             parameterTypes.size == 1 && parameterTypes[0] == CharSequence::class.java &&
                 returnType == Void.TYPE
         }
-        ctx.uniqueMethod(HostContractId.CLIPBOARD_HEIGHT_SET_TEXT, owner, shape)
+        ctx.uniqueMethod(HostContractId.CLIPBOARD_HEIGHT_SET_TEXT, owner) { shape() && !isSynthetic }
             ?.let { return@contract HostHandle(owner = owner, method = it) }
         ctx.methodByNames(owner, listOf("T0"), shape)
             ?.let { HostHandle(owner = owner, method = it) }
     },
 
-    contract(HostContractId.CLIPBOARD_HEIGHT_SET_CHAR, "清空/置空条高 (boolean) -> void") { ctx ->
+    contract(
+        HostContractId.CLIPBOARD_HEIGHT_SET_CHAR,
+        "提交翻译 (boolean) -> void。同形有 4 个原始方法，按方法体内的独有日志文本锚定"
+    ) { ctx ->
         val owner = ctx.classOf(HostContractId.CLIPBOARD_HEIGHT_MANAGER) ?: return@contract null
         val shape: Method.() -> Boolean = {
             parameterTypes.size == 1 && parameterTypes[0] == Boolean::class.javaPrimitiveType &&
                 returnType == Void.TYPE
         }
-        ctx.uniqueMethod(HostContractId.CLIPBOARD_HEIGHT_SET_CHAR, owner, shape)
-            ?.let { return@contract HostHandle(owner = owner, method = it) }
+        ctx.methodsByDexStrings(
+            HostContractId.CLIPBOARD_HEIGHT_SET_CHAR,
+            owner,
+            TRANSLATION_COMMIT_ANCHOR,
+            shape
+        ).singleOrNull()?.let {
+            it.isAccessible = true
+            ctx.winner = "dexString:${owner.simpleName}#${it.name}"
+            return@contract HostHandle(owner = owner, method = it)
+        }
         ctx.methodByNames(owner, listOf("T"), shape)
             ?.let { HostHandle(owner = owner, method = it) }
     },
