@@ -5,14 +5,14 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.EdgeLightTarget
+import com.xposed.wetypehook.wetype.settings.MaterialPresetCatalog
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 
 /**
  * 模块自绘的边缘光：把 [WeTypeBloomStrokeDrawable] 的紧凑预设当成一个可以按矩形落笔的绘制源。
  *
- * 存在的理由是 ColorOS 原生 `COUIShadowEdgeDrawable` 的替代品——它在非 ColorOS 上必然加载
- * 失败，边缘光会整条消失。这里用模块自己的绘制引擎顶上，让「光感设置」里的角度、宽度、强度
- * 在任何 ROM 上都画得出来。
+ * 存在的理由是模块自己的绘制引擎：不依赖系统是否提供对应的原生 drawable，边缘光在任何 ROM 上
+ * 都画得出来，角度、宽度、强度全部由「光感设置」决定。
  *
  * 边缘与内发光是两组独立参数：各自有开关、强度与宽度，只有角度是共用的。
  *
@@ -32,7 +32,8 @@ internal class WeTypeSelfDrawnEdgeLight(
     private val lightAngleDegrees: Float,
     private val innerShadowScale: Float = 1f,
     private val edgeEnabled: Boolean = true,
-    private val glowEnabled: Boolean = true
+    private val glowEnabled: Boolean = true,
+    private val preset: WeTypeEdgeLightPreset = WeTypeEdgeLightPreset.CLASSIC_COMPACT
 ) : WeTypeEdgeLightSource {
 
     private var drawable: WeTypeBloomStrokeDrawable? = null
@@ -64,7 +65,7 @@ internal class WeTypeSelfDrawnEdgeLight(
             innerShadowScale = innerShadowScale,
             edgeHighlightEnabled = edgeEnabled,
             glowEnabled = glowEnabled,
-            preset = WeTypeEdgeLightPreset.COMPACT
+            preset = preset
         ).also {
             drawable = it
             drawableRadius = radius
@@ -142,6 +143,9 @@ internal class WeTypeSelfDrawnEdgeLightCache(
 
     fun resolve(context: Context, surfaceColor: Int): WeTypeSelfDrawnEdgeLight {
         val group = WeTypeSettings.getEdgeLightGroupXposed(target)
+        // 「无预设」= 这一类不修改。显式关掉两层，绝不让它因为 id 查不到目录项就退回某套默认
+        // 阴影栈——那正是「不修改」被悄悄改成「套一层默认光感」的路径。
+        val noneSelected = MaterialPresetCatalog.isNone(group.presetId)
         val current = Key(
             group = group,
             angle = WeTypeSettings.getEdgeLightAngleXposed(),
@@ -151,14 +155,24 @@ internal class WeTypeSelfDrawnEdgeLightCache(
         return WeTypeSelfDrawnEdgeLight(
             context = context,
             surfaceColor = surfaceColor,
-            edgeIntensityScale = WeTypeSelfDrawnEdgeLight.intensityScale(group.edgeIntensity),
+            edgeIntensityScale = if (noneSelected) 0f else {
+                WeTypeSelfDrawnEdgeLight.intensityScale(group.edgeIntensity)
+            },
             edgeWidthScale = WeTypeSelfDrawnEdgeLight.strokeWidthScale(group.edgeWidth),
-            glowIntensityScale = WeTypeSelfDrawnEdgeLight.glowLayerScale(group.glowIntensity),
+            glowIntensityScale = if (noneSelected) 0f else {
+                WeTypeSelfDrawnEdgeLight.glowLayerScale(group.glowIntensity)
+            },
             glowWidthScale = WeTypeSelfDrawnEdgeLight.strokeWidthScale(group.glowWidth),
             lightAngleDegrees = current.angle.toFloat(),
-            innerShadowScale = WeTypeSelfDrawnEdgeLight.glowInnerShadowScale(group.glowIntensity),
-            edgeEnabled = group.edgeEnabled,
-            glowEnabled = group.glowEnabled
+            innerShadowScale = if (noneSelected) 0f else {
+                WeTypeSelfDrawnEdgeLight.glowInnerShadowScale(group.glowIntensity)
+            },
+            edgeEnabled = group.edgeEnabled && !noneSelected,
+            glowEnabled = group.glowEnabled && !noneSelected,
+            preset = WeTypeEdgeLightPreset.forMaterialPreset(
+                group.presetId,
+                compact = target != EdgeLightTarget.BACKGROUND
+            )
         ).also {
             source = it
             key = current

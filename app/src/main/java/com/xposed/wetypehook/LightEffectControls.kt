@@ -9,7 +9,7 @@ import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.preference.SliderPreference
 
 internal const val MIN_LIGHT_ANGLE = 0
-internal const val MAX_LIGHT_ANGLE = WeTypeSettings.MAX_COLOROS_LIGHT_ANGLE
+internal const val MAX_LIGHT_ANGLE = WeTypeSettings.MAX_EDGE_LIGHT_ANGLE
 internal const val MAX_EDGE_HIGHLIGHT_INTENSITY = WeTypeSettings.MAX_EDGE_HIGHLIGHT_INTENSITY
 internal const val MIN_GLOW_INTENSITY = WeTypeSettings.MIN_GLOW_INTENSITY
 internal const val MAX_GLOW_INTENSITY = WeTypeSettings.MAX_GLOW_INTENSITY
@@ -31,7 +31,8 @@ internal fun LightAngleSlider(
         modifier = Modifier.semantics { contentDescription = title },
         title = title,
         summary = buildString {
-            append("光感方向的总控，背景、图标、按键共用：0°/180° 照亮左右，90°/270° 照亮上下，45°/135° 为对角。")
+            append("光感方向的总控，自绘的背景、图标、按键共用：")
+            append("0°/180° 照亮左右，90°/270° 照亮上下，45°/135° 为对角。")
             if (note != null) append("\n").append(note)
         },
         valueText = "$value°",
@@ -79,24 +80,5 @@ internal fun LightIntensitySlider(
         valueText = "$value",
         valueRange = min.toFloat()..max.toFloat(),
         steps = (max - min - 1).coerceAtLeast(0)
-    )
-}
-
-@Composable
-internal fun NativeLightIntensitySlider(
-    value: Int,
-    onValueChange: (Int) -> Unit
-) {
-    SliderPreference(
-        value = value.coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY).toFloat(),
-        onValueChange = {
-            onValueChange(it.roundToInt().coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY))
-        },
-        modifier = Modifier.semantics { contentDescription = "ColorOS 原生材质强度" },
-        title = "原生材质强度",
-        summary = "只作用于 ColorOS 系统材质的按键、工具栏图标、Logo 与背板。",
-        valueText = "$value",
-        valueRange = 0f..MAX_EDGE_HIGHLIGHT_INTENSITY.toFloat(),
-        steps = (MAX_EDGE_HIGHLIGHT_INTENSITY - 1).coerceAtLeast(0)
     )
 }

@@ -12,7 +12,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.xposed.wetypehook.wetype.graphics.WeTypeNativeMaterialProbe
 
 const val EXTRA_OPEN_WETYPE_EMBEDDED_SETTINGS = "com.xposed.wetypehook.extra.OPEN_WETYPE_EMBEDDED_SETTINGS"
 const val EXTRA_OPEN_WETYPE_BACKUP_PAGE = "com.xposed.wetypehook.extra.OPEN_WETYPE_BACKUP_PAGE"
@@ -35,7 +34,6 @@ class MainActivity : ComponentActivity() {
         activationStatus = ModuleActivationTracker.resolveStatusForUi(this)
         activationStatusListener = ModuleActivationTracker.registerStatusListener(this) { status ->
             activationStatus = status
-            if (WeTypeNativeMaterialProbe.isEnabled()) return@registerStatusListener
             if (!status.hasFreshHeartbeat()) return@registerStatusListener
             runOnUiThread {
                 launchEmbeddedSettingsAndFinish()
@@ -46,12 +44,6 @@ class MainActivity : ComponentActivity() {
                 isActive = activationStatus.hasFreshHeartbeat(),
                 onOpenEmbeddedSettings = ::launchEmbeddedSettingsAndFinish
             )
-        }
-        // R1 探针：普通 Activity 对照宿主，默认关闭时完全不介入。
-        if (WeTypeNativeMaterialProbe.isEnabled()) {
-            (window.decorView as? android.view.ViewGroup)?.let {
-                WeTypeNativeMaterialProbe.installActivityHost(it)
-            }
         }
         launchEmbeddedSettingsIfActive()
     }
@@ -71,8 +63,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchEmbeddedSettingsIfActive(): Boolean {
-        // R1 探针开启时留在本 Activity，作为普通窗口对照宿主，不跳转内嵌设置。
-        if (WeTypeNativeMaterialProbe.isEnabled()) return false
         if (!hasAttemptedEmbeddedLaunch && activationStatus.hasFreshHeartbeat()) {
             return launchEmbeddedSettingsAndFinish()
         }

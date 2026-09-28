@@ -111,8 +111,6 @@
     <string name="settings_hyper_material_preview">系统材质</string>
     <string name="settings_miui_material_title">MIUI 系统材质</string>
     <string name="settings_miui_material_desc">改用 MIUI 系统材质渲染键盘背板与模糊。</string>
-    <string name="settings_coloros_material_title">ColorOS 系统材质</string>
-    <string name="settings_coloros_material_desc">改用 ColorOS 原生材质绘制边缘光与内阴影，下方宽度与强度同时作用于它。</string>
     <string name="settings_glass_params">玻璃效果参数</string>
     <string name="settings_glass_params_desc">42 个有限数值，以逗号分隔，保持接口原始顺序与单位。</string>
     <string name="settings_glass_blur">玻璃模糊半径</string>

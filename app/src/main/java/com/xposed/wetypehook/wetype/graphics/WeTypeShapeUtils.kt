@@ -1,7 +1,6 @@
 package com.xposed.wetypehook.wetype.graphics
 
 import android.graphics.Path
-import android.graphics.RectF
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline as ComposeOutline
@@ -63,39 +62,17 @@ private val weTypeSmoothContinuity = G2Continuity(
     capsuleProfile = G2ContinuityProfile.Capsule
 )
 
-/**
- * ColorOS 圆角权重。2 表示关闭平滑曲线，`OplusBlurParam` 的 `smoothCornerWeight=2` 落成
- * 标准正圆弧角，与 [createWeTypeSmoothRoundedPath]、`GradientDrawable` 染色层和背板载体
- * 轮廓用同一条曲线；权重 3 会把面板画成超椭圆角，虽同半径但与正圆弧相差最多 26px
- * （33dp@620dpi 实测），边缘高光因此吃不到面板四角。
- */
-internal const val WETYPE_COLOROS_SMOOTH_WEIGHT = 2f
-
-/**
- * Use the same standard rounded rectangle as the ColorOS compositor with weight=2.
- * Its weight=3 blur silhouette differs from the framework Path, even with identical radii.
- * Keeping background, clipping and highlight on circular arcs avoids a second visible contour.
- */
+/** 背板与光感共用的圆角轮廓：超椭圆连续圆角。 */
 internal fun createWeTypeSmoothRoundedPath(
     width: Float,
     height: Float,
     cornerRadii: WeTypeCornerRadii
-): Path {
-    if (!WeTypeSystemMaterials.isColorOsBackend()) {
-        return createWeTypeContinuousRoundedPath(width, height, cornerRadii)
-    }
-    return Path().apply {
-        if (width > 0f && height > 0f) {
-            addRoundRect(RectF(0f, 0f, width, height), cornerRadii.toArray(), Path.Direction.CW)
-        }
-    }
-}
+): Path = createWeTypeContinuousRoundedPath(width, height, cornerRadii)
 
 /**
  * Compose 侧的 [Shape]，几何与 [createWeTypeSmoothRoundedPath] 完全一致。
  *
- * 设置预览此前用 kyant G2 圆角裁剪背景、却用原生平滑路径绘制内高光，两者在 ColorOS 上
- * 曲率不同；换成同一个 [Shape] 后预览与真机保持同一套几何。
+ * 预览与真机共用同一条曲线，圆角裁剪与内高光的曲率才不会各走各的。
  */
 internal data class WeTypeSmoothRoundedShape(
     val cornerRadii: WeTypeCornerRadii

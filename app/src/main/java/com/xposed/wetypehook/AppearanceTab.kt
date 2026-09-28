@@ -90,7 +90,7 @@ internal fun LazyListScope.AppearanceTabContent(
                 HorizontalDivider()
                 ArrowPreference(
                     title = SettingsSubPage.MATERIAL.title,
-                    summary = "光感、MIUI 与 ColorOS 系统材质",
+                    summary = "光感与系统材质",
                     onClick = { onOpenSubPage(SettingsSubPage.MATERIAL) }
                 )
             }

@@ -59,8 +59,9 @@ import androidx.compose.ui.unit.dp
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.graphics.WeTypeBloomStrokeDrawable
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
+import com.xposed.wetypehook.wetype.graphics.WeTypeEdgeLightPreset
+import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
 import com.xposed.wetypehook.wetype.graphics.WeTypeSelfDrawnEdgeLight
-import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
 import com.xposed.wetypehook.wetype.graphics.WeTypeSmoothRoundedShape
 import com.xposed.wetypehook.wetype.graphics.createWeTypeSmoothRoundedPath
 import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
@@ -90,8 +91,6 @@ internal fun PreviewSection(
     isDark: Boolean,
     systemMaterialEnabled: Boolean,
     hyperMaterialEnabled: Boolean = false,
-    nativeEdgeLightEnabled: Boolean = false,
-    nativeEdgeLightIntensity: Int = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
     pinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
     keyboardPreviewEnabled: Boolean = false,
@@ -113,8 +112,6 @@ internal fun PreviewSection(
         isDark = isDark,
         systemMaterialEnabled = systemMaterialEnabled,
         hyperMaterialEnabled = hyperMaterialEnabled,
-        nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-        nativeEdgeLightIntensity = nativeEdgeLightIntensity,
         showPinToggle = onTogglePin != null,
         pinned = pinned,
         onTogglePin = onTogglePin,
@@ -140,8 +137,6 @@ internal fun PreviewCard(
     isDark: Boolean,
     systemMaterialEnabled: Boolean,
     hyperMaterialEnabled: Boolean = false,
-    nativeEdgeLightEnabled: Boolean = false,
-    nativeEdgeLightIntensity: Int = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
     showPinToggle: Boolean = false,
     pinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
@@ -152,25 +147,10 @@ internal fun PreviewCard(
 ) {
     val context = LocalContext.current
     val previewDensity = LocalDensity.current
-    // 标题与副标题的写法跟着「真正在生效的那套系统材质」：ColorOS 后端看「ColorOS 系统材质」，
-    // 其余后端看「MIUI 系统材质」——只看 MIUI 那个开关的话，ColorOS 上会写错。
-    val systemMaterialActive = systemMaterialEnabled &&
-        if (WeTypeSystemMaterials.isColorOsBackend()) nativeEdgeLightEnabled else hyperMaterialEnabled
+    val systemMaterialActive = systemMaterialEnabled && hyperMaterialEnabled
     // 面板按真机的材质分档画：系统材质接管背板时底色与模糊都不是模块那一套。
-    val materialPanel = NativeMaterialPreview.panel(
-        color = color,
-        isDark = isDark,
-        moduleBlurDp = (blurRadius / 3f).coerceAtLeast(0f),
-        systemBlurDp = with(previewDensity) { NativeMaterialPreview.SYSTEM_BLUR_PX.toDp().value },
-        fallbackColor = WeTypeSystemMaterials.fallbackColor(isDark),
-        systemMaterialEnabled = systemMaterialEnabled,
-        hyperMaterialEnabled = hyperMaterialEnabled,
-        colorOsBackend = WeTypeSystemMaterials.isColorOsBackend(),
-        edgeHighlightEnabled = edgeHighlightEnabled,
-        nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-        nativeEdgeLightIntensity = nativeEdgeLightIntensity
-    )
-    val displayColor = materialPanel.color
+    val displayColor = if (systemMaterialActive) WeTypeHyperMaterial.fallbackColor(isDark) else color
+    val previewBlurDp = (blurRadius / 3f).coerceAtLeast(0f)
     val weTypeFontFamily = remember(context) {
         FontFamily(
             Font(
@@ -233,7 +213,7 @@ internal fun PreviewCard(
                         color = displayColor,
                         topCornerRadius = previewCorner,
                         bottomCornerRadius = previewBottomCorner,
-                        edgeHighlightEnabled = materialPanel.moduleBloom && backgroundLight.enabled,
+                        edgeHighlightEnabled = edgeHighlightEnabled && backgroundLight.enabled,
                         backgroundLight = backgroundLight,
                         // 角度是三类共用的总控，取哪一位都一样；这里顺手用按键那份已传进来的值。
                         angleDegrees = keyEdgeLight.angleDegrees,
@@ -252,7 +232,7 @@ internal fun PreviewCard(
                 }
                 // 背板：真机的毛玻璃模糊的是键盘底下那层东西，所以有壁纸时模糊的就是壁纸本身；
                 // 没设壁纸才退回内置纹理。
-                if (materialPanel.backdropVisible) {
+                if ((displayColor ushr 24) < 0xFF) {
                     val backdrop: Painter = wallpaper
                         ?.let { BitmapPainter(it.asImageBitmap()) }
                         ?: painterResource(R.drawable.natural_texture_004)
@@ -262,14 +242,13 @@ internal fun PreviewCard(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .matchParentSize()
-                            .blur(materialPanel.backdropBlurDp.dp)
+                            .blur(previewBlurDp.dp)
                     )
                 }
                 Box(
                     modifier = Modifier
                         .matchParentSize()
                         .background(ComposeColor(displayColor))
-                        .nativeMaterialEdgeGlow(previewRadii, materialPanel.nativeEdgeGlow)
                 )
                 Column(
                     modifier = Modifier
@@ -551,7 +530,11 @@ internal fun Modifier.weTypePreviewBloom(
                     lightAngleDegrees = angleDegrees.toFloat(),
                     innerShadowScale = 0f,
                     edgeHighlightEnabled = backgroundLight.edgeEnabled,
-                    glowEnabled = backgroundLight.glowEnabled
+                    glowEnabled = backgroundLight.glowEnabled,
+                    preset = WeTypeEdgeLightPreset.forMaterialPreset(
+                        backgroundLight.presetId,
+                        compact = false
+                    )
                 )
                 bloomDrawable.setBounds(0, 0, widthPx, heightPx)
                 val clipPath = createWeTypeSmoothRoundedPath(

@@ -1,30 +1,36 @@
 package com.xposed.wetypehook
 
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.xposed.wetypehook.wetype.settings.AdvancedLightPreset
 import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
+import com.xposed.wetypehook.wetype.settings.MaterialPresetCatalog
+import com.xposed.wetypehook.wetype.settings.MaterialPresetTarget
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
 /**
  * 「光感设置」三级页。从「高级材质」推进来，是模块自绘光感的唯一入口。
  *
- * 光感由两层组成，每一层在一个元素上都各有开关、强度、宽度：
+ * 页面自上而下四段，顺序固定：
  *
- * - 边缘：贴着轮廓的一圈锐利高光。
- * - 内发光：内圈的柔和提亮，加上紧跟其后的压暗；两者同进同退，共用一根强度。
+ * 1. **总控**：光感总开关与光照方向。方向是三类自绘元素共用的，所以只出现在这里。
+ * 2. **分类**：背景 / 按钮 / 图标三行下拉。每行直接选预设，第一项是「无预设」（这一类不修改）；
+ *    边缘与内发光的开关、滑杆不在这里，只从「高级参数」进。
+ * 3. **高级参数**：允许全部 36 个预设、进入「高级参数调节」的入口、预设参数文档。
+ * 4. **恢复默认**：三类回到「无预设」，总控与高级参数草稿一起回滚。
  *
- * 光照方向是三类共用的总控，所以只出现在总控里，每个元素下不再各给一根角度滑杆。
- * 元素各自的总开关关掉时，它下面两层连行带滑杆一起收起，不给「调了没反应」的机会。
- *
- * [SettingExpandGroup] 只在 `ColumnScope` 里可用，所以元素分组写成 `ColumnScope` 的扩展。
+ * [SettingExpandGroup] 只在 `ColumnScope` 里可用，所以展开分组写成 `ColumnScope` 的扩展。
  */
 internal fun LazyListScope.EdgeLightSubPageContent(
     edgeHighlightEnabled: Boolean,
@@ -32,11 +38,15 @@ internal fun LazyListScope.EdgeLightSubPageContent(
     edgeLightAngle: Int,
     onEdgeLightAngleChange: (Int) -> Unit,
     backgroundLight: EdgeLightGroup,
-    onBackgroundLightChange: (EdgeLightGroup) -> Unit,
     iconLight: EdgeLightGroup,
-    onIconLightChange: (EdgeLightGroup) -> Unit,
     keyLight: EdgeLightGroup,
-    onKeyLightChange: (EdgeLightGroup) -> Unit
+    customPresets: List<AdvancedLightPreset>,
+    onMaterialPresetSelected: (MaterialPresetTarget, String) -> Unit,
+    allMaterialPresetsEnabled: Boolean,
+    onAllMaterialPresetsEnabledChange: (Boolean) -> Unit,
+    onOpenAdvancedParameters: () -> Unit,
+    onOpenPresetDocumentation: () -> Unit,
+    onRestoreDefaults: () -> Unit
 ) {
     item {
         SmallTitle(text = "总控")
@@ -62,121 +72,134 @@ internal fun LazyListScope.EdgeLightSubPageContent(
 
     item {
         SmallTitle(text = "分类")
-        CategoryCard {
-            EdgeLightGroupSection(
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            LightTargetPresetRow(
                 title = "背景",
                 summary = "键盘背板四周的流光；这里的内发光只提亮，不加压暗。",
                 group = backgroundLight,
-                masterEnabled = edgeHighlightEnabled,
-                onChange = onBackgroundLightChange
+                presetTarget = MaterialPresetTarget.BACKGROUND,
+                allowAllPresets = allMaterialPresetsEnabled,
+                customPresets = customPresets,
+                onSelect = { onMaterialPresetSelected(MaterialPresetTarget.BACKGROUND, it) }
             )
-        }
-    }
-
-    item {
-        CategoryCard {
-            EdgeLightGroupSection(
+            HorizontalDivider()
+            LightTargetPresetRow(
+                title = "按钮",
+                summary = "每一颗键帽。",
+                group = keyLight,
+                presetTarget = MaterialPresetTarget.KEY,
+                allowAllPresets = allMaterialPresetsEnabled,
+                customPresets = customPresets,
+                onSelect = { onMaterialPresetSelected(MaterialPresetTarget.KEY, it) }
+            )
+            HorizontalDivider()
+            LightTargetPresetRow(
                 title = "图标",
                 summary = "工具栏圆形图标与 Logo。",
                 group = iconLight,
-                masterEnabled = edgeHighlightEnabled,
-                onChange = onIconLightChange
+                presetTarget = MaterialPresetTarget.ICON,
+                allowAllPresets = allMaterialPresetsEnabled,
+                customPresets = customPresets,
+                onSelect = { onMaterialPresetSelected(MaterialPresetTarget.ICON, it) }
             )
         }
     }
 
     item {
-        CategoryCard {
-            EdgeLightGroupSection(
-                title = "按键",
-                summary = "每一颗键帽。",
-                group = keyLight,
-                masterEnabled = edgeHighlightEnabled,
-                onChange = onKeyLightChange
+        SmallTitle(text = "高级参数")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SwitchPreference(
+                title = "允许全部 36 个预设",
+                summary = if (allMaterialPresetsEnabled) {
+                    "背景、图标、按钮都可以互相套用"
+                } else {
+                    "关闭时只显示对应对象和相近对象的预设"
+                },
+                checked = allMaterialPresetsEnabled,
+                onCheckedChange = onAllMaterialPresetsEnabledChange
+            )
+            HorizontalDivider()
+            ArrowPreference(
+                title = "高级参数调节",
+                summary = "查看 36 个内置预设，并创建可编辑的自定义预设",
+                onClick = onOpenAdvancedParameters
+            )
+            HorizontalDivider()
+            ArrowPreference(
+                title = "预设参数文档",
+                summary = "查看 36 项预设的来源、槽位和适用对象",
+                onClick = onOpenPresetDocumentation
+            )
+        }
+    }
+
+    item {
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            ArrowPreference(
+                title = "恢复默认",
+                summary = "背景、按钮、图标回到「无预设」，总控与高级参数一起回到默认。",
+                onClick = onRestoreDefaults
             )
         }
     }
 }
 
 /**
- * 一类元素独占一张卡片。
+ * 分类里的一行：标题 + 一条预设下拉，直接选这一类套用哪套光感。
  *
- * 三类共用一张卡时，只要展开其中一类，那张卡就会连着下面两类一起被拉长，分割线一层套
- * 一层；分卡之后展开只会长高自己那一张，其余两类不受影响。
+ * 下拉的第一项固定是「无预设」（[MaterialPresetCatalog.NONE]），表示这一类不修改；其后是当前
+ * 允许的内置目录项，最后追加用户在「高级参数调节」里创建的自定义预设。三类各自独立，所以同一份
+ * 预设可以被三个对象分别选中，也可以互不相同。
  */
 @Composable
-private fun CategoryCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(0.dp)
-    ) {
-        content()
-    }
-}
-
-/**
- * 一类元素的光感。[masterEnabled] 是页面顶部那个总控：它关掉时这里的开关置灰，
- * 因为绘制侧确实会整条跳过。
- */
-@Composable
-private fun ColumnScope.EdgeLightGroupSection(
+private fun LightTargetPresetRow(
     title: String,
     summary: String,
     group: EdgeLightGroup,
-    masterEnabled: Boolean,
-    onChange: (EdgeLightGroup) -> Unit
+    presetTarget: MaterialPresetTarget,
+    allowAllPresets: Boolean,
+    customPresets: List<AdvancedLightPreset>,
+    onSelect: (String) -> Unit
 ) {
-    SwitchPreference(
-        title = title,
-        summary = summary,
-        checked = group.enabled,
-        enabled = masterEnabled,
-        onCheckedChange = { onChange(group.copy(enabled = it)) }
-    )
-    SettingExpandGroup(visible = masterEnabled && group.enabled) {
-        HorizontalDivider()
-        SwitchPreference(
-            title = "边缘",
-            summary = "贴着轮廓的一圈锐利高光。",
-            checked = group.edgeEnabled,
-            onCheckedChange = { onChange(group.copy(edgeEnabled = it)) }
-        )
-        SettingExpandGroup(visible = group.edgeEnabled) {
-            HorizontalDivider()
-            LightIntensitySlider(
-                value = group.edgeIntensity,
-                title = "边缘强度",
-                summary = "只调这一圈高光的明暗。",
-                onValueChange = { onChange(group.copy(edgeIntensity = it)) }
-            )
-            LightWidthSlider(
-                value = group.edgeWidth,
-                title = "边缘宽度",
-                onValueChange = { onChange(group.copy(edgeWidth = it)) }
+    val builtInOptions = MaterialPresetCatalog.selectableOptions(presetTarget, allowAllPresets)
+    val items = buildList {
+        builtInOptions.forEach { option ->
+            add(
+                DropdownItem(
+                    text = option.label,
+                    summary = when {
+                        MaterialPresetCatalog.isNone(option.id) -> "这一类不修改，不套用任何预设"
+                        option.sourceGroup == "coui" -> "COUI 参数"
+                        else -> "${option.sourceGroup} 参数"
+                    },
+                    selected = option.id == group.presetId,
+                    onClick = { onSelect(option.id) }
+                )
             )
         }
-        HorizontalDivider()
-        SwitchPreference(
-            title = "内发光",
-            summary = "内圈的柔和提亮与追随其后的压暗，两者一起变。",
-            checked = group.glowEnabled,
-            onCheckedChange = { onChange(group.copy(glowEnabled = it)) }
-        )
-        SettingExpandGroup(visible = group.glowEnabled) {
-            HorizontalDivider()
-            LightIntensitySlider(
-                value = group.glowIntensity,
-                title = "内发光强度",
-                summary = "同时决定提亮与压暗的深浅；调到 0 相当于整层撤掉。",
-                min = MIN_GLOW_INTENSITY,
-                max = MAX_GLOW_INTENSITY,
-                onValueChange = { onChange(group.copy(glowIntensity = it)) }
-            )
-            LightWidthSlider(
-                value = group.glowWidth,
-                title = "内发光宽度",
-                onValueChange = { onChange(group.copy(glowWidth = it)) }
+        customPresets.forEach { preset ->
+            add(
+                DropdownItem(
+                    text = preset.label,
+                    summary = AdvancedLightPreset.description(preset),
+                    selected = preset.id == group.presetId,
+                    onClick = { onSelect(preset.id) }
+                )
             )
         }
     }
+    OverlayDropdownPreference(
+        title = title,
+        summary = summary,
+        entry = DropdownEntry(items = items)
+    )
 }

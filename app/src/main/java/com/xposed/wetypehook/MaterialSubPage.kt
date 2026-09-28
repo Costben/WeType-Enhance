@@ -3,8 +3,6 @@ package com.xposed.wetypehook
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -18,7 +16,6 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 internal fun LazyListScope.MaterialSubPageContent(
     systemMaterialEnabled: Boolean,
     onSystemMaterialEnabledChange: (Boolean) -> Unit,
-    colorOsMaterialAvailable: Boolean,
     edgeHighlightEnabled: Boolean,
     onOpenEdgeLightPage: () -> Unit,
     hyperMaterialEnabled: Boolean,
@@ -27,15 +24,7 @@ internal fun LazyListScope.MaterialSubPageContent(
     glassSupported: Boolean,
     glassInput: List<String>,
     onGlassInputChange: (Int, String) -> Unit,
-    onGlassReset: () -> Unit,
-    nativeEdgeLightEnabled: Boolean,
-    onNativeEdgeLightEnabledChange: (Boolean) -> Unit,
-    colorOsLightAngle: Int,
-    onColorOsLightAngleChange: (Int) -> Unit,
-    nativeEdgeLightWidth: Int,
-    onNativeEdgeLightWidthChange: (Int) -> Unit,
-    nativeEdgeLightIntensity: Int,
-    onNativeEdgeLightIntensityChange: (Int) -> Unit
+    onGlassReset: () -> Unit
 ) {
     item {
         SmallTitle(text = "光感")
@@ -44,11 +33,11 @@ internal fun LazyListScope.MaterialSubPageContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             // 模块自绘的光感参数已经多到一屏放不下（三类元素 × 边缘/内发光 × 开关/强度/宽度），
-            // 所以收进三级页，这里只留入口。ColorOS 原生材质是另一条轨道，仍在下面那一栏。
+            // 所以收进三级页，这里只留入口。
             ArrowPreference(
-                title = SettingsSubPage.EDGE_LIGHT.title,
+                title = "光感预设与参数",
                 summary = if (edgeHighlightEnabled) {
-                    "背景、图标、按键的边缘与内发光，共用一套光照方向"
+                    "分别为背景、图标、按键选择预设并深入调整参数"
                 } else {
                     "总开关已关闭，进去打开后才能逐类调整"
                 },
@@ -63,7 +52,6 @@ internal fun LazyListScope.MaterialSubPageContent(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
-            // 两套渲染模式互斥：打开系统材质后，模块自绘光感会关闭。
             SwitchPreference(
                 title = stringResource(R.string.settings_hyper_material_title),
                 summary = stringResource(R.string.settings_hyper_material_desc),
@@ -92,35 +80,6 @@ internal fun LazyListScope.MaterialSubPageContent(
                         enabled = hyperMaterialAvailable && glassSupported,
                         onValueChange = onGlassInputChange,
                         onReset = onGlassReset
-                    )
-                }
-                HorizontalDivider()
-                val colorOsMaterialOn = nativeEdgeLightEnabled && colorOsMaterialAvailable
-                SwitchPreference(
-                    title = stringResource(R.string.settings_coloros_material_title),
-                    summary = stringResource(
-                        if (colorOsMaterialAvailable) R.string.settings_coloros_material_desc
-                        else R.string.settings_hyper_material_unavailable
-                    ),
-                    checked = colorOsMaterialOn,
-                    enabled = colorOsMaterialAvailable,
-                    onCheckedChange = onNativeEdgeLightEnabledChange
-                )
-                SettingExpandGroup(visible = colorOsMaterialOn) {
-                    HorizontalDivider()
-                    LightAngleSlider(
-                        value = colorOsLightAngle,
-                        title = "光照角度",
-                        note = "当前 ColorOS 版本未使用该参数：实测 45° 与 225° 在键盘背板上逐像素相同。",
-                        onValueChange = onColorOsLightAngleChange
-                    )
-                    LightWidthSlider(
-                        value = nativeEdgeLightWidth,
-                        onValueChange = onNativeEdgeLightWidthChange
-                    )
-                    NativeLightIntensitySlider(
-                        value = nativeEdgeLightIntensity,
-                        onValueChange = onNativeEdgeLightIntensityChange
                     )
                 }
             }

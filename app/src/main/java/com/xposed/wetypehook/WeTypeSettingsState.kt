@@ -26,12 +26,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
-import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
+import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
+import com.xposed.wetypehook.wetype.graphics.WeTypeEdgeLightPreset
 import com.xposed.wetypehook.wetype.logo.LogoImageStore
+import com.xposed.wetypehook.wetype.settings.AdvancedLightPreset
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
+import com.xposed.wetypehook.wetype.settings.MaterialPresetTarget
+import com.xposed.wetypehook.wetype.settings.MaterialPresetCatalog
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
 import com.xposed.wetypehook.wetype.settings.WeTypeProcessRestarter
@@ -80,8 +84,7 @@ internal class WeTypeSettingsState(
 ) {
     val appearanceGroups = WeTypeAppearanceColorGroups.groups
     val appearanceSectionGroups = appearanceGroups.filterNot { it.isKeyColorGroup }
-    val glassSupported = WeTypeSystemMaterials.areGlassOverridesAvailable()
-    val colorOsMaterialAvailable = WeTypeSystemMaterials.isColorOsBackend()
+    val glassSupported = WeTypeHyperMaterial.areGlassOverridesAvailable()
 
     var activationStatus by mutableStateOf(ModuleActivationTracker.resolveStatusForUi(preferencesContext))
     var lightColor by mutableIntStateOf(snapshot.lightColor)
@@ -91,14 +94,20 @@ internal class WeTypeSettingsState(
     var bottomCornerRadius by mutableIntStateOf(snapshot.bottomCornerRadius)
     var keyCornerRadius by mutableIntStateOf(snapshot.keyCornerRadius)
     var edgeHighlightEnabled by mutableStateOf(snapshot.edgeHighlightEnabled)
+    var allMaterialPresetsEnabled by mutableStateOf(
+        WeTypeSettings.isAllMaterialPresetsEnabled(preferencesContext)
+    )
     var backgroundLight by mutableStateOf(snapshot.backgroundLight)
     var iconLight by mutableStateOf(snapshot.iconLight)
     var keyLight by mutableStateOf(snapshot.keyLight)
     var edgeLightAngle by mutableIntStateOf(snapshot.edgeLightAngle)
-    var nativeEdgeLightEnabled by mutableStateOf(snapshot.nativeEdgeLightEnabled)
-    var nativeEdgeLightWidth by mutableIntStateOf(snapshot.nativeEdgeLightWidth)
-    var nativeEdgeLightIntensity by mutableIntStateOf(snapshot.nativeEdgeLightIntensity)
-    var colorOsLightAngle by mutableIntStateOf(snapshot.colorOsLightAngle)
+    // 「高级参数调节」里用户创建的自定义预设。与 allMaterialPresetsEnabled 同一族：不进 Snapshot，
+    // 改动即写盘，所以旋转 / 进程重建 / 重启后都在；内置 36 项目录是只读常量，不在这里。
+    val advancedPresets = mutableStateListOf<AdvancedLightPreset>().apply {
+        addAll(WeTypeSettings.getAdvancedPresets(preferencesContext))
+    }
+    // 只活在设置页里的草稿指针：下一次「增加预设」从哪个内置目录项复制。不落盘，旋转后回默认。
+    var advancedDraftBaseId by mutableStateOf(MaterialPresetCatalog.DEFAULT_BACKGROUND)
     var candidateBackgroundAlpha by mutableIntStateOf(snapshot.candidateBackgroundAlpha)
     var candidateBackgroundCorner by mutableIntStateOf(snapshot.candidateBackgroundCorner.roundToInt())
     var candidateBackgroundLeftMarginDp by mutableIntStateOf(snapshot.candidateBackgroundLeftMarginDp)
@@ -148,8 +157,7 @@ internal class WeTypeSettingsState(
     var previewGlassOverrides by mutableStateOf(snapshot.glassOverrides)
     var systemMaterialEnabled by mutableStateOf(snapshot.systemMaterialEnabled)
     var hyperMaterialEnabled by mutableStateOf(snapshot.hyperMaterialEnabled)
-    // MIUI/HyperOS 的背板材质：ColorOS 后端由「ColorOS 系统材质」那一行接管，这里恒不可用。
-    var hyperMaterialAvailable by mutableStateOf(!WeTypeSystemMaterials.isColorOsBackend() && WeTypeSystemMaterials.isAvailable(preferencesContext))
+    var hyperMaterialAvailable by mutableStateOf(WeTypeHyperMaterial.isAvailable(preferencesContext))
     var currentModeIsDark by mutableStateOf(systemDarkMode)
     // 实时预览固定在标题栏下方，跨二级页共享；只在界面美化的二级页里生效。
     var appearancePreviewPinned by mutableStateOf(false)
@@ -168,40 +176,159 @@ internal class WeTypeSettingsState(
         GlassMaterialOverrides.parse(GlassOverrideField.entries.associateWith { glassInput[it.ordinal] })
         }.getOrNull()
 
-    // 系统材质是否真的在生效：ColorOS 后端由「ColorOS 系统材质」那一行决定，其余后端看「MIUI 系统材质」。
-    // 预览标题与「键盘模糊」滑杆的联动都按这个口径，不能只看 MIUI 那个开关。
-    val systemMaterialActive = systemMaterialEnabled &&
-        if (colorOsMaterialAvailable) nativeEdgeLightEnabled else hyperMaterialEnabled
+    // 背板是不是真的被系统材质接管：系统材质总闸与 MIUI 材质开关都开着才算。
+    // 预览标题与「键盘模糊」滑杆的联动都按这个口径，不能只看总闸。
+    val systemMaterialActive = systemMaterialEnabled && hyperMaterialEnabled
 
+    /** 模块自绘光感的总开关。 */
     fun selectEdgeHighlightEnabled(enabled: Boolean) {
         edgeHighlightEnabled = enabled
-        if (enabled) {
-            systemMaterialEnabled = false
-            nativeEdgeLightEnabled = false
+    }
+
+    fun selectAllMaterialPresetsEnabled(enabled: Boolean) {
+        allMaterialPresetsEnabled = enabled
+        if (!enabled) {
+            backgroundLight = backgroundLight.copy(
+                presetId = MaterialPresetCatalog.normalize(
+                    backgroundLight.presetId,
+                    MaterialPresetTarget.BACKGROUND
+                )
+            )
+            iconLight = iconLight.copy(
+                presetId = MaterialPresetCatalog.normalize(
+                    iconLight.presetId,
+                    MaterialPresetTarget.ICON
+                )
+            )
+            keyLight = keyLight.copy(
+                presetId = MaterialPresetCatalog.normalize(
+                    keyLight.presetId,
+                    MaterialPresetTarget.KEY
+                )
+            )
         }
+        WeTypeSettings.setAllMaterialPresetsEnabled(preferencesContext, enabled)
+    }
+
+    fun openMaterialPresetDocumentation() {
+        val intent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://github.com/Costben/WeType-Enhance/blob/main/docs/coloros-material/preset-catalog.md")
+        )
+        runCatching { settingsContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 
     fun selectSystemMaterialEnabled(enabled: Boolean) {
         systemMaterialEnabled = enabled
-        if (enabled) {
-            edgeHighlightEnabled = false
-        } else {
-            // The ColorOS row is a child of this gate; closing the parent must not
-            // leave native mode persisted and silently reopen the parent on save.
-            nativeEdgeLightEnabled = false
-        }
     }
 
-    fun selectNativeEdgeLightEnabled(enabled: Boolean) {
-        nativeEdgeLightEnabled = enabled
-        if (enabled) {
-            systemMaterialEnabled = true
-            edgeHighlightEnabled = false
+    /** 「光感设置」页上唯一那根光照方向。 */
+    fun selectEdgeLightAngle(angle: Int) {
+        edgeLightAngle = angle
+    }
+
+    /**
+     * 分类那三行下拉选中一项之后的动作。
+     *
+     * 选内置目录项：「无预设」把这一类关掉，其余项只换 id；标量留在原处不动，用户之前在
+     * 「高级参数调节」里调好的边缘 / 内发光不会被一次下拉抹掉。
+     *
+     * 选自定义预设：它的边缘 / 内发光开关、强度、宽度搬进这一类，共享角度也一起写过去——
+     * 自定义预设就是一份可以整套套用的参数。
+     */
+    fun selectMaterialPreset(target: MaterialPresetTarget, presetId: String) {
+        val custom = advancedPresets.firstOrNull { it.id == presetId }
+        when (target) {
+            MaterialPresetTarget.BACKGROUND -> backgroundLight = custom
+                ?.let { backgroundLight.applying(it) } ?: backgroundLight.withPreset(presetId)
+
+            MaterialPresetTarget.ICON -> iconLight = custom
+                ?.let { iconLight.applying(it) } ?: iconLight.withPreset(presetId)
+
+            MaterialPresetTarget.KEY -> keyLight = custom
+                ?.let { keyLight.applying(it) } ?: keyLight.withPreset(presetId)
         }
+        if (custom != null) selectEdgeLightAngle(custom.angle)
+    }
+
+    /** 「增加预设」：从 [advancedDraftBaseId] 复制一份可编辑预设，用户改的是副本。 */
+    fun addAdvancedPreset() {
+        val authoredAngle = WeTypeEdgeLightPreset
+            .forMaterialPreset(advancedDraftBaseId, compact = true)
+            .authoredAngleDegrees
+            .roundToInt()
+        val next = AdvancedLightPreset.create(
+            baseId = advancedDraftBaseId,
+            index = AdvancedLightPreset.nextIndex(advancedPresets),
+            angle = authoredAngle
+        )
+        advancedPresets.add(next)
+        persistAdvancedPresets()
+    }
+
+    /** 编辑自定义预设：落盘前先夹回合法区间，越界的手改值进不了偏好文件。 */
+    fun updateAdvancedPreset(preset: AdvancedLightPreset) {
+        val index = advancedPresets.indexOfFirst { it.id == preset.id }
+        if (index < 0) return
+        val normalized = preset.normalized()
+        if (advancedPresets[index] == normalized) return
+        advancedPresets[index] = normalized
+        // 选中这一份的对象跟着更新，避免「改完预设、键盘上没反应」。
+        applyAdvancedPresetToSelection(normalized)
+        persistAdvancedPresets()
+    }
+
+    fun removeAdvancedPreset(id: String) {
+        val removed = advancedPresets.removeAll { it.id == id }
+        if (!removed) return
+        restoreSelectionWithoutPreset(id)
+        persistAdvancedPresets()
+    }
+
+    /** 恢复默认时一并撤掉的「高级参数草稿」：用户创建的自定义预设与草稿指针。 */
+    fun clearAdvancedPresets() {
+        if (advancedPresets.isNotEmpty()) {
+            advancedPresets.clear()
+            persistAdvancedPresets()
+        }
+        advancedDraftBaseId = MaterialPresetCatalog.DEFAULT_BACKGROUND
+    }
+
+    private fun persistAdvancedPresets() {
+        WeTypeSettings.setAdvancedPresets(preferencesContext, advancedPresets.toList())
+    }
+
+    /** 编辑后把新值同步给正在用这份预设的对象。 */
+    private fun applyAdvancedPresetToSelection(preset: AdvancedLightPreset) {
+        backgroundLight = backgroundLight.syncIfUsing(preset)
+        iconLight = iconLight.syncIfUsing(preset)
+        keyLight = keyLight.syncIfUsing(preset)
+    }
+
+    /** 删掉一份自定义预设后，正在用它的对象落回「无预设」，而不是留一个查不到的 id。 */
+    private fun restoreSelectionWithoutPreset(id: String) {
+        backgroundLight = backgroundLight.dropPreset(id)
+        iconLight = iconLight.dropPreset(id)
+        keyLight = keyLight.dropPreset(id)
+    }
+
+    /**
+     * 「光感设置」页的恢复默认：把这页上的字段整体回滚。
+     *
+     * 三类回到「无预设」这一默认行为，总控回到默认，高级参数草稿一并清掉。
+     */
+    fun restoreEdgeLightDefaults() {
+        edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
+        selectAllMaterialPresetsEnabled(false)
+        selectEdgeLightAngle(WeTypeSettings.DEFAULT_EDGE_LIGHT_ANGLE)
+        backgroundLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.BACKGROUND)
+        iconLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.ICON)
+        keyLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.KEY)
+        clearAdvancedPresets()
     }
 
     val openSubPage: (SettingsSubPage) -> Unit = { targetSubPage ->
-        // 「高级材质」下面还压着三级页「光感设置」，所以返回栈最高三层。
+        // 「高级材质」→「光感设置」→「高级参数调节」是当前最深的一条链，返回栈最高四层。
         if (navBackStack.size < MAX_SUB_PAGE_DEPTH) {
             navBackStack.add(SettingsRoute.SubPage(targetSubPage))
         }
@@ -433,10 +560,6 @@ internal class WeTypeSettingsState(
             backgroundLight = backgroundLight,
             iconLight = iconLight,
             keyLight = keyLight,
-            colorOsLightAngle = colorOsLightAngle,
-            nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-            nativeEdgeLightWidth = nativeEdgeLightWidth,
-            nativeEdgeLightIntensity = nativeEdgeLightIntensity,
             edgeLightAngle = edgeLightAngle,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
@@ -522,14 +645,13 @@ internal class WeTypeSettingsState(
         bottomCornerRadius = WeTypeSettings.DEFAULT_BOTTOM_CORNER_RADIUS
         keyCornerRadius = WeTypeSettings.DEFAULT_KEY_CORNER_RADIUS
         edgeHighlightEnabled = WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_ENABLED
-        backgroundLight = EdgeLightGroup()
-        iconLight = EdgeLightGroup()
-        keyLight = EdgeLightGroup()
+        selectAllMaterialPresetsEnabled(false)
+        backgroundLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.BACKGROUND)
+        iconLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.ICON)
+        keyLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.KEY)
         edgeLightAngle = WeTypeSettings.DEFAULT_EDGE_LIGHT_ANGLE
-        nativeEdgeLightEnabled = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_ENABLED
-        nativeEdgeLightWidth = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_WIDTH
-        nativeEdgeLightIntensity = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY
-        colorOsLightAngle = WeTypeSettings.DEFAULT_COLOROS_LIGHT_ANGLE
+        // 全局恢复默认也把「高级参数草稿」清掉：自定义预设与那三类的「无预设」是同一件事的两面。
+        clearAdvancedPresets()
         candidateBackgroundAlpha = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_ALPHA
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
         candidateBackgroundLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP

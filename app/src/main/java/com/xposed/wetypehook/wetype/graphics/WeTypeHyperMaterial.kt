@@ -25,7 +25,7 @@ internal class WeTypeHyperMaterial(
     private val view: View,
     overrides: GlassMaterialOverrides = GlassMaterialOverrides(),
     private val sampleBehindWindow: Boolean = true
-) : WeTypeSystemMaterial {
+) {
     private val overrides = overrides.forLiquidGlass()
     private data class MaterialStyle(val isDark: Boolean, val density: Float, val tintColor: Int?)
 
@@ -51,7 +51,7 @@ internal class WeTypeHyperMaterial(
     private var shadowGeometry: Triple<Int, Int, WeTypeCornerRadii>? = null
     private var shadowStyle: MaterialStyle? = null
 
-    override fun apply(isDark: Boolean, tintColor: Int?): Boolean {
+    fun apply(isDark: Boolean, tintColor: Int?): Boolean {
         if (!isAvailable(view.context)) {
             clear()
             return false
@@ -119,7 +119,7 @@ internal class WeTypeHyperMaterial(
         }
     }
 
-    override fun updateGeometry(cornerRadii: WeTypeCornerRadii) {
+    fun updateGeometry(cornerRadii: WeTypeCornerRadii) {
         val style = appliedStyle ?: return
         val parent = view.parent as? ViewGroup ?: return
         if (view.width <= 0 || view.height <= 0) return
@@ -209,7 +209,7 @@ internal class WeTypeHyperMaterial(
         glassGeometry = geometry
     }
 
-    override fun clear(force: Boolean) {
+    fun clear(force: Boolean = false) {
         pendingTintClear?.let(view::removeCallbacks)
         pendingTintClear = null
         shadowView?.let {

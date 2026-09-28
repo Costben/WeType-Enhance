@@ -13,8 +13,8 @@ import org.junit.Test
  *
  * - A 5s ACK wait used to turn a delivered-but-unacknowledged broadcast into
  *   "could not save settings", while the value was already on disk. That is a
- *   lie, and on ColorOS it fired on *every* save: `OplusAppStartupManager`
- *   blocks waking the module app from a broadcast entirely. No save may ever
+ *   lie, and on devices whose startup manager blocks waking the module app
+ *   from a broadcast it fired on *every* save. No save may ever
  *   wait for the mirror again.
  * - Ordering the snapshot resolution remote-first let the module app's stale
  *   mirror overwrite the host file on the next `:hld` start, silently reverting
@@ -65,8 +65,8 @@ class SettingsPersistencePathTest {
     }
 
     @Test fun aMirrorThatIsBlockedByTheSystemIsStillASuccessfulSave() {
-        // ColorOS `OplusAppStartupManager` refuses to start the module app from
-        // a broadcast, so this is the common case on those devices, not an edge.
+        // The system's startup manager refuses to start the module app from a
+        // broadcast, so this is the common case on those devices, not an edge.
         val localWriteSucceeded = true
         val mirrorDelivered = false
         assertTrue(saveResult(localWriteSucceeded, mirrorDelivered))

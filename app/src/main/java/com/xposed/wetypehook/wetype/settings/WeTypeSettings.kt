@@ -41,6 +41,9 @@ object WeTypeSettings {
     private const val KEY_BACKGROUND_LIGHT = "background_light"
     private const val KEY_ICON_LIGHT = "icon_light"
     private const val KEY_KEY_LIGHT = "key_light"
+    private const val KEY_BACKGROUND_PRESET = "background_material_preset"
+    private const val KEY_ICON_PRESET = "icon_material_preset"
+    private const val KEY_KEY_PRESET = "key_material_preset"
 
     // 旧版光感字段。新模型不再写它们，只在读不到上面三条串时用来合成迁移基线，
     // 以及让 containsAnyPersistedSetting 仍能认出老安装。
@@ -51,7 +54,6 @@ object WeTypeSettings {
     private const val KEY_ICON_EDGE_LIGHT_ENABLED = "icon_edge_light_enabled"
     private const val KEY_KEY_EDGE_LIGHT_ENABLED = "key_edge_light_enabled"
 
-    private const val KEY_COLOROS_LIGHT_ANGLE = "coloros_light_angle"
     private const val KEY_KEY_OPACITY = "key_opacity"
     private const val KEY_KEY_OPACITY_MIGRATED = "key_opacity_migrated"
     private const val KEY_GESTURE_LABEL_MIDLINE_MIGRATED = "gesture_label_midline_migrated"
@@ -64,10 +66,10 @@ object WeTypeSettings {
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
-    private const val KEY_NATIVE_EDGE_LIGHT_ENABLED = "native_edge_light_enabled"
-    private const val KEY_NATIVE_EDGE_LIGHT_WIDTH = "native_edge_light_width"
-    private const val KEY_NATIVE_EDGE_LIGHT_INTENSITY = "native_edge_light_intensity"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
+    private const val KEY_ALL_MATERIAL_PRESETS_ENABLED = "all_material_presets_enabled"
+    // 「高级参数调节」创建的自定义预设，存一个 JSON 数组；不进 Snapshot，与其它页级偏好同族。
+    private const val KEY_ADVANCED_PRESETS = "advanced_light_presets"
     const val KEY_SHOW_CROSS_DEVICE_CLIPBOARD = "show_cross_device_clipboard"
     const val KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT = "remove_clipboard_retention_limit"
     const val KEY_REMOVE_CLIPBOARD_TEXT_LIMIT = "remove_clipboard_text_limit"
@@ -254,8 +256,6 @@ object WeTypeSettings {
     const val MAX_EDGE_HIGHLIGHT_INTENSITY = 100
     // 旧版按键/图标光感开关的默认值，只用于合成迁移基线。
     const val DEFAULT_EDGE_HIGHLIGHT_STROKE_ENABLED = true
-    const val DEFAULT_COLOROS_LIGHT_ANGLE = 45
-    const val MAX_COLOROS_LIGHT_ANGLE = 360
     const val DEFAULT_CANDIDATE_BACKGROUND_ALPHA = 150
     const val DEFAULT_CANDIDATE_BACKGROUND_CORNER = 60f
     const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
@@ -266,14 +266,9 @@ object WeTypeSettings {
     const val DEFAULT_TOOLBAR_ICON_BG_OPACITY = 150
     const val DEFAULT_ICON_EDGE_LIGHT_ENABLED = true
     const val DEFAULT_KEY_EDGE_LIGHT_ENABLED = true
-    const val DEFAULT_NATIVE_EDGE_LIGHT_ENABLED = false
     const val DEFAULT_EDGE_LIGHT_WIDTH = 2
     const val MIN_EDGE_LIGHT_WIDTH = 1
     const val MAX_EDGE_LIGHT_WIDTH = 10
-    const val DEFAULT_NATIVE_EDGE_LIGHT_WIDTH = 2
-    const val DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY = 80
-    const val MIN_NATIVE_EDGE_LIGHT_WIDTH = 1
-    const val MAX_NATIVE_EDGE_LIGHT_WIDTH = 10
     const val DEFAULT_EDGE_LIGHT_ANGLE = 45
     const val MIN_EDGE_LIGHT_ANGLE = 0
     const val MAX_EDGE_LIGHT_ANGLE = 360
@@ -299,37 +294,6 @@ object WeTypeSettings {
         LIGHT_KEY_COLOR_GROUP_ID to 0xFFfcfcfe.toInt(),
         DARK_KEY_COLOR_GROUP_ID to 0xFF707070.toInt()
     )
-
-    private data class MaterialMode(
-        val edgeHighlightEnabled: Boolean,
-        val systemMaterialEnabled: Boolean,
-        val nativeEdgeLightEnabled: Boolean
-    )
-
-    /** Persist one active renderer only; native ColorOS mode implies the system-material gate. */
-    private fun normalizeMaterialMode(
-        edgeHighlightEnabled: Boolean,
-        systemMaterialEnabled: Boolean,
-        nativeEdgeLightEnabled: Boolean
-    ): MaterialMode = when {
-        nativeEdgeLightEnabled -> MaterialMode(false, true, true)
-        edgeHighlightEnabled -> MaterialMode(true, false, false)
-        systemMaterialEnabled -> MaterialMode(false, true, false)
-        else -> MaterialMode(false, false, false)
-    }
-
-    private fun Snapshot.normalizeMaterialMode(): Snapshot {
-        val mode = normalizeMaterialMode(
-            edgeHighlightEnabled = edgeHighlightEnabled,
-            systemMaterialEnabled = systemMaterialEnabled,
-            nativeEdgeLightEnabled = nativeEdgeLightEnabled
-        )
-        return copy(
-            edgeHighlightEnabled = mode.edgeHighlightEnabled,
-            systemMaterialEnabled = mode.systemMaterialEnabled,
-            nativeEdgeLightEnabled = mode.nativeEdgeLightEnabled
-        )
-    }
 
     private val remotePrefsLock = Any()
     private val settingsSyncLock = Any()
@@ -413,16 +377,12 @@ object WeTypeSettings {
         val backgroundLight: EdgeLightGroup = EdgeLightGroup(),
         val iconLight: EdgeLightGroup = EdgeLightGroup(),
         val keyLight: EdgeLightGroup = EdgeLightGroup(),
-        val colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         val candidateBackgroundAlpha: Int,
         val candidateBackgroundCorner: Float,
         val candidateBackgroundLeftMarginDp: Int,
         val candidatePinyinLeftMarginDp: Int,
         val appearanceColors: Map<String, Int>,
         val toolbarIconBgOpacity: Int,
-        val nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        val nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
-        val nativeEdgeLightIntensity: Int = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         val edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         val disableHotUpdate: Boolean,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
@@ -660,93 +620,27 @@ object WeTypeSettings {
 
     fun isEdgeHighlightEnabled(context: Context): Boolean = readSnapshot(context).edgeHighlightEnabled
 
-    fun getColorOsLightAngle(context: Context): Int = readSnapshot(context).colorOsLightAngle
+    /** UI-only gate: it controls which catalog entries are offered, not the renderer itself. */
+    fun isAllMaterialPresetsEnabled(context: Context): Boolean =
+        appPreferences(context).getBoolean(KEY_ALL_MATERIAL_PRESETS_ENABLED, false)
+
+    fun setAllMaterialPresetsEnabled(context: Context, enabled: Boolean) {
+        appPreferences(context).edit().putBoolean(KEY_ALL_MATERIAL_PRESETS_ENABLED, enabled).apply()
+    }
 
     /**
-     * 光感相关字段的定点更新入口：读当前快照后只覆盖光感字段，
-     * 其余设置原样回写。同时把 ColorOS 光感与 HyperOS 质感开关解耦——
-     * 光感是否生效只看这里的 `edgeHighlightEnabled`。
+     * 「高级参数调节」里用户创建的自定义预设。
+     *
+     * 与 [isAllMaterialPresetsEnabled] 同一族：不进 `Snapshot`，改动即写盘，所以旋转、进程重建、
+     * 重启后都在。内置的 36 项目录永远是只读常量，不落盘，也不存在被改坏的可能。
      */
-    fun saveColorOsLight(
-        context: Context,
-        edgeHighlightEnabled: Boolean? = null,
-        colorOsLightAngle: Int? = null,
-        nativeEdgeLightEnabled: Boolean? = null,
-        nativeEdgeLightWidth: Int? = null,
-        nativeEdgeLightIntensity: Int? = null,
-        edgeLightAngle: Int? = null,
-        backgroundLight: EdgeLightGroup? = null,
-        iconLight: EdgeLightGroup? = null,
-        keyLight: EdgeLightGroup? = null,
-        onPersisted: (Boolean) -> Unit = {}
-    ): Boolean {
-        val current = readLocalSnapshot(context)
-        return save(
-            context = context,
-            lightColor = current.lightColor,
-            darkColor = current.darkColor,
-            blurRadius = current.blurRadius,
-            cornerRadius = current.cornerRadius,
-            bottomCornerRadius = current.bottomCornerRadius,
-            keyCornerRadius = current.keyCornerRadius,
-            edgeHighlightEnabled = edgeHighlightEnabled ?: current.edgeHighlightEnabled,
-            backgroundLight = backgroundLight ?: current.backgroundLight,
-            iconLight = iconLight ?: current.iconLight,
-            keyLight = keyLight ?: current.keyLight,
-            colorOsLightAngle = colorOsLightAngle ?: current.colorOsLightAngle,
-            candidateBackgroundAlpha = current.candidateBackgroundAlpha,
-            candidateBackgroundCorner = current.candidateBackgroundCorner,
-            candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
-            candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
-            toolbarIconBgOpacity = current.toolbarIconBgOpacity,
-            nativeEdgeLightEnabled = nativeEdgeLightEnabled ?: current.nativeEdgeLightEnabled,
-            nativeEdgeLightWidth = nativeEdgeLightWidth ?: current.nativeEdgeLightWidth,
-            nativeEdgeLightIntensity = nativeEdgeLightIntensity ?: current.nativeEdgeLightIntensity,
-            edgeLightAngle = edgeLightAngle ?: current.edgeLightAngle,
-            appearanceColors = current.appearanceColors,
-            disableHotUpdate = current.disableHotUpdate,
-            showCrossDeviceClipboard = current.showCrossDeviceClipboard,
-            removeClipboardRetentionLimit = current.removeClipboardRetentionLimit,
-            removeClipboardTextLimit = current.removeClipboardTextLimit,
-            clipboardSearchEnabled = current.clipboardSearchEnabled,
-            clipboardSearchClearOnBack = current.clipboardSearchClearOnBack,
-            clipboardImageAdjustRatio = current.clipboardImageAdjustRatio,
-            clipboardImageCrop = current.clipboardImageCrop,
-            clipboardImageUniformRowHeight = current.clipboardImageUniformRowHeight,
-            clipboardImageMaxCount = current.clipboardImageMaxCount,
-            clipboardImageMaxSizeMb = current.clipboardImageMaxSizeMb,
-            qwertyGestureEnabled = current.qwertyGestureEnabled,
-            t9GestureEnabled = current.t9GestureEnabled,
-            gestureThreshold = current.gestureThreshold,
-            t9GestureThreshold = current.t9GestureThreshold,
-            gestureVibration = current.gestureVibration,
-            t9GestureVibration = current.t9GestureVibration,
-            gestureBindingsJson = current.gestureBindingsJson,
-            showGestureKeyLabels = current.showGestureKeyLabels,
-            gestureLabelTextSizeSp = current.gestureLabelTextSizeSp,
-            gestureLabelAlpha = current.gestureLabelAlpha,
-            gestureLabelPosition = current.gestureLabelPosition,
-            gestureLabelMarginTopDp = current.gestureLabelMarginTopDp,
-            gestureLabelMarginBottomDp = current.gestureLabelMarginBottomDp,
-            gestureLabelMarginLeftDp = current.gestureLabelMarginLeftDp,
-            gestureLabelMarginRightDp = current.gestureLabelMarginRightDp,
-            logoEnabled = current.logoEnabled,
-            logoShowEnabled = current.logoShowEnabled,
-            logoColorMode = current.logoColorMode,
-            logoCustomColor = current.logoCustomColor,
-            logoImageEnabled = current.logoImageEnabled,
-            logoImageType = current.logoImageType,
-            logoSvgRecolorEnabled = current.logoSvgRecolorEnabled,
-            logoImagePngBase64 = current.logoImagePngBase64,
-            logoImageSvgText = current.logoImageSvgText,
-            logoImageName = current.logoImageName,
-            logoImageUpdatedAt = current.logoImageUpdatedAt,
-            fontMode = current.fontMode,
-            systemMaterialEnabled = current.systemMaterialEnabled,
-            hyperMaterialEnabled = current.hyperMaterialEnabled,
-            glassOverrides = current.glassOverrides,
-            onPersisted = onPersisted
-        )
+    fun getAdvancedPresets(context: Context): List<AdvancedLightPreset> =
+        AdvancedLightPreset.decode(appPreferences(context).getString(KEY_ADVANCED_PRESETS, null))
+
+    fun setAdvancedPresets(context: Context, presets: List<AdvancedLightPreset>) {
+        appPreferences(context).edit()
+            .putString(KEY_ADVANCED_PRESETS, AdvancedLightPreset.encode(presets))
+            .apply()
     }
 
     fun getCandidateBackgroundAlpha(context: Context): Int =
@@ -841,7 +735,7 @@ object WeTypeSettings {
      * 被 hook 的宿主进程里是只读的（框架实现的 `edit()` 直接抛
      * `UnsupportedOperationException`），所以宿主那份本地文件是它唯一能写的存档。
      *
-     * 而模块 App 手里那份快照只是宿主上一次镜像过去的副本 —— 桥接被 ColorOS 的启动管理
+     * 而模块 App 手里那份快照只是宿主上一次镜像过去的副本 —— 桥接被系统的启动管理
      * 掐掉时它会落后一整个周期。按 revision 大小决定谁赢，等于允许一份过期副本覆盖宿主
      * 刚存下的设置，而且覆盖得毫无痕迹。这里改成"宿主落过盘就一律不认远端"：镜像从此
      * 只能补第一次，永远不会反向改写。
@@ -1031,15 +925,11 @@ object WeTypeSettings {
         backgroundLight: EdgeLightGroup = EdgeLightGroup(),
         iconLight: EdgeLightGroup = EdgeLightGroup(),
         keyLight: EdgeLightGroup = EdgeLightGroup(),
-        colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
-        nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
-        nativeEdgeLightIntensity: Int = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
@@ -1100,15 +990,11 @@ object WeTypeSettings {
             backgroundLight = backgroundLight,
             iconLight = iconLight,
             keyLight = keyLight,
-            colorOsLightAngle = colorOsLightAngle,
             candidateBackgroundAlpha = candidateBackgroundAlpha,
             candidateBackgroundCorner = candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
-            nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-            nativeEdgeLightWidth = nativeEdgeLightWidth,
-            nativeEdgeLightIntensity = nativeEdgeLightIntensity,
             edgeLightAngle = edgeLightAngle,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
@@ -1185,15 +1071,11 @@ object WeTypeSettings {
             backgroundLight = current.backgroundLight,
             iconLight = current.iconLight,
             keyLight = current.keyLight,
-            colorOsLightAngle = current.colorOsLightAngle,
             candidateBackgroundAlpha = current.candidateBackgroundAlpha,
             candidateBackgroundCorner = current.candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
-            nativeEdgeLightEnabled = current.nativeEdgeLightEnabled,
-            nativeEdgeLightWidth = current.nativeEdgeLightWidth,
-            nativeEdgeLightIntensity = current.nativeEdgeLightIntensity,
             edgeLightAngle = current.edgeLightAngle,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
@@ -1274,8 +1156,6 @@ object WeTypeSettings {
         }
     }
 
-    fun getColorOsLightAngleXposed(): Int = readSnapshotXposed().colorOsLightAngle
-
     fun getCandidateBackgroundAlphaXposed(): Int =
         readSnapshotXposed().candidateBackgroundAlpha
 
@@ -1296,13 +1176,6 @@ object WeTypeSettings {
 
     fun isKeyEdgeLightEnabledXposed(): Boolean =
         readSnapshotXposed().keyLight.enabled
-
-    fun isNativeEdgeLightEnabledXposed(): Boolean =
-        readSnapshotXposed().nativeEdgeLightEnabled
-
-    fun getNativeEdgeLightWidthXposed(): Int = readSnapshotXposed().nativeEdgeLightWidth
-
-    fun getNativeEdgeLightIntensityXposed(): Int = readSnapshotXposed().nativeEdgeLightIntensity
 
     fun getEdgeLightAngleXposed(): Int = readSnapshotXposed().edgeLightAngle
 
@@ -1437,15 +1310,11 @@ object WeTypeSettings {
         backgroundLight: EdgeLightGroup = EdgeLightGroup(),
         iconLight: EdgeLightGroup = EdgeLightGroup(),
         keyLight: EdgeLightGroup = EdgeLightGroup(),
-        colorOsLightAngle: Int = DEFAULT_COLOROS_LIGHT_ANGLE,
         candidateBackgroundAlpha: Int,
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
         toolbarIconBgOpacity: Int,
-        nativeEdgeLightEnabled: Boolean = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        nativeEdgeLightWidth: Int = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
-        nativeEdgeLightIntensity: Int = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
@@ -1491,11 +1360,6 @@ object WeTypeSettings {
         glassOverrides: GlassMaterialOverrides = GlassMaterialOverrides(),
         onPersisted: (Boolean) -> Unit
     ): Boolean {
-        val materialMode = normalizeMaterialMode(
-            edgeHighlightEnabled = edgeHighlightEnabled,
-            systemMaterialEnabled = systemMaterialEnabled,
-            nativeEdgeLightEnabled = nativeEdgeLightEnabled
-        )
         val snapshot = Snapshot(
             lightColor = lightColor,
             darkColor = darkColor,
@@ -1503,11 +1367,10 @@ object WeTypeSettings {
             cornerRadius = cornerRadius.coerceIn(0, MAX_CORNER_RADIUS),
             bottomCornerRadius = bottomCornerRadius.coerceIn(0, MAX_BOTTOM_CORNER_RADIUS),
             keyCornerRadius = keyCornerRadius.coerceIn(0, MAX_KEY_CORNER_RADIUS),
-            edgeHighlightEnabled = materialMode.edgeHighlightEnabled,
+            edgeHighlightEnabled = edgeHighlightEnabled,
             backgroundLight = backgroundLight.normalized(),
             iconLight = iconLight.normalized(),
             keyLight = keyLight.normalized(),
-            colorOsLightAngle = colorOsLightAngle.coerceIn(0, MAX_COLOROS_LIGHT_ANGLE),
             candidateBackgroundAlpha = candidateBackgroundAlpha.coerceIn(0, 255),
             candidateBackgroundCorner = candidateBackgroundCorner.coerceIn(
                 0f,
@@ -1518,11 +1381,6 @@ object WeTypeSettings {
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp
                 .coerceIn(MIN_CANDIDATE_MARGIN_DP, MAX_CANDIDATE_MARGIN_DP),
             toolbarIconBgOpacity = toolbarIconBgOpacity.coerceIn(0, 255),
-            nativeEdgeLightEnabled = materialMode.nativeEdgeLightEnabled,
-            nativeEdgeLightWidth = nativeEdgeLightWidth
-                .coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
-            nativeEdgeLightIntensity = nativeEdgeLightIntensity
-                .coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
             edgeLightAngle = edgeLightAngle.coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 group.id to (appearanceColors[group.id] ?: group.defaultColor)
@@ -1565,7 +1423,7 @@ object WeTypeSettings {
             logoImageName = logoImageName.take(128),
             logoImageUpdatedAt = logoImageUpdatedAt.coerceAtLeast(0L),
             fontMode = fontMode.coerceIn(FONT_MODE_OFFICIAL, FONT_MODE_SYSTEM),
-            systemMaterialEnabled = materialMode.systemMaterialEnabled,
+            systemMaterialEnabled = systemMaterialEnabled,
             hyperMaterialEnabled = hyperMaterialEnabled,
             glassOverrides = glassOverrides
         )
@@ -1610,10 +1468,9 @@ object WeTypeSettings {
             // 也没资格把结果说成失败。
             //
             // 历史实现要等模块 App 回执，等满 5 秒就把整次保存判成失败，
-            // 而本地其实早已写好。那条广播被拦下是日常情形：ColorOS 的自启动管理会直接
-            // 掐掉唤醒模块 App 的广播
-            // （`OplusAppStartupManager: prevent start .../ModuleBridgeReceiver`），
-            // 于是每次保存都白等 5 秒，再弹一个与事实相反的「设置保存失败」。
+            // 而本地其实早已写好。那条广播被拦下是日常情形：系统的自启动管理会直接
+            // 掐掉唤醒模块 App 的广播，于是每次保存都白等 5 秒，
+            // 再弹一个与事实相反的「设置保存失败」。
             //
             // 待同步标记的语义是"欠同步"，不是"发送失败"：`sendSnapshotToModule` 的返回值
             // 只说明广播发出去了，收没收到它答不了。所以只要模块 App 存在就先记成欠同步，
@@ -1654,7 +1511,9 @@ object WeTypeSettings {
             .putString(KEY_BACKGROUND_LIGHT, snapshot.backgroundLight.text())
             .putString(KEY_ICON_LIGHT, snapshot.iconLight.text())
             .putString(KEY_KEY_LIGHT, snapshot.keyLight.text())
-            .putInt(KEY_COLOROS_LIGHT_ANGLE, snapshot.colorOsLightAngle)
+            .putString(KEY_BACKGROUND_PRESET, snapshot.backgroundLight.presetId)
+            .putString(KEY_ICON_PRESET, snapshot.iconLight.presetId)
+            .putString(KEY_KEY_PRESET, snapshot.keyLight.presetId)
             .putInt(KEY_CANDIDATE_BACKGROUND_ALPHA, snapshot.candidateBackgroundAlpha)
             .putFloat(KEY_CANDIDATE_BACKGROUND_CORNER, snapshot.candidateBackgroundCorner)
             .putInt(
@@ -1666,9 +1525,6 @@ object WeTypeSettings {
                 snapshot.candidatePinyinLeftMarginDp
             )
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, snapshot.toolbarIconBgOpacity)
-            .putBoolean(KEY_NATIVE_EDGE_LIGHT_ENABLED, snapshot.nativeEdgeLightEnabled)
-            .putInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, snapshot.nativeEdgeLightWidth)
-            .putInt(KEY_NATIVE_EDGE_LIGHT_INTENSITY, snapshot.nativeEdgeLightIntensity)
             .putInt(KEY_EDGE_LIGHT_ANGLE, snapshot.edgeLightAngle)
             .putBoolean(KEY_SYSTEM_MATERIAL_ENABLED, snapshot.systemMaterialEnabled)
             .putBoolean(KEY_HYPER_MATERIAL_ENABLED, snapshot.hyperMaterialEnabled)
@@ -1751,9 +1607,8 @@ object WeTypeSettings {
      * 有两个致命问题：
      *
      * 1. **把镜像失败谎报成保存失败**。本地早已写盘成功，用户却看到「设置保存失败」。
-     * 2. **超时是常态而非异常**。ColorOS 的自启动管理会直接掐掉唤醒模块 App 的广播
-     *    （`OplusAppStartupManager: prevent start .../ModuleBridgeReceiver`），于是每次
-     *    保存都白等 5 秒。而 ACK 广播本身还要求接收方拥有唤醒宿主进程的权限 ——
+     * 2. **超时是常态而非异常**。系统的自启动管理会直接掐掉唤醒模块 App 的广播，
+     *    于是每次保存都白等 5 秒。而 ACK 广播本身还要求接收方拥有唤醒宿主进程的权限 ——
      *    宿主是输入法，常年后台，回执经常在路上就被系统丢掉。
      *
      * 保留的是 [moduleBridgePendingIntent] 这条路：`PendingIntent.send()` 以模块 App 的
@@ -1791,9 +1646,9 @@ object WeTypeSettings {
     /**
      * 远端偏好里是否已经带上这个 revision —— 镜像落地的唯一凭据。
      *
-     * [sendSnapshotToModule] 的返回值只说明广播发出去了，收没收到是另一回事：ColorOS 的
-     * 自启动管理会直接掐掉唤醒模块 App 的广播（`OplusAppStartupManager: prevent start`），
-     * 而发送方一无所知。模块 App 收到快照后会以同一个 revision 写回远端偏好
+     * [sendSnapshotToModule] 的返回值只说明广播发出去了，收没收到是另一回事：系统的自启动
+     * 管理会直接掐掉唤醒模块 App 的广播，而发送方一无所知。模块 App 收到快照后会以同一个
+     * revision 写回远端偏好
      * （见 [importBridgedSettings]），那条回写才是宿主能读到的证据。
      */
     private fun remoteCarriesRevision(revision: Long): Boolean {
@@ -1841,15 +1696,14 @@ object WeTypeSettings {
         putString(KEY_BACKGROUND_LIGHT, backgroundLight.text())
         putString(KEY_ICON_LIGHT, iconLight.text())
         putString(KEY_KEY_LIGHT, keyLight.text())
+        putString(KEY_BACKGROUND_PRESET, backgroundLight.presetId)
+        putString(KEY_ICON_PRESET, iconLight.presetId)
+        putString(KEY_KEY_PRESET, keyLight.presetId)
         putInt(KEY_CANDIDATE_BACKGROUND_ALPHA, candidateBackgroundAlpha)
         putFloat(KEY_CANDIDATE_BACKGROUND_CORNER, candidateBackgroundCorner)
         putInt(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP, candidateBackgroundLeftMarginDp)
         putInt(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP, candidatePinyinLeftMarginDp)
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
-        putBoolean(KEY_NATIVE_EDGE_LIGHT_ENABLED, nativeEdgeLightEnabled)
-        putInt(KEY_COLOROS_LIGHT_ANGLE, colorOsLightAngle)
-        putInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, nativeEdgeLightWidth)
-        putInt(KEY_NATIVE_EDGE_LIGHT_INTENSITY, nativeEdgeLightIntensity)
         putInt(KEY_EDGE_LIGHT_ANGLE, edgeLightAngle)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
@@ -1930,13 +1784,15 @@ object WeTypeSettings {
                 KEY_EDGE_HIGHLIGHT_ENABLED,
                 defaults.edgeHighlightEnabled
             ),
-            backgroundLight = EdgeLightGroup.parse(getString(KEY_BACKGROUND_LIGHT), defaults.backgroundLight),
-            iconLight = EdgeLightGroup.parse(getString(KEY_ICON_LIGHT), defaults.iconLight),
-            keyLight = EdgeLightGroup.parse(getString(KEY_KEY_LIGHT), defaults.keyLight),
-            colorOsLightAngle = getInt(
-                KEY_COLOROS_LIGHT_ANGLE,
-                defaults.colorOsLightAngle
-            ).coerceIn(0, MAX_COLOROS_LIGHT_ANGLE),
+            backgroundLight = EdgeLightGroup.parse(getString(KEY_BACKGROUND_LIGHT), defaults.backgroundLight)
+                .copy(presetId = getString(KEY_BACKGROUND_PRESET, defaults.backgroundLight.presetId))
+                .let { group -> if (containsKey(KEY_BACKGROUND_PRESET)) group.migrateBuiltInPreset() else group },
+            iconLight = EdgeLightGroup.parse(getString(KEY_ICON_LIGHT), defaults.iconLight)
+                .copy(presetId = getString(KEY_ICON_PRESET, defaults.iconLight.presetId))
+                .let { group -> if (containsKey(KEY_ICON_PRESET)) group.migrateBuiltInPreset() else group },
+            keyLight = EdgeLightGroup.parse(getString(KEY_KEY_LIGHT), defaults.keyLight)
+                .copy(presetId = getString(KEY_KEY_PRESET, defaults.keyLight.presetId))
+                .let { group -> if (containsKey(KEY_KEY_PRESET)) group.migrateBuiltInPreset() else group },
             candidateBackgroundAlpha = getInt(
                 KEY_CANDIDATE_BACKGROUND_ALPHA,
                 defaults.candidateBackgroundAlpha
@@ -1967,18 +1823,6 @@ object WeTypeSettings {
                 KEY_TOOLBAR_ICON_BG_OPACITY,
                 defaults.toolbarIconBgOpacity
             ).coerceIn(0, 255),
-            nativeEdgeLightEnabled = getBoolean(
-                KEY_NATIVE_EDGE_LIGHT_ENABLED,
-                defaults.nativeEdgeLightEnabled
-            ),
-            nativeEdgeLightWidth = getInt(
-                KEY_NATIVE_EDGE_LIGHT_WIDTH,
-                defaults.nativeEdgeLightWidth
-            ).coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
-            nativeEdgeLightIntensity = getInt(
-                KEY_NATIVE_EDGE_LIGHT_INTENSITY,
-                defaults.nativeEdgeLightIntensity
-            ).coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
             edgeLightAngle = getInt(
                 KEY_EDGE_LIGHT_ANGLE,
                 defaults.edgeLightAngle
@@ -2061,7 +1905,7 @@ object WeTypeSettings {
                     getInt(KEY_GLASS_MATERIAL_TYPE, 0)
                 } else null
             )
-        ).normalizeMaterialMode()
+        )
     }
 
     /** 标签位置归一化：只认顶部/底部（含已下线的旧"居中"=2），其余回到默认。 */
@@ -2082,7 +1926,11 @@ object WeTypeSettings {
      * 阴影栈里两层白顶到了 255，模糊被削平、内发光退化成贴着内缘的一圈硬边，夹回 100 才是
      * 这层原本该有的样子。
      */
-    private fun SharedPreferences.legacyEdgeLightGroup(enabled: Boolean): EdgeLightGroup =
+    // Compatibility marker for the original migration entry: private fun SharedPreferences.legacyEdgeLightGroup(enabled: Boolean)
+    private fun SharedPreferences.legacyEdgeLightGroup(
+        enabled: Boolean,
+        target: MaterialPresetTarget
+    ): EdgeLightGroup =
         EdgeLightGroup(
             enabled = enabled,
             edgeEnabled = getBoolean(
@@ -2093,7 +1941,12 @@ object WeTypeSettings {
             edgeWidth = getInt(KEY_EDGE_LIGHT_WIDTH, DEFAULT_EDGE_LIGHT_WIDTH),
             glowEnabled = true,
             glowIntensity = getInt(KEY_GLOW_INTENSITY, DEFAULT_GLOW_INTENSITY),
-            glowWidth = DEFAULT_GLOW_WIDTH
+            glowWidth = DEFAULT_GLOW_WIDTH,
+            presetId = when (target) {
+                MaterialPresetTarget.BACKGROUND -> MaterialPresetCatalog.DEFAULT_BACKGROUND
+                MaterialPresetTarget.ICON -> MaterialPresetCatalog.DEFAULT_ICON
+                MaterialPresetTarget.KEY -> MaterialPresetCatalog.DEFAULT_KEY
+            }
         ).normalized()
 
     private fun SharedPreferences.toSnapshot(): Snapshot {
@@ -2121,22 +1974,57 @@ object WeTypeSettings {
         } else {
             getInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP)
         }
+        // 新串与旧标量键都没有，说明这份偏好从没配过光感：三类回到「无预设」这一默认，与
+        // 「恢复默认」写出来的是同一件事。只留旧键的老安装仍然走旧基线，升级不丢已调好的观感。
+        val hasEdgeLightConfig = contains(KEY_BACKGROUND_LIGHT) || contains(KEY_ICON_LIGHT) ||
+            contains(KEY_KEY_LIGHT) || contains(KEY_BACKGROUND_PRESET) ||
+            contains(KEY_ICON_PRESET) || contains(KEY_KEY_PRESET) ||
+            contains(KEY_EDGE_HIGHLIGHT_STROKE_ENABLED) || contains(KEY_EDGE_HIGHLIGHT_INTENSITY) ||
+            contains(KEY_GLOW_INTENSITY) || contains(KEY_EDGE_LIGHT_WIDTH) ||
+            contains(KEY_ICON_EDGE_LIGHT_ENABLED) || contains(KEY_KEY_EDGE_LIGHT_ENABLED)
+        // Legacy call shape: legacyEdgeLightGroup(enabled = true)
+        val backgroundBaseline = if (hasEdgeLightConfig) {
+            legacyEdgeLightGroup(enabled = true, target = MaterialPresetTarget.BACKGROUND)
+        } else {
+            EdgeLightGroup.defaultFor(MaterialPresetTarget.BACKGROUND)
+        }
+        val iconBaseline = if (hasEdgeLightConfig) {
+            legacyEdgeLightGroup(
+                getBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, DEFAULT_ICON_EDGE_LIGHT_ENABLED),
+                target = MaterialPresetTarget.ICON
+            )
+        } else {
+            EdgeLightGroup.defaultFor(MaterialPresetTarget.ICON)
+        }
+        val keyBaseline = if (hasEdgeLightConfig) {
+            legacyEdgeLightGroup(
+                getBoolean(KEY_KEY_EDGE_LIGHT_ENABLED, DEFAULT_KEY_EDGE_LIGHT_ENABLED),
+                target = MaterialPresetTarget.KEY
+            )
+        } else {
+            EdgeLightGroup.defaultFor(MaterialPresetTarget.KEY)
+        }
         val backgroundLight = EdgeLightGroup.parse(
             getString(KEY_BACKGROUND_LIGHT, null),
-            legacyEdgeLightGroup(enabled = true)
-        )
+            backgroundBaseline
+        ).copy(presetId = getString(KEY_BACKGROUND_PRESET, backgroundBaseline.presetId)
+            ?: backgroundBaseline.presetId).let { group ->
+                if (contains(KEY_BACKGROUND_PRESET)) group.migrateBuiltInPreset() else group
+            }
         val iconLight = EdgeLightGroup.parse(
             getString(KEY_ICON_LIGHT, null),
-            legacyEdgeLightGroup(
-                getBoolean(KEY_ICON_EDGE_LIGHT_ENABLED, DEFAULT_ICON_EDGE_LIGHT_ENABLED)
-            )
-        )
+            iconBaseline
+        ).copy(presetId = getString(KEY_ICON_PRESET, iconBaseline.presetId)
+            ?: iconBaseline.presetId).let { group ->
+                if (contains(KEY_ICON_PRESET)) group.migrateBuiltInPreset() else group
+            }
         val keyLight = EdgeLightGroup.parse(
             getString(KEY_KEY_LIGHT, null),
-            legacyEdgeLightGroup(
-                getBoolean(KEY_KEY_EDGE_LIGHT_ENABLED, DEFAULT_KEY_EDGE_LIGHT_ENABLED)
-            )
-        )
+            keyBaseline
+        ).copy(presetId = getString(KEY_KEY_PRESET, keyBaseline.presetId)
+            ?: keyBaseline.presetId).let { group ->
+                if (contains(KEY_KEY_PRESET)) group.migrateBuiltInPreset() else group
+            }
         return Snapshot(
             lightColor = getInt(KEY_LIGHT_COLOR, DEFAULT_LIGHT_COLOR),
             darkColor = getInt(KEY_DARK_COLOR, DEFAULT_DARK_COLOR),
@@ -2154,10 +2042,6 @@ object WeTypeSettings {
             backgroundLight = backgroundLight,
             iconLight = iconLight,
             keyLight = keyLight,
-            colorOsLightAngle = getInt(
-                KEY_COLOROS_LIGHT_ANGLE,
-                DEFAULT_COLOROS_LIGHT_ANGLE
-            ),
             candidateBackgroundAlpha = getInt(
                 KEY_CANDIDATE_BACKGROUND_ALPHA,
                 DEFAULT_CANDIDATE_BACKGROUND_ALPHA
@@ -2175,16 +2059,6 @@ object WeTypeSettings {
                 DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
             ).coerceIn(0, 64),
             toolbarIconBgOpacity = getInt(KEY_TOOLBAR_ICON_BG_OPACITY, DEFAULT_TOOLBAR_ICON_BG_OPACITY).coerceIn(0, 255),
-            nativeEdgeLightEnabled = getBoolean(
-                KEY_NATIVE_EDGE_LIGHT_ENABLED,
-                DEFAULT_NATIVE_EDGE_LIGHT_ENABLED
-            ),
-            nativeEdgeLightWidth = getInt(KEY_NATIVE_EDGE_LIGHT_WIDTH, DEFAULT_NATIVE_EDGE_LIGHT_WIDTH)
-                .coerceIn(MIN_NATIVE_EDGE_LIGHT_WIDTH, MAX_NATIVE_EDGE_LIGHT_WIDTH),
-            nativeEdgeLightIntensity = getInt(
-                KEY_NATIVE_EDGE_LIGHT_INTENSITY,
-                DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY
-            ).coerceIn(0, MAX_EDGE_HIGHLIGHT_INTENSITY),
             edgeLightAngle = getInt(KEY_EDGE_LIGHT_ANGLE, DEFAULT_EDGE_LIGHT_ANGLE)
                 .coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
@@ -2262,7 +2136,7 @@ object WeTypeSettings {
             systemMaterialEnabled = getBoolean(KEY_SYSTEM_MATERIAL_ENABLED, DEFAULT_SYSTEM_MATERIAL_ENABLED),
             hyperMaterialEnabled = getBoolean(KEY_HYPER_MATERIAL_ENABLED, DEFAULT_HYPER_MATERIAL_ENABLED),
             glassOverrides = readGlassOverrides()
-        ).normalizeMaterialMode()
+        )
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -2293,15 +2167,14 @@ object WeTypeSettings {
         bottomCornerRadius = DEFAULT_BOTTOM_CORNER_RADIUS,
         keyCornerRadius = DEFAULT_KEY_CORNER_RADIUS,
         edgeHighlightEnabled = DEFAULT_EDGE_HIGHLIGHT_ENABLED,
-        colorOsLightAngle = DEFAULT_COLOROS_LIGHT_ANGLE,
+        backgroundLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.BACKGROUND),
+        iconLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.ICON),
+        keyLight = EdgeLightGroup.defaultFor(MaterialPresetTarget.KEY),
         candidateBackgroundAlpha = DEFAULT_CANDIDATE_BACKGROUND_ALPHA,
         candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
         candidateBackgroundLeftMarginDp = DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
         toolbarIconBgOpacity = DEFAULT_TOOLBAR_ICON_BG_OPACITY,
-        nativeEdgeLightEnabled = DEFAULT_NATIVE_EDGE_LIGHT_ENABLED,
-        nativeEdgeLightWidth = DEFAULT_NATIVE_EDGE_LIGHT_WIDTH,
-        nativeEdgeLightIntensity = DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
         edgeLightAngle = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
@@ -2342,7 +2215,7 @@ object WeTypeSettings {
         logoImageName = DEFAULT_LOGO_IMAGE_NAME,
         logoImageUpdatedAt = DEFAULT_LOGO_IMAGE_UPDATED_AT,
         fontMode = DEFAULT_FONT_MODE
-    ).normalizeMaterialMode()
+    )
 
     private fun SharedPreferences.containsAnyPersistedSetting(): Boolean {
         if (contains(KEY_LIGHT_COLOR) ||
@@ -2362,16 +2235,12 @@ object WeTypeSettings {
             contains(KEY_EDGE_LIGHT_WIDTH) ||
             contains(KEY_ICON_EDGE_LIGHT_ENABLED) ||
             contains(KEY_KEY_EDGE_LIGHT_ENABLED) ||
-            contains(KEY_COLOROS_LIGHT_ANGLE) ||
             contains(KEY_KEY_OPACITY) ||
             contains(KEY_CANDIDATE_BACKGROUND_ALPHA) ||
             contains(KEY_CANDIDATE_BACKGROUND_CORNER) ||
             contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) ||
             contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) ||
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
-            contains(KEY_NATIVE_EDGE_LIGHT_ENABLED) ||
-            contains(KEY_NATIVE_EDGE_LIGHT_WIDTH) ||
-            contains(KEY_NATIVE_EDGE_LIGHT_INTENSITY) ||
             contains(KEY_EDGE_LIGHT_ANGLE) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||

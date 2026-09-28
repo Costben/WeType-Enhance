@@ -88,4 +88,69 @@ class EdgeLightGroupTest {
     fun everyTargetReadsItsOwnField() {
         assertTrue(EdgeLightTarget.entries.size == 3)
     }
+
+    /**
+     * 分类下拉是这一类唯一的入口：「无预设」必须把这一类一起关掉，选到任何真实预设必须重新打开。
+     * 两个字段各改各的，就会出现「看着是无预设、键盘上还在画光」。
+     */
+    @Test
+    fun withPresetKeepsEnabledInSyncWithTheSelection() {
+        val on = EdgeLightGroup(enabled = true, presetId = MaterialPresetCatalog.DEFAULT_KEY)
+        val off = on.withPreset(MaterialPresetCatalog.NONE)
+        assertEquals(false, off.enabled)
+        assertEquals(MaterialPresetCatalog.NONE, off.presetId)
+        val back = off.withPreset(MaterialPresetCatalog.DEFAULT_ICON)
+        assertEquals(true, back.enabled)
+        assertEquals(MaterialPresetCatalog.DEFAULT_ICON, back.presetId)
+    }
+
+    @Test
+    fun selectingBuiltInPresetRestoresBothVisibleLightLayers() {
+        // Settings created before the preset UI can still contain edge=0/glow=0. A built-in
+        // selection must be visible even when it is the first selection after upgrading.
+        val stale = EdgeLightGroup(
+            enabled = true,
+            edgeEnabled = false,
+            glowEnabled = false,
+            presetId = MaterialPresetCatalog.NONE
+        )
+        val selected = stale.withPreset(MaterialPresetCatalog.DEFAULT_BACKGROUND)
+        assertTrue(selected.enabled)
+        assertTrue(selected.edgeEnabled)
+        assertTrue(selected.glowEnabled)
+        assertEquals(
+            WeTypeSettings.DEFAULT_EDGE_HIGHLIGHT_INTENSITY,
+            selected.edgeIntensity
+        )
+        assertEquals(WeTypeSettings.DEFAULT_GLOW_INTENSITY, selected.glowIntensity)
+    }
+
+    /** 三类的默认是同一件事：无预设，也就是不修改。 */
+    @Test
+    fun everyTargetDefaultsToNoPreset() {
+        EdgeLightTarget.entries.map { MaterialPresetTarget.valueOf(it.name) }.forEach { target ->
+            val group = EdgeLightGroup.defaultFor(target)
+            assertEquals(MaterialPresetCatalog.NONE, group.presetId)
+            assertEquals(false, group.enabled)
+        }
+    }
+
+    /** 「无预设」与自定义预设都是合法 id，不能被归一化改写掉。 */
+    @Test
+    fun normalizationKeepsNoneAndCustomPresetIds() {
+        assertEquals(
+            MaterialPresetCatalog.NONE,
+            EdgeLightGroup(presetId = MaterialPresetCatalog.NONE).normalized().presetId
+        )
+        val custom = EdgeLightGroup(presetId = "custom:coloros:2")
+        assertEquals("custom:coloros:2", custom.normalized().presetId)
+    }
+
+    /** 半截的偏好串（旧版只有 7 段）读回来时，预设 id 从兜底走，不半解析。 */
+    @Test
+    fun legacyFieldCountFallsBackToTheProvidedPreset() {
+        val group = EdgeLightGroup.parse("1,1,80,2,1,100,2", EdgeLightGroup())
+        assertEquals(MaterialPresetCatalog.DEFAULT_KEY, group.presetId)
+        assertEquals(true, group.enabled)
+    }
 }

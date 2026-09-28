@@ -34,7 +34,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
+import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -95,9 +95,8 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
         parsedGlassOverrides?.let { previewGlassOverrides = it }
     }
     DisposableEffect(preferencesContext) {
-        val stopObserving = WeTypeSystemMaterials.observeAvailability(preferencesContext) {
-            hyperMaterialAvailable = !WeTypeSystemMaterials.isColorOsBackend() &&
-                WeTypeSystemMaterials.isAvailable(preferencesContext)
+        val stopObserving = WeTypeHyperMaterial.observeAvailability(preferencesContext) {
+            hyperMaterialAvailable = WeTypeHyperMaterial.isAvailable(preferencesContext)
         }
         onDispose { stopObserving() }
     }
@@ -398,8 +397,6 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                             isDark = currentModeIsDark,
                             systemMaterialEnabled = systemMaterialEnabled,
                             hyperMaterialEnabled = hyperMaterialEnabled,
-                            nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-                            nativeEdgeLightIntensity = nativeEdgeLightIntensity,
                             showCornerGuide = subPage == SettingsSubPage.CORNER_BLUR,
                             accentColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
                                 ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR,

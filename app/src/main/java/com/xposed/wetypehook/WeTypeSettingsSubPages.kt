@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
+import com.xposed.wetypehook.wetype.settings.MaterialPresetCatalog
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 
     /**
@@ -72,8 +73,6 @@ internal fun WeTypeSettingsState.renderAppearancePreview(
                 isDark = currentModeIsDark,
                 systemMaterialEnabled = systemMaterialEnabled,
                 hyperMaterialEnabled = hyperMaterialEnabled,
-                nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-                nativeEdgeLightIntensity = nativeEdgeLightIntensity,
                 pinned = pinned,
                 onTogglePin = onTogglePin,
                 keyboardPreviewEnabled = keyboardPreviewEnabled,
@@ -182,7 +181,6 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                 SettingsSubPage.MATERIAL -> MaterialSubPageContent(
                     systemMaterialEnabled = systemMaterialEnabled,
                     onSystemMaterialEnabledChange = ::selectSystemMaterialEnabled,
-                    colorOsMaterialAvailable = colorOsMaterialAvailable,
                     edgeHighlightEnabled = edgeHighlightEnabled,
                     onOpenEdgeLightPage = { openSubPage(SettingsSubPage.EDGE_LIGHT) },
                     hyperMaterialEnabled = hyperMaterialEnabled,
@@ -194,28 +192,36 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                     onGlassReset = {
                         val defaults = GlassMaterialOverrides().withGlassEnabled(true)
                         GlassOverrideField.entries.forEach { glassInput[it.ordinal] = defaults.text(it) }
-                    },
-                    nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-                    onNativeEdgeLightEnabledChange = ::selectNativeEdgeLightEnabled,
-                    colorOsLightAngle = colorOsLightAngle,
-                    onColorOsLightAngleChange = { colorOsLightAngle = it },
-                    nativeEdgeLightWidth = nativeEdgeLightWidth,
-                    onNativeEdgeLightWidthChange = { nativeEdgeLightWidth = it },
-                    nativeEdgeLightIntensity = nativeEdgeLightIntensity,
-                    onNativeEdgeLightIntensityChange = { nativeEdgeLightIntensity = it }
+                    }
                 )
 
                 SettingsSubPage.EDGE_LIGHT -> EdgeLightSubPageContent(
                     edgeHighlightEnabled = edgeHighlightEnabled,
                     onEdgeHighlightEnabledChange = ::selectEdgeHighlightEnabled,
                     edgeLightAngle = edgeLightAngle,
-                    onEdgeLightAngleChange = { edgeLightAngle = it },
+                    onEdgeLightAngleChange = ::selectEdgeLightAngle,
                     backgroundLight = backgroundLight,
-                    onBackgroundLightChange = { backgroundLight = it },
                     iconLight = iconLight,
-                    onIconLightChange = { iconLight = it },
                     keyLight = keyLight,
-                    onKeyLightChange = { keyLight = it }
+                    customPresets = advancedPresets,
+                    onMaterialPresetSelected = ::selectMaterialPreset,
+                    allMaterialPresetsEnabled = allMaterialPresetsEnabled,
+                    onAllMaterialPresetsEnabledChange = ::selectAllMaterialPresetsEnabled,
+                    onOpenAdvancedParameters = {
+                        openSubPage(SettingsSubPage.ADVANCED_PARAMETERS)
+                    },
+                    onOpenPresetDocumentation = ::openMaterialPresetDocumentation,
+                    onRestoreDefaults = ::restoreEdgeLightDefaults
+                )
+
+                SettingsSubPage.ADVANCED_PARAMETERS -> AdvancedParametersSubPageContent(
+                    builtInPresets = MaterialPresetCatalog.all,
+                    customPresets = advancedPresets,
+                    draftBaseId = advancedDraftBaseId,
+                    onDraftBaseIdChange = { advancedDraftBaseId = it },
+                    onAddPreset = ::addAdvancedPreset,
+                    onUpdatePreset = ::updateAdvancedPreset,
+                    onRemovePreset = ::removeAdvancedPreset
                 )
 
                 SettingsSubPage.CLIPBOARD -> ClipboardSubPageContent(

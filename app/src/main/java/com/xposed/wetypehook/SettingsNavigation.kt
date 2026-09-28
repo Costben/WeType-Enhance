@@ -24,7 +24,7 @@ internal sealed interface SettingsRoute : NavKey {
 
 /**
  * 设置页，标题同时用作页标题栏文案。其中 [EDGE_LIGHT] 由「高级材质」再推进一层，
- * 是当前唯一的三级页。
+ * [ADVANCED_PARAMETERS] 又由「光感设置」推进一层，是当前最深的一条链。
  */
 @Serializable
 internal enum class SettingsSubPage(val title: String) {
@@ -34,11 +34,12 @@ internal enum class SettingsSubPage(val title: String) {
     KEYBOARD_LOGO("键盘 Logo"),
     MATERIAL("高级材质"),
     EDGE_LIGHT("光感设置"),
+    ADVANCED_PARAMETERS("高级参数调节"),
     CLIPBOARD("剪贴板")
 }
 
-/** 返回栈深度上限：一级页 + 二级页 + 三级页。 */
-internal const val MAX_SUB_PAGE_DEPTH = 3
+/** 返回栈深度上限：一级页 + 二级页 + 三级页 + 四级页（高级材质 → 光感设置 → 高级参数调节）。 */
+internal const val MAX_SUB_PAGE_DEPTH = 4
 
 /** 「界面美化」下暴露实时预览的二级页；剪贴板属于「功能增强」，不涉及外观。 */internal val APPEARANCE_PREVIEW_SUB_PAGES = setOf(
     SettingsSubPage.COLORS,

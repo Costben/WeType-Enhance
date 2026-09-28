@@ -112,8 +112,6 @@
     <string name="settings_hyper_material_preview">Material</string>
     <string name="settings_miui_material_title">MIUI system material</string>
     <string name="settings_miui_material_desc">Render the keyboard plate and blur with the MIUI system material.</string>
-    <string name="settings_coloros_material_title">ColorOS system material</string>
-    <string name="settings_coloros_material_desc">Draw the edge light and inner shadow with the native ColorOS material. Width and intensity below apply to it.</string>
     <string name="settings_glass_params">Glass effect parameters</string>
     <string name="settings_glass_params_desc">42 finite numbers, separated by commas; keeps the native parameter order and units.</string>
     <string name="settings_glass_blur">Glass blur radii</string>

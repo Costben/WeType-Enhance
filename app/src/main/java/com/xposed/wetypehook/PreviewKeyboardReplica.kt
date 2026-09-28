@@ -52,7 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.graphics.WeTypeCornerRadii
-import com.xposed.wetypehook.wetype.graphics.WeTypeSystemMaterials
+import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
 import com.xposed.wetypehook.wetype.graphics.WeTypeSmoothRoundedShape
 import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -101,8 +101,6 @@ internal fun KeyboardReplica(
     isDark: Boolean,
     systemMaterialEnabled: Boolean,
     hyperMaterialEnabled: Boolean,
-    nativeEdgeLightEnabled: Boolean,
-    nativeEdgeLightIntensity: Int = WeTypeSettings.DEFAULT_NATIVE_EDGE_LIGHT_INTENSITY,
     showCornerGuide: Boolean,
     accentColor: Int,
     toolbarLogo: Bitmap?,
@@ -114,20 +112,9 @@ internal fun KeyboardReplica(
     val context = LocalContext.current
     val density = LocalDensity.current
     // 面板按真机的材质分档画，与 PreviewCard 同口径。
-    val materialPanel = NativeMaterialPreview.panel(
-        color = color,
-        isDark = isDark,
-        moduleBlurDp = (blurRadius / 3f).coerceAtLeast(0f),
-        systemBlurDp = with(density) { NativeMaterialPreview.SYSTEM_BLUR_PX.toDp().value },
-        fallbackColor = WeTypeSystemMaterials.fallbackColor(isDark),
-        systemMaterialEnabled = systemMaterialEnabled,
-        hyperMaterialEnabled = hyperMaterialEnabled,
-        colorOsBackend = WeTypeSystemMaterials.isColorOsBackend(),
-        edgeHighlightEnabled = edgeHighlightEnabled,
-        nativeEdgeLightEnabled = nativeEdgeLightEnabled,
-        nativeEdgeLightIntensity = nativeEdgeLightIntensity
-    )
-    val displayColor = materialPanel.color
+    val systemMaterialActive = systemMaterialEnabled && hyperMaterialEnabled
+    val displayColor = if (systemMaterialActive) WeTypeHyperMaterial.fallbackColor(isDark) else color
+    val previewBlurDp = (blurRadius / 3f).coerceAtLeast(0f)
     val topCornerDp = cornerRadius.coerceIn(0, WeTypeSettings.MAX_CORNER_RADIUS).dp
     val bottomCornerDp = bottomCornerRadius.coerceIn(0, WeTypeSettings.MAX_BOTTOM_CORNER_RADIUS).dp
     val topCornerPx = with(density) { topCornerDp.toPx() }
@@ -188,7 +175,7 @@ internal fun KeyboardReplica(
                     color = displayColor,
                     topCornerRadius = topCornerDp,
                     bottomCornerRadius = bottomCornerDp,
-                    edgeHighlightEnabled = materialPanel.moduleBloom && backgroundLight.enabled,
+                    edgeHighlightEnabled = edgeHighlightEnabled && backgroundLight.enabled,
                     backgroundLight = backgroundLight,
                     angleDegrees = keyEdgeLight.angleDegrees,
                     isDark = isDark
@@ -198,7 +185,7 @@ internal fun KeyboardReplica(
             // 磨砂背板。真机的毛玻璃模糊的是键盘底下那层东西，所以有壁纸时模糊的就是壁纸本身；
             // 没设壁纸才退回内置纹理。纹理是不透明 JPG，拿它当背板会把壁纸整片盖死，
             // 底下的不透明度滑块也就白调了。
-            if (materialPanel.backdropVisible) {
+            if ((displayColor ushr 24) < 0xFF) {
                 val backdrop: Painter = wallpaper
                     ?.let { BitmapPainter(it.asImageBitmap()) }
                     ?: painterResource(R.drawable.natural_texture_004)
@@ -208,14 +195,13 @@ internal fun KeyboardReplica(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .matchParentSize()
-                        .blur(materialPanel.backdropBlurDp.dp)
+                        .blur(previewBlurDp.dp)
                 )
             }
             Box(
                 modifier = Modifier
                     .matchParentSize()
                     .background(ComposeColor(displayColor))
-                    .nativeMaterialEdgeGlow(panelRadii, materialPanel.nativeEdgeGlow)
             )
             val toolbarTopDp = with(density) { geometry.toolbarTopPx.toDp() }
             val toolbarHeightDp = with(density) { geometry.toolbarHeightPx.toDp() }

@@ -120,9 +120,6 @@ class EdgeLightSettingsPlumbingTest {
             "private const val %KEY% = \"%LITERAL%\"",
             // 快照字段
             "val %FIELD%: EdgeLightGroup = EdgeLightGroup(),",
-            // 定点更新入口：参数 + 透传
-            "%FIELD%: EdgeLightGroup? = null,",
-            "%FIELD% = %FIELD% ?: current.%FIELD%,",
             // 整页保存入口的参数（与快照字段同形，靠前面的 val 区分）
             "\n        %FIELD%: EdgeLightGroup = EdgeLightGroup(),",
             "%FIELD% = %FIELD%,",

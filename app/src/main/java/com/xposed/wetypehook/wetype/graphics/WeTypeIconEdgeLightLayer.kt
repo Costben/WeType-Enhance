@@ -6,26 +6,19 @@ import android.graphics.ColorFilter
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
-import android.view.View
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
-import java.lang.ref.WeakReference
 
 /**
  * 把边缘光叠在图标自身的 drawable 之上。
  *
  * 工具栏图标与 Logo 的圆底都是圆形，直接取 `min(w, h) / 2` 作半径即可让轮廓与真实形状重合；
- * 原生模式走 [WeTypeNativeEdgeLightManager] + RenderNode 材质覆盖层，失败或禁用时
- * 平滑降级至模块自绘 [fallback]。
+ * 光感由模块自绘 [light] 画。
  */
 internal class WeTypeIconEdgeLightLayer(
     private val context: Context,
     private val host: Drawable?,
     private val light: WeTypeEdgeLightSource,
-    private val backend: WeTypeEdgeLightBackend,
     private val dark: Boolean,
-    private val fallback: WeTypeEdgeLightSource?,
-    private val hostViewRef: WeakReference<View>? = null,
-    private val nativeSource: WeTypeEdgeLightSource? = null,
     private val target: WeTypeIconEdgeLightTarget = WeTypeIconEdgeLightTarget.IMAGE_CONTENT
 ) : Drawable() {
 
@@ -41,49 +34,15 @@ internal class WeTypeIconEdgeLightLayer(
             it.draw(canvas)
         }
 
-        val active = isIconEdgeLightActive(context)
-        val hostView = hostViewRef?.get()
-        if (!active) {
-            WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
-            return
-        }
-
-        val nativeSourceAvailable = nativeSource != null &&
-            WeTypeSystemMaterials.isColorOsBackend() &&
-            WeTypeSystemMaterials.isNativeStrokeEnabled(context) &&
-            WeTypeSettings.isSystemMaterialEnabledXposed() &&
-            WeTypeSettings.isNativeEdgeLightEnabledXposed() &&
-            !WeTypeSettings.isEdgeHighlightEnabledXposed(context)
-
-        val currentBackend = resolveEdgeLightBackend(
-            enabled = active,
-            nativeSourceAvailable = nativeSourceAvailable,
+        val backend = resolveEdgeLightBackend(
+            enabled = isIconEdgeLightActive(context),
             selfDrawnSourceEnabled = WeTypeSettings.isEdgeHighlightEnabledXposed(context)
         )
-
-        if (currentBackend == WeTypeEdgeLightBackend.NONE) {
-            WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
-            return
-        }
+        if (backend != WeTypeEdgeLightBackend.SELF_DRAWN) return
 
         val save = canvas.save()
         canvas.clipRect(bounds)
-        val rect = Rect(bounds)
-        val radius = minOf(bounds.width(), bounds.height()) / 2f
-
-        if (currentBackend == WeTypeEdgeLightBackend.NATIVE) {
-            val drawn = nativeSource?.draw(canvas, rect, radius, dark) ?: light.draw(canvas, rect, radius, dark)
-            if (!drawn) {
-                WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
-                if (WeTypeSettings.isEdgeHighlightEnabledXposed(context)) {
-                    fallback?.draw(canvas, rect, radius, dark)
-                }
-            }
-        } else {
-            WeTypeNativeEdgeLightManager.hideIconOverlay(hostView)
-            fallback?.draw(canvas, rect, radius, dark)
-        }
-
+        light.draw(canvas, Rect(bounds), minOf(bounds.width(), bounds.height()) / 2f, dark)
         canvas.restoreToCount(save)
     }
 

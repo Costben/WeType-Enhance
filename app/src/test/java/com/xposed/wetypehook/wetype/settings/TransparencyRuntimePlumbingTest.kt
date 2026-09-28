@@ -39,15 +39,6 @@ class TransparencyRuntimePlumbingTest {
     }
 
     @Test
-    fun colorOsBackplateKeepsTheConfiguredAlpha() {
-        val windowHooks = source(
-            "src/main/java/com/xposed/wetypehook/wetype/hook/WeTypeWindowHooks.kt"
-        )
-        assertFalse(windowHooks.contains("MIN_PANEL_ALPHA"))
-        assertTrue(windowHooks.contains("carrier, context, style, skipStroke = true"))
-    }
-
-    @Test
     fun existingToolbarDrawablesAreRefreshedAfterRemoteChanges() {
         val resourceHooks = source(
             "src/main/java/com/xposed/wetypehook/wetype/hook/WeTypeResourceHooks.kt"

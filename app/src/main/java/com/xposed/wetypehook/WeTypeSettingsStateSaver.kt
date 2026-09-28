@@ -38,11 +38,10 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "backgroundLight" to backgroundLight.text(),
     "iconLight" to iconLight.text(),
     "keyLight" to keyLight.text(),
+    "backgroundLightPreset" to backgroundLight.presetId,
+    "iconLightPreset" to iconLight.presetId,
+    "keyLightPreset" to keyLight.presetId,
     "edgeLightAngle" to edgeLightAngle,
-    "nativeEdgeLightEnabled" to nativeEdgeLightEnabled,
-    "nativeEdgeLightWidth" to nativeEdgeLightWidth,
-    "nativeEdgeLightIntensity" to nativeEdgeLightIntensity,
-    "colorOsLightAngle" to colorOsLightAngle,
     "candidateBackgroundAlpha" to candidateBackgroundAlpha,
     "candidateBackgroundCorner" to candidateBackgroundCorner,
     "candidateBackgroundLeftMarginDp" to candidateBackgroundLeftMarginDp,
@@ -158,13 +157,12 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
     keyCornerRadius = saved["keyCornerRadius"] as? Int ?: keyCornerRadius
     edgeHighlightEnabled = saved["edgeHighlightEnabled"] as? Boolean ?: edgeHighlightEnabled
     backgroundLight = EdgeLightGroup.parse(saved["backgroundLight"] as? String, backgroundLight)
+        .copy(presetId = saved["backgroundLightPreset"] as? String ?: backgroundLight.presetId)
     iconLight = EdgeLightGroup.parse(saved["iconLight"] as? String, iconLight)
+        .copy(presetId = saved["iconLightPreset"] as? String ?: iconLight.presetId)
     keyLight = EdgeLightGroup.parse(saved["keyLight"] as? String, keyLight)
+        .copy(presetId = saved["keyLightPreset"] as? String ?: keyLight.presetId)
     edgeLightAngle = saved["edgeLightAngle"] as? Int ?: edgeLightAngle
-    nativeEdgeLightEnabled = saved["nativeEdgeLightEnabled"] as? Boolean ?: nativeEdgeLightEnabled
-    nativeEdgeLightWidth = saved["nativeEdgeLightWidth"] as? Int ?: nativeEdgeLightWidth
-    nativeEdgeLightIntensity = saved["nativeEdgeLightIntensity"] as? Int ?: nativeEdgeLightIntensity
-    colorOsLightAngle = saved["colorOsLightAngle"] as? Int ?: colorOsLightAngle
     candidateBackgroundAlpha = saved["candidateBackgroundAlpha"] as? Int ?: candidateBackgroundAlpha
     candidateBackgroundCorner = saved["candidateBackgroundCorner"] as? Int ?: candidateBackgroundCorner
     candidateBackgroundLeftMarginDp = saved["candidateBackgroundLeftMarginDp"] as? Int
@@ -223,8 +221,7 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
     colorInput = saved["colorInput"] as? String ?: colorInput
     alphaValue = saved["alphaValue"] as? Int ?: alphaValue
     when {
-        nativeEdgeLightEnabled -> selectNativeEdgeLightEnabled(true)
-        edgeHighlightEnabled -> selectEdgeHighlightEnabled(true)
         systemMaterialEnabled -> selectSystemMaterialEnabled(true)
+        edgeHighlightEnabled -> selectEdgeHighlightEnabled(true)
     }
 }
