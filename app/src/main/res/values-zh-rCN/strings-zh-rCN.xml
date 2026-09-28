@@ -150,4 +150,5 @@
     <string name="update_dialog_confirm">更新</string>
     <string name="update_dialog_version">最新版本 v%1$s</string>
     <string name="update_dialog_changelog">更新内容</string>
+    <string name="update_dialog_skip_version">跳过本次更新</string>
 </resources>

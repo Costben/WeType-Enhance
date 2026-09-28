@@ -3,16 +3,21 @@ package com.xposed.wetypehook
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.rememberScrollState
@@ -22,9 +27,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
@@ -32,7 +39,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.graphics.WeTypeHyperMaterial
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -43,6 +52,8 @@ import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.Checkbox
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
@@ -114,11 +125,13 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
             }
         }
     }
-    // 每次进入模块设置时检查一次更新，失败静默忽略。
+    // 每次进入模块设置时检查一次更新，失败静默忽略；勾过「跳过本次更新」的版本不再弹。
     LaunchedEffect(Unit) {
         ModuleUpdateChecker.check(BuildConfig.VERSION_NAME)?.let { info ->
-            updateInfo = info
-            showUpdateSheet = true
+            if (!ModuleUpdateSkip.isSkipped(preferencesContext, info.versionName)) {
+                updateInfo = info
+                showUpdateSheet = true
+            }
         }
     }
 
@@ -434,15 +447,25 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
     }
 
     updateInfo?.let { info ->
+        // miuix 的底部弹窗默认只吃 IME inset，手势条/导航栏会压住底部按钮，这里自己补上。
+        val navigationBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        var skipThisVersion by remember {
+            mutableStateOf(ModuleUpdateSkip.isSkipped(preferencesContext, info.versionName))
+        }
         WindowBottomSheet(
             show = showUpdateSheet,
             title = stringResource(R.string.update_dialog_title),
+            backgroundColor = MiuixTheme.colorScheme.surface,
+            insideMargin = DpSize(24.dp, 24.dp + navigationBarBottom),
             onDismissRequest = { showUpdateSheet = false }
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    insideMargin = PaddingValues(16.dp)
+                    insideMargin = PaddingValues(16.dp),
+                    colors = CardDefaults.defaultColors(
+                        color = MiuixTheme.colorScheme.surfaceContainerHighest
+                    )
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
@@ -472,6 +495,32 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
+                // 勾上即落盘、取消勾选即清除，这样无论用户按取消、更新还是划走都算数。
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            skipThisVersion = !skipThisVersion
+                            ModuleUpdateSkip.setSkipped(
+                                preferencesContext,
+                                if (skipThisVersion) info.versionName else null
+                            )
+                        },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        state = if (skipThisVersion) ToggleableState.On else ToggleableState.Off,
+                        onClick = null
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.update_dialog_skip_version),
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
