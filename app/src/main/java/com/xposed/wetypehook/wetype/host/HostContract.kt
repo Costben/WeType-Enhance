@@ -412,7 +412,13 @@ internal sealed class ContractOutcome {
 
 private const val CACHE_PREFS = "wetype_host_contract"
 private const val CACHE_FINGERPRINT_KEY = "__fingerprint"
-private const val CACHE_FORMAT = "v1"
+
+/**
+ * 缓存格式版本。v2 起才把「字段 + 方法」双载体句柄的两个载体都写进描述符（companion 那条
+ * 契约就是这种形状）。v1 写下的条目只留方法，读回来字段为空；这种旧值仍能解码成非 null，
+ * 缓存不会自我修正，所以必须靠版本号整轮作废。
+ */
+private const val CACHE_FORMAT = "v2"
 
 private val PRIMITIVE_TYPES = mapOf(
     "boolean" to Boolean::class.javaPrimitiveType,
@@ -522,7 +528,11 @@ internal object WeTypeHostContracts {
                 is ContractOutcome.Resolved -> {
                     resolved++
                     val notes = outcome.notes.takeIf { it.isNotEmpty() }?.joinToString("; ")?.let { " note=$it" }.orEmpty()
-                    Log.i(TAG, "contract[${outcome.id}]=${outcome.handle.label} by=${outcome.strategy}$notes")
+                    // 双载体句柄（字段 + 方法）的 label 只显示方法，字段丢没丢看不出来 —— 报告里必须显式写。
+                    val field = outcome.handle.hostField
+                        ?.let { " field=${(outcome.handle.owner ?: it.declaringClass).simpleName}#${it.name}" }
+                        .orEmpty()
+                    Log.i(TAG, "contract[${outcome.id}]=${outcome.handle.label}$field by=${outcome.strategy}$notes")
                 }
                 is ContractOutcome.Unresolved -> {
                     unresolved++
@@ -582,20 +592,46 @@ internal object WeTypeHostContracts {
         }
     }
 
-    /** 指纹一致时按描述符重建句柄；任一失配返回 null，让调用方走全量解析。 */
+    /**
+     * 指纹一致时按描述符重建句柄；任一失配返回 null，让调用方走全量解析。
+     *
+     * 每条放弃的原因都要写日志：静默回退会让「缓存永远不生效」这种问题一直看不出来。
+     */
     private fun restoreFromCache(classLoader: ClassLoader): Map<String, HostHandle>? {
         val current = fingerprint ?: return null
         val preferences = cachePreferences() ?: return null
-        if (preferences.getString(CACHE_FINGERPRINT_KEY, null) != current) return null
+        val stored = preferences.getString(CACHE_FINGERPRINT_KEY, null)
+        if (stored != current) {
+            Log.i(TAG, "host contract cache skipped: fingerprint stored=$stored current=$current")
+            return null
+        }
         val restored = LinkedHashMap<String, HostHandle>()
         for (contract in HOST_CONTRACTS) {
-            val raw = preferences.getString(contract.id, null) ?: return null
-            restored[contract.id] = decode(raw, classLoader) ?: return null
+            val raw = preferences.getString(contract.id, null)
+            if (raw == null) {
+                Log.i(TAG, "host contract cache skipped: ${contract.id} 无条目")
+                return null
+            }
+            val handle = decode(raw, classLoader)
+            if (handle == null) {
+                Log.i(TAG, "host contract cache skipped: ${contract.id} 无法重建 from=$raw")
+                return null
+            }
+            restored[contract.id] = handle
         }
         return restored
     }
 
-    private fun encode(handle: HostHandle): String? = when {
+    internal fun encode(handle: HostHandle): String? = when {
+        handle.method != null && handle.hostField != null -> listOf(
+            "mf",
+            handle.method.declaringClass.name,
+            handle.method.name,
+            handle.method.parameterTypes.joinToString(";") { it.name },
+            handle.hostField.declaringClass.name,
+            handle.hostField.name
+        ).joinToString("|")
+
         handle.method != null -> listOf(
             "m",
             handle.method.declaringClass.name,
@@ -617,7 +653,7 @@ internal object WeTypeHostContracts {
         else -> null
     }
 
-    private fun decode(raw: String, classLoader: ClassLoader): HostHandle? = runCatching {
+    internal fun decode(raw: String, classLoader: ClassLoader): HostHandle? = runCatching {
         val parts = raw.split("|")
         when (parts.firstOrNull()) {
             "c" -> loadClassOrNull(parts[1], classLoader)?.let { HostHandle(owner = it) }
@@ -628,31 +664,48 @@ internal object WeTypeHostContracts {
                 HostHandle(owner = owner, constant = constant)
             }
 
-            "m" -> {
-                val owner = loadClassOrNull(parts[1], classLoader) ?: return null
-                val types = parts[3].takeIf { it.isNotEmpty() }
-                    ?.split(";")
-                    ?.map { typeByName(it, classLoader) ?: return null }
-                    .orEmpty()
-                val method = owner.declaredMethods.firstOrNull { candidate ->
-                    candidate.name == parts[2] &&
-                        candidate.parameterTypes.size == types.size &&
-                        candidate.parameterTypes.indices.all { candidate.parameterTypes[it] == types[it] }
-                } ?: return null
-                method.isAccessible = true
-                HostHandle(owner = owner, method = method)
+            "mf" -> {
+                val method = methodByDescriptor(parts[1], parts[2], parts[3], classLoader) ?: return null
+                val field = fieldByDescriptor(parts[4], parts[5], classLoader) ?: return null
+                HostHandle(owner = method.declaringClass, method = method, hostField = field)
             }
 
-            "f" -> {
-                val owner = loadClassOrNull(parts[1], classLoader) ?: return null
-                val field = owner.declaredFields.firstOrNull { it.name == parts[2] } ?: return null
-                field.isAccessible = true
-                HostHandle(owner = owner, hostField = field)
-            }
+            "m" -> methodByDescriptor(parts[1], parts[2], parts[3], classLoader)
+                ?.let { HostHandle(owner = it.declaringClass, method = it) }
+
+            "f" -> fieldByDescriptor(parts[1], parts[2], classLoader)
+                ?.let { HostHandle(owner = it.declaringClass, hostField = it) }
 
             else -> null
         }
     }.getOrNull()
+
+    private fun methodByDescriptor(
+        ownerName: String,
+        name: String,
+        parameters: String,
+        classLoader: ClassLoader
+    ): Method? {
+        val owner = loadClassOrNull(ownerName, classLoader) ?: return null
+        val types = parameters.takeIf { it.isNotEmpty() }
+            ?.split(";")
+            ?.map { typeByName(it, classLoader) ?: return null }
+            .orEmpty()
+        val method = owner.declaredMethods.firstOrNull { candidate ->
+            candidate.name == name &&
+                candidate.parameterTypes.size == types.size &&
+                candidate.parameterTypes.indices.all { candidate.parameterTypes[it] == types[it] }
+        } ?: return null
+        method.isAccessible = true
+        return method
+    }
+
+    private fun fieldByDescriptor(ownerName: String, name: String, classLoader: ClassLoader): Field? {
+        val owner = loadClassOrNull(ownerName, classLoader) ?: return null
+        val field = owner.declaredFields.firstOrNull { it.name == name } ?: return null
+        field.isAccessible = true
+        return field
+    }
 
     private fun typeByName(name: String, classLoader: ClassLoader): Class<*>? =
         PRIMITIVE_TYPES[name] ?: loadClassOrNull(name, classLoader)
