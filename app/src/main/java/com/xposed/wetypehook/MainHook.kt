@@ -21,10 +21,13 @@ import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import com.xposed.wetypehook.oplus.OplusAiWriterHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeClipboardHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeGestureHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeKeyLabelHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
+import com.xposed.wetypehook.wetype.hook.WeTypeSettingsToolbarHooks
+import com.xposed.wetypehook.wetype.hook.WeTypeToolbarAiWriterHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeUpdateHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
@@ -165,6 +168,13 @@ class MainHook : XposedModule() {
 
         HookEnvironment.updateClassLoader(param.classLoader)
         val isMiuiImeSupport = PropertyUtils["ro.miui.support_miui_ime_bottom", "0"] == "1"
+        if (packageName == "com.oplus.aiwriter") {
+            recordActiveTarget(ActiveTarget(TARGET_KIND_PACKAGE, packageName, sourceDir = param.applicationInfo.sourceDir))
+            HookEnvironment.withHookScope("oplus.aiwriter") {
+                OplusAiWriterHooks.install(param.classLoader)
+            }
+            return
+        }
         if (packageName == MIUI_PHRASE_PACKAGE) {
             recordActiveTarget(ActiveTarget(
                 kind = TARGET_KIND_PHRASE,
@@ -347,6 +357,12 @@ class MainHook : XposedModule() {
         HookEnvironment.withHookScope("wetype.clipboard") { WeTypeClipboardHooks.install(sourceDir, classLoader) }
         HookEnvironment.withHookScope("wetype.gesture") { WeTypeGestureHooks.install(sourceDir, classLoader) }
         HookEnvironment.withHookScope("wetype.keylabel") { WeTypeKeyLabelHooks.install(sourceDir, classLoader) }
+        HookEnvironment.withHookScope("wetype.toolbar-aiwriter") {
+            WeTypeToolbarAiWriterHooks.install(sourceDir, classLoader)
+        }
+        HookEnvironment.withHookScope("wetype.toolbar-aiwriter-settings") {
+            WeTypeSettingsToolbarHooks.install(classLoader)
+        }
     }
 
     private fun installBaseImeHooks(forceTransparentBottomView: Boolean) {

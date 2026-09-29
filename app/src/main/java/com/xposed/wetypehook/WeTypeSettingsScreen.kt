@@ -239,6 +239,7 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
 
                             1 -> {
                                 GestureTabContent(
+                                    colorosAiWriterEnabled = colorosAiWriterEnabled,
                                     qwertyGestureEnabled = qwertyGestureEnabled,
                                     onQwertyGestureEnabledChange = { qwertyGestureEnabled = it },
                                     t9GestureEnabled = t9GestureEnabled,
@@ -275,6 +276,8 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                             2 -> {
                                 FeatureTabContent(
                                     onOpenSubPage = openSubPage,
+                                    colorosAiWriterEnabled = colorosAiWriterEnabled,
+                                    onColorosAiWriterEnabledChange = { colorosAiWriterEnabled = it },
                                     disableHotUpdate = disableHotUpdate,
                                     onDisableHotUpdateChange = { disableHotUpdate = it },
                                     activationStatus = activationStatus,

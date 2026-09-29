@@ -93,7 +93,10 @@ class KeyGestureResolver(
                 return false
             }
             val bindings = WeTypeGestureSettings.parseBindings(WeTypeSettings.getGestureBindingsJsonXposed())
-            val action = bindings[keyChar] ?: GestureAction.None
+            var action = bindings[keyChar] ?: GestureAction.None
+            if (action == GestureAction.OpenAiWriter && !WeTypeSettings.isColorosAiWriterEnabledXposed()) {
+                action = GestureAction.None
+            }
             boundAction = action
 
             val thresholdDp = if (isT9) {

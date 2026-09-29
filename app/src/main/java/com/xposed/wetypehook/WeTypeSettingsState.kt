@@ -114,6 +114,7 @@ internal class WeTypeSettingsState(
     var candidatePinyinLeftMarginDp by mutableIntStateOf(snapshot.candidatePinyinLeftMarginDp)
     var toolbarIconBgOpacity by mutableIntStateOf(snapshot.toolbarIconBgOpacity)
     var disableHotUpdate by mutableStateOf(snapshot.disableHotUpdate)
+    var colorosAiWriterEnabled by mutableStateOf(snapshot.colorosAiWriterEnabled)
     var showCrossDeviceClipboard by mutableStateOf(snapshot.showCrossDeviceClipboard)
     var removeClipboardRetentionLimit by mutableStateOf(snapshot.removeClipboardRetentionLimit)
     var removeClipboardTextLimit by mutableStateOf(snapshot.removeClipboardTextLimit)
@@ -568,6 +569,7 @@ internal class WeTypeSettingsState(
             toolbarIconBgOpacity = toolbarIconBgOpacity,
             appearanceColors = currentAppearanceColors(),
             disableHotUpdate = disableHotUpdate,
+            colorosAiWriterEnabled = colorosAiWriterEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -658,6 +660,7 @@ internal class WeTypeSettingsState(
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
+        colorosAiWriterEnabled = WeTypeSettings.DEFAULT_COLOROS_AI_WRITER_ENABLED
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
         removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT

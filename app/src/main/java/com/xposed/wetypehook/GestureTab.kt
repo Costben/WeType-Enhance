@@ -17,6 +17,7 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 
 
 internal fun LazyListScope.GestureTabContent(
+    colorosAiWriterEnabled: Boolean = false,
     qwertyGestureEnabled: Boolean,
     onQwertyGestureEnabledChange: (Boolean) -> Unit,
     t9GestureEnabled: Boolean,
@@ -215,6 +216,7 @@ internal fun LazyListScope.GestureTabContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             GestureKeyBindingEditor(
+                colorosAiWriterEnabled = colorosAiWriterEnabled,
                 bindingsJson = gestureBindingsJson,
                 onBindingsChange = onGestureBindingsJsonChange
             )

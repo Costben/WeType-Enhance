@@ -267,7 +267,10 @@ internal object WeTypeKeyLabelHooks {
 
         val keyChar = KeyGestureResolver.resolveKeyChar(drawCtx, keyDataMethod, isT9)
         if (keyChar == '\u0000') return
-        val action = bindings()[keyChar] ?: GestureAction.None
+        var action = bindings()[keyChar] ?: GestureAction.None
+        if (action == GestureAction.OpenAiWriter && !WeTypeSettings.isColorosAiWriterEnabledXposed()) {
+            action = GestureAction.None
+        }
         if (action == GestureAction.None || action == GestureAction.Disable) return
         val text = action.shortTitle
         if (text.isEmpty()) return

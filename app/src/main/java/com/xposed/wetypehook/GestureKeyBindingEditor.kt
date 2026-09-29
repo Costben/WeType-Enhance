@@ -45,12 +45,27 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 internal fun GestureKeyBindingEditor(
+    colorosAiWriterEnabled: Boolean = false,
     bindingsJson: String,
     onBindingsChange: (String) -> Unit
 ) {
     var selectedKeyboardTab by rememberSaveable { mutableIntStateOf(0) }
     var editingKey by remember { mutableStateOf<Char?>(null) }
     val bindings = remember(bindingsJson) { WeTypeGestureSettings.parseBindings(bindingsJson) }
+    val displayBindings = remember(bindings, colorosAiWriterEnabled) {
+        if (colorosAiWriterEnabled) {
+            bindings
+        } else {
+            bindings.filterValues { it != GestureAction.OpenAiWriter }
+        }
+    }
+    val availableActions = remember(colorosAiWriterEnabled) {
+        if (colorosAiWriterEnabled) {
+            GestureAction.entries
+        } else {
+            GestureAction.entries.filter { it != GestureAction.OpenAiWriter }
+        }
+    }
     val context = LocalContext.current
 
     Column(
@@ -119,7 +134,7 @@ internal fun GestureKeyBindingEditor(
                     Box(modifier = Modifier.weight(1f)) {
                         GestureKeyButton(
                             keyLabel = char.uppercaseChar().toString(),
-                            action = bindings[char] ?: GestureAction.None,
+                            action = displayBindings[char] ?: GestureAction.None,
                             onClick = { editingKey = char }
                         )
                     }
@@ -138,7 +153,7 @@ internal fun GestureKeyBindingEditor(
                     Box(modifier = Modifier.weight(1f)) {
                         GestureKeyButton(
                             keyLabel = char.uppercaseChar().toString(),
-                            action = bindings[char] ?: GestureAction.None,
+                            action = displayBindings[char] ?: GestureAction.None,
                             onClick = { editingKey = char }
                         )
                     }
@@ -157,7 +172,7 @@ internal fun GestureKeyBindingEditor(
                     Box(modifier = Modifier.weight(1f)) {
                         GestureKeyButton(
                             keyLabel = char.uppercaseChar().toString(),
-                            action = bindings[char] ?: GestureAction.None,
+                            action = displayBindings[char] ?: GestureAction.None,
                             onClick = { editingKey = char }
                         )
                     }
@@ -175,7 +190,7 @@ internal fun GestureKeyBindingEditor(
                 Box(modifier = Modifier.fillMaxWidth()) {
                     GestureKeyButton(
                         keyLabel = "空格 (Space)",
-                        action = bindings[' '] ?: GestureAction.None,
+                        action = displayBindings[' '] ?: GestureAction.None,
                         onClick = { editingKey = ' ' }
                     )
                 }
@@ -195,7 +210,7 @@ internal fun GestureKeyBindingEditor(
                         Box(modifier = Modifier.weight(1f)) {
                             GestureKeyButton(
                                 keyLabel = char.toString(),
-                                action = bindings[char] ?: GestureAction.None,
+                                action = displayBindings[char] ?: GestureAction.None,
                                 onClick = { editingKey = char }
                             )
                         }
@@ -257,14 +272,14 @@ internal fun GestureKeyBindingEditor(
 
     // 动作选择对话框
     editingKey?.let { targetChar ->
-        val currentAction = bindings[targetChar] ?: GestureAction.None
+        val currentAction = displayBindings[targetChar] ?: GestureAction.None
         val keyName = if (targetChar == ' ') "空格 (Space)" else targetChar.uppercaseChar().toString()
         val scrollState = rememberScrollState()
 
         OverlayDialog(
             show = true,
             title = "设置按键 [$keyName] 下滑动作",
-            summary = "选择下滑此按键时触发的操作 (共 25 种动作)",
+            summary = "选择下滑此按键时触发的操作 (共 ${availableActions.size} 种动作)",
             onDismissRequest = { editingKey = null }
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -274,7 +289,7 @@ internal fun GestureKeyBindingEditor(
                         .heightIn(max = 400.dp)
                         .verticalScroll(scrollState)
                 ) {
-                    GestureAction.entries.forEach { action ->
+                    availableActions.forEach { action ->
                         val isSelected = action == currentAction
                         Row(
                             modifier = Modifier
@@ -308,6 +323,13 @@ internal fun GestureKeyBindingEditor(
                                 if (action.shortTitle.isNotEmpty() && action.shortTitle != "\\") {
                                     Text(
                                         text = "按键标签: ${action.shortTitle}",
+                                        style = MiuixTheme.textStyles.body2,
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                    )
+                                }
+                                if (action == GestureAction.OpenAiWriter) {
+                                    Text(
+                                        text = "需要 ColorOS 的 AI 写作；请在 LSPosed 中把「AI 写作 (com.oplus.aiwriter)」也勾进作用域",
                                         style = MiuixTheme.textStyles.body2,
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary
                                     )

@@ -1,8 +1,8 @@
 package com.xposed.wetypehook.wetype.gesture
 
 /**
- * 完整 25 种按键下滑触发动作
- * 逆向还原自 WeType-Tool EnumC0089；24 为本模块新增
+ * 完整 26 种按键下滑触发动作
+ * 逆向还原自 WeType-Tool EnumC0089；24 为模块设置，25 为 AI写作
  */
 enum class GestureAction(
     val id: Int,
@@ -34,7 +34,8 @@ enum class GestureAction(
     OpenFindWord(21, "手写找字", "找字"),
     MoveCursor(22, "滑移", "滑移"),
     MoveSelect(23, "滑选", "滑选"),
-    OpenModuleSettings(24, "模块设置", "设置");
+    OpenModuleSettings(24, "模块设置", "设置"),
+    OpenAiWriter(25, "AI写作", "AI");
 
     companion object {
         fun fromId(id: Int): GestureAction = entries.firstOrNull { it.id == id } ?: None

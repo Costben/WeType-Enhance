@@ -29,18 +29,20 @@ class GestureActionIdContractTest {
     @Test fun idsAreContiguousWithNoGaps() {
         val ids = GestureAction.entries.map { it.id }
         assertEquals(ids.sorted(), ids)
-        assertEquals((0..24).toList(), ids)
+        assertEquals((0..25).toList(), ids)
     }
 
-    @Test fun actionCountIsTwentyFive() {
-        assertEquals(25, GestureAction.entries.size)
+    @Test fun actionCountIsTwentySix() {
+        assertEquals(26, GestureAction.entries.size)
     }
 
     @Test fun settingsActionsUseDistinctIdsAndTitles() {
         assertEquals("输入法设置", GestureAction.OpenSettings.title)
         assertEquals("模块设置", GestureAction.OpenModuleSettings.title)
+        assertEquals("AI写作", GestureAction.OpenAiWriter.title)
         assertEquals(20, GestureAction.OpenSettings.id)
         assertEquals(24, GestureAction.OpenModuleSettings.id)
+        assertEquals(25, GestureAction.OpenAiWriter.id)
     }
 
     /** 0..23 must stay put — these are the ids older builds and synced configs already use. */
@@ -50,11 +52,12 @@ class GestureActionIdContractTest {
         assertEquals(23, GestureAction.MoveSelect.id)
     }
 
-    /** 24 is the first id no older build ever wrote; that is why the new action lives there. */
+    /** 24 and 25 are the ids no older build ever wrote; that is why the new actions live there. */
     @Test fun newActionSitsOutsideTheLegacyIdRange() {
         assertEquals(24, GestureAction.OpenModuleSettings.id)
+        assertEquals(25, GestureAction.OpenAiWriter.id)
         GestureAction.entries
-            .filter { it != GestureAction.OpenModuleSettings }
+            .filter { it != GestureAction.OpenModuleSettings && it != GestureAction.OpenAiWriter }
             .forEach { assertTrue("$it encroaches on the new slot", it.id <= 23) }
     }
 

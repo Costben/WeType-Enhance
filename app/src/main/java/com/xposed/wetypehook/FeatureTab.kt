@@ -26,6 +26,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 internal fun LazyListScope.FeatureTabContent(
     onOpenSubPage: (SettingsSubPage) -> Unit,
+    colorosAiWriterEnabled: Boolean,
+    onColorosAiWriterEnabledChange: (Boolean) -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
@@ -42,6 +44,24 @@ internal fun LazyListScope.FeatureTabContent(
                 summary = "条目保留、搜索与图片缩略图，以及备份与恢复",
                 onClick = { onOpenSubPage(SettingsSubPage.CLIPBOARD) }
             )
+        }
+    }
+
+    // 2. ColorOS 系统联动卡片
+    item {
+        SmallTitle(text = "ColorOS 系统联动")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                SwitchPreference(
+                    title = "开启 ColorOS AI写",
+                    summary = "在工具栏与下滑手势中启用 AI 写作入口（需在 LSPosed 中勾选「AI 写作 (com.oplus.aiwriter)」作用域）",
+                    checked = colorosAiWriterEnabled,
+                    onCheckedChange = onColorosAiWriterEnabledChange
+                )
+            }
         }
     }
 

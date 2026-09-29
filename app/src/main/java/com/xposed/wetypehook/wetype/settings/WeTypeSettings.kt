@@ -65,6 +65,7 @@ object WeTypeSettings {
     private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
+    private const val KEY_COLOROS_AI_WRITER_ENABLED = "coloros_aiwriter_enabled"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
     private const val KEY_ALL_MATERIAL_PRESETS_ENABLED = "all_material_presets_enabled"
@@ -287,6 +288,7 @@ object WeTypeSettings {
     const val MIN_GLOW_INTENSITY = 0
     const val MAX_GLOW_INTENSITY = 100
     const val DEFAULT_DISABLE_HOT_UPDATE = true
+    const val DEFAULT_COLOROS_AI_WRITER_ENABLED = false
     const val DEFAULT_SYSTEM_MATERIAL_ENABLED = false
     const val DEFAULT_HYPER_MATERIAL_ENABLED = false
 
@@ -385,6 +387,7 @@ object WeTypeSettings {
         val toolbarIconBgOpacity: Int,
         val edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         val disableHotUpdate: Boolean,
+        val colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -658,6 +661,8 @@ object WeTypeSettings {
     fun getAppearanceColors(context: Context): Map<String, Int> = readSnapshot(context).appearanceColors
 
     fun isDisableHotUpdate(context: Context): Boolean = readSnapshot(context).disableHotUpdate
+
+    fun isColorosAiWriterEnabled(context: Context): Boolean = readSnapshot(context).colorosAiWriterEnabled
 
     /**
      * 注册远端偏好解析器（仅宿主进程）：`remotePreferences` 被解绑或读取失败时按需重绑，
@@ -933,6 +938,7 @@ object WeTypeSettings {
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
+        colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -998,6 +1004,7 @@ object WeTypeSettings {
             edgeLightAngle = edgeLightAngle,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
+            colorosAiWriterEnabled = colorosAiWriterEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1079,6 +1086,7 @@ object WeTypeSettings {
             edgeLightAngle = current.edgeLightAngle,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
+            colorosAiWriterEnabled = current.colorosAiWriterEnabled,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
             removeClipboardRetentionLimit = current.removeClipboardRetentionLimit,
             removeClipboardTextLimit = current.removeClipboardTextLimit,
@@ -1183,6 +1191,8 @@ object WeTypeSettings {
         readSnapshotXposed().candidatePinyinLeftMarginDp
 
     fun isDisableHotUpdateXposed(): Boolean = readSnapshotXposed().disableHotUpdate
+
+    fun isColorosAiWriterEnabledXposed(): Boolean = readSnapshotXposed().colorosAiWriterEnabled
 
     fun isSystemMaterialEnabled(context: Context): Boolean = readSnapshot(context).systemMaterialEnabled
 
@@ -1318,6 +1328,7 @@ object WeTypeSettings {
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
+        colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1386,6 +1397,7 @@ object WeTypeSettings {
                 group.id to (appearanceColors[group.id] ?: group.defaultColor)
             },
             disableHotUpdate = disableHotUpdate,
+            colorosAiWriterEnabled = colorosAiWriterEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1529,6 +1541,7 @@ object WeTypeSettings {
             .putBoolean(KEY_SYSTEM_MATERIAL_ENABLED, snapshot.systemMaterialEnabled)
             .putBoolean(KEY_HYPER_MATERIAL_ENABLED, snapshot.hyperMaterialEnabled)
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
+            .putBoolean(KEY_COLOROS_AI_WRITER_ENABLED, snapshot.colorosAiWriterEnabled)
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
             .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
             .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
@@ -1706,6 +1719,7 @@ object WeTypeSettings {
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
         putInt(KEY_EDGE_LIGHT_ANGLE, edgeLightAngle)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
+        putBoolean(KEY_COLOROS_AI_WRITER_ENABLED, colorosAiWriterEnabled)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
         putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
@@ -1828,6 +1842,7 @@ object WeTypeSettings {
                 defaults.edgeLightAngle
             ).coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate),
+            colorosAiWriterEnabled = getBoolean(KEY_COLOROS_AI_WRITER_ENABLED, defaults.colorosAiWriterEnabled),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
@@ -2072,6 +2087,7 @@ object WeTypeSettings {
                 group.id to migrateLegacyKeyOpacity(group, color, legacyKeyOpacity)
             },
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, DEFAULT_DISABLE_HOT_UPDATE),
+            colorosAiWriterEnabled = getBoolean(KEY_COLOROS_AI_WRITER_ENABLED, DEFAULT_COLOROS_AI_WRITER_ENABLED),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
@@ -2178,6 +2194,7 @@ object WeTypeSettings {
         edgeLightAngle = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
+        colorosAiWriterEnabled = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -2243,6 +2260,7 @@ object WeTypeSettings {
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
             contains(KEY_EDGE_LIGHT_ANGLE) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||
+            contains(KEY_COLOROS_AI_WRITER_ENABLED) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
             contains(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT) ||

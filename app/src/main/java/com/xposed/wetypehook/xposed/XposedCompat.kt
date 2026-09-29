@@ -4,6 +4,8 @@ import android.util.Log as AndroidLog
 import android.view.View
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
+import java.lang.reflect.Constructor
+import java.lang.reflect.Executable
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -161,31 +163,31 @@ object HookEnvironment {
     }
 
     internal fun registerHook(
-        method: Method,
+        executable: Executable,
         kind: String,
         hooker: XposedInterface.Hooker
     ): XposedInterface.HookHandle {
         val module = currentModule
-            ?: throw IllegalStateException("XposedModule is not attached before hooking ${method.name}")
-        val id = nextHookId(method, kind)
-        return module.hook(method)
+            ?: throw IllegalStateException("XposedModule is not attached before hooking ${executable.name}")
+        val id = nextHookId(executable, kind)
+        return module.hook(executable)
             .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
             .setId(id)
             .intercept(hooker)
             .also(hookHandles::add)
     }
 
-    private fun nextHookId(method: Method, kind: String): String {
+    private fun nextHookId(executable: Executable, kind: String): String {
         val scope = currentScope.get().ifBlank { "global" }
         val executableKey = buildString {
-            append(method.declaringClass.name)
+            append(executable.declaringClass.name)
             append('#')
-            append(method.name)
+            append(executable.name)
             append('(')
-            append(method.parameterTypes.joinToString(",") { it.name })
+            append(executable.parameterTypes.joinToString(",") { it.name })
             append(')')
             append(':')
-            append(method.returnType.name)
+            append(if (executable is Method) executable.returnType.name else Void.TYPE.name)
         }
         val sequenceKey = "$scope|$kind|$executableKey"
         val sequence = synchronized(hookSequenceLock) {
@@ -208,22 +210,18 @@ object Log {
 
     private fun log(level: String, message: Any?) {
         val priority = if (level == "E") AndroidLog.ERROR else AndroidLog.INFO
+        val tag = HookEnvironment.logTag()
         val module = HookEnvironment.moduleOrNull()
+        // 同时写 logcat 与 LSPosed 日志：前者便于 adb 直接诊断，后者便于在管理器里回看。
         if (message is Throwable) {
-            val text = "[${HookEnvironment.logTag()}][$level] ${message.message ?: message.javaClass.name}"
-            if (module != null) {
-                module.log(priority, HookEnvironment.logTag(), text, message)
-            } else {
-                AndroidLog.println(priority, HookEnvironment.logTag(), text)
-            }
+            val text = "[$tag][$level] ${message.message ?: message.javaClass.name}"
+            AndroidLog.println(priority, tag, text)
+            module?.log(priority, tag, text, message)
             return
         }
-        val text = "[${HookEnvironment.logTag()}][$level] ${message ?: "null"}"
-        if (module != null) {
-            module.log(priority, HookEnvironment.logTag(), text)
-        } else {
-            AndroidLog.println(priority, HookEnvironment.logTag(), text)
-        }
+        val text = "[$tag][$level] ${message ?: "null"}"
+        AndroidLog.println(priority, tag, text)
+        module?.log(priority, tag, text)
     }
 }
 
@@ -299,7 +297,7 @@ fun Array<Class<*>>.sameAs(vararg types: Class<*>): Boolean {
 private object StaticHookThisObject
 
 class MethodHookParam internal constructor(
-    val method: Method,
+    val method: Executable,
     thisObject: Any?,
     args: Array<Any?>,
     result: Any? = null
@@ -348,6 +346,30 @@ fun Method.hookAfter(callback: (MethodHookParam) -> Unit) {
         val originalResult = chain.proceed()
         val param = MethodHookParam(
             method = method,
+            thisObject = chain.thisObject,
+            args = chain.args.toTypedArray(),
+            result = originalResult
+        )
+        try {
+            callback(param)
+            param.result
+        } catch (throwable: Throwable) {
+            Log.e(throwable)
+            originalResult
+        }
+    }
+}
+
+/**
+ * 构造函数版 [hookAfter]。构造完成后 [MethodHookParam.thisObject] 即新实例，
+ * 用来在对象刚建好、业务还没读到它之前补齐内部字段。
+ */
+fun Constructor<*>.hookAfter(callback: (MethodHookParam) -> Unit) {
+    val constructor = this
+    HookEnvironment.registerHook(constructor, "after") { chain ->
+        val originalResult = chain.proceed()
+        val param = MethodHookParam(
+            method = constructor,
             thisObject = chain.thisObject,
             args = chain.args.toTypedArray(),
             result = originalResult
