@@ -79,7 +79,7 @@ internal object WeTypeToolbarAiWriterHooks {
         val viewHoldersField = pickHostField(toolbarAdapterClass, "viewHolders", "d") {
             Map::class.java.isAssignableFrom(it.type)
         }
-        val valueBitField = pickHostField(roundViewHolderClass, "valueBit", "g") {
+        val valueBitField = pickHostField(roundViewHolderClass, "valueBit", "g", "f") {
             it.type == Int::class.javaPrimitiveType
         }
 
@@ -176,8 +176,8 @@ internal object WeTypeToolbarAiWriterHooks {
             markSeeded(preferences)
         }
 
-        // 2. updateData 方法
-        val updateDataMethod = pickHostMethod(customAdapterClass, "I", "updateData") { method ->
+        // 2. updateData 方法 (4.0.0: I, 3.5.4: F)
+        val updateDataMethod = pickHostMethod(customAdapterClass, "I", "F", "updateData") { method ->
             method.returnType == Void.TYPE &&
                 method.parameterCount == 2 &&
                 method.parameterTypes[0] == Boolean::class.javaPrimitiveType &&
@@ -238,13 +238,21 @@ internal object WeTypeToolbarAiWriterHooks {
             if (hostAiWriterIconRes > 0) param.result = hostAiWriterIconRes
         }
 
-        // 5. 点击响应
-        val onClickMethod = pickHostMethod(customViewHolderClass, "g", "onClick") { method ->
+        // 5. 点击响应 (4.0.0: g, 3.5.4: h; 若混淆名变更，由于基类抽象方法声明顺序，onClick 总按字母序排在 onTouchDown 之前)
+        val onClickMethod = pickHostMethod(customViewHolderClass, "g", "h", "onClick") { method ->
             method.parameterCount == 1 &&
                 method.parameterTypes[0] == View::class.java &&
                 method.returnType == Void.TYPE &&
                 !Modifier.isStatic(method.modifiers)
-        }
+        } ?: customViewHolderClass.declaredMethods
+            .filter {
+                it.parameterCount == 1 &&
+                    it.parameterTypes[0] == View::class.java &&
+                    it.returnType == Void.TYPE &&
+                    !Modifier.isStatic(it.modifiers)
+            }
+            .minByOrNull { it.name }
+            ?.apply { isAccessible = true }
 
         onClickMethod?.hookBefore { param ->
             val holder = param.thisObject

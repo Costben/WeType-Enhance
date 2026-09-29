@@ -27,12 +27,18 @@ import java.lang.reflect.Modifier
  */
 internal object WeTypeSettingsToolbarHooks {
 
-    private const val CUSTOM_TOOLBAR_VIEW_CLASS =
-        "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingCustomToolbarView"
-    private const val FALLBACK_ITEM_CONFIG_CLASS =
-        "com.tencent.wetype.plugin.hld.view.settingkeyboard.a"
-    private const val FALLBACK_ITEM_VIEW_CLASS =
-        "com.tencent.wetype.plugin.hld.view.settingkeyboard.c"
+    private val CUSTOM_TOOLBAR_VIEW_CLASSES = listOf(
+        "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingCustomToolbarView",
+        "com.tencent.mm.ui.widget.imageview.settingkeyboard.S10SettingCustomToolbarView"
+    )
+    private val FALLBACK_ITEM_CONFIG_CLASSES = listOf(
+        "com.tencent.wetype.plugin.hld.view.settingkeyboard.a",
+        "com.tencent.mm.ui.widget.imageview.settingkeyboard.a"
+    )
+    private val FALLBACK_ITEM_VIEW_CLASSES = listOf(
+        "com.tencent.wetype.plugin.hld.view.settingkeyboard.c",
+        "com.tencent.mm.ui.widget.imageview.settingkeyboard.c"
+    )
     private const val FALLBACK_ICON_RES_CLASS = "com.tencent.wetype.plugin.hld.r"
     private const val FALLBACK_TITLE_RES_CLASS = "com.tencent.wetype.plugin.hld.w"
 
@@ -52,8 +58,10 @@ internal object WeTypeSettingsToolbarHooks {
     private val labelOverrideGuard: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
 
     fun install(classLoader: ClassLoader) {
-        val viewClass = loadClassOrNull(CUSTOM_TOOLBAR_VIEW_CLASS, classLoader) ?: run {
-            Log.e("WeTypeSettingsToolbar: $CUSTOM_TOOLBAR_VIEW_CLASS not found")
+        val viewClass = CUSTOM_TOOLBAR_VIEW_CLASSES.firstNotNullOfOrNull {
+            loadClassOrNull(it, classLoader)
+        } ?: run {
+            Log.e("WeTypeSettingsToolbar: S10SettingCustomToolbarView not found")
             return
         }
 
@@ -67,7 +75,9 @@ internal object WeTypeSettingsToolbarHooks {
         }?.apply { isAccessible = true }
 
         // 动态识别或静态兜底 itemView 的 applyText 方法
-        val fallbackItemViewClass = loadClassOrNull(FALLBACK_ITEM_VIEW_CLASS, classLoader)
+        val fallbackItemViewClass = FALLBACK_ITEM_VIEW_CLASSES.firstNotNullOfOrNull {
+            loadClassOrNull(it, classLoader)
+        }
         if (fallbackItemViewClass != null) {
             installItemViewHook(fallbackItemViewClass)
         }
@@ -134,7 +144,7 @@ internal object WeTypeSettingsToolbarHooks {
         }
 
         Log.i(
-            "WeTypeSettingsToolbar: installed ($CUSTOM_TOOLBAR_VIEW_CLASS, constructors=" +
+            "WeTypeSettingsToolbar: installed (${viewClass.name}, constructors=" +
                 "${viewClass.declaredConstructors.size}, mapField=${configMapField?.name}, " +
                 "orderField=${orderListField?.name}, listBuilder=${listBuilder?.name}, " +
                 "createItemView=${createItemViewMethod?.name})"
@@ -237,7 +247,9 @@ internal object WeTypeSettingsToolbarHooks {
         }
 
         // 静态兜底
-        val configClass = loadClassOrNull(FALLBACK_ITEM_CONFIG_CLASS, classLoader) ?: return null
+        val configClass = FALLBACK_ITEM_CONFIG_CLASSES.firstNotNullOfOrNull {
+            loadClassOrNull(it, classLoader)
+        } ?: return null
         val iconResId = staticIntField(loadClassOrNull(FALLBACK_ICON_RES_CLASS, classLoader), "icon_settings_item_ai") ?: return null
         val titleResId = staticIntField(loadClassOrNull(FALLBACK_TITLE_RES_CLASS, classLoader), "ime_s10_ai") ?: return null
         val configConstructor = configClass.declaredConstructors.firstOrNull { constructor ->
