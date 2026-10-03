@@ -250,6 +250,14 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                     }
                 )
 
+                SettingsSubPage.VOICE -> VoiceSubPageContent(
+                    bridgeEnabled = voiceBridgeEnabled,
+                    onBridgeEnabledChange = { voiceBridgeEnabled = it },
+                    systemServiceEnabled = voiceSystemServiceApplied,
+                    systemServiceBusy = voiceSystemServiceBusy,
+                    onSystemServiceChange = ::setVoiceSystemService
+                )
+
                 SettingsSubPage.KEYBOARD_LOGO -> KeyboardLogoSubPageContent(
                     logoEnabled = logoEnabled,
                     onLogoEnabledChange = { logoEnabled = it },

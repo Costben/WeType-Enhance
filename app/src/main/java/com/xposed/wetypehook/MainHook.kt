@@ -29,6 +29,7 @@ import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeSettingsToolbarHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeToolbarAiWriterHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeUpdateHooks
+import com.xposed.wetypehook.wetype.hook.WeTypeVoiceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -362,6 +363,9 @@ class MainHook : XposedModule() {
         }
         HookEnvironment.withHookScope("wetype.toolbar-aiwriter-settings") {
             WeTypeSettingsToolbarHooks.install(classLoader)
+        }
+        HookEnvironment.withHookScope("wetype.voice") {
+            WeTypeVoiceHooks.install(sourceDir, classLoader)
         }
     }
 

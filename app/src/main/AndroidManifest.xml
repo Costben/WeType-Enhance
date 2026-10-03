@@ -3,9 +3,33 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+        本模块自带 RecognitionService，自己开麦克风采音再转给微信输入法识别引擎。
+        AOSP 的 RecognitionService 只检查**调用方**（Eta）的 RECORD_AUDIO；我们自己
+        采音还得另有一份自己的，缺了会在 AudioRecord 构造/start 时失败。
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <queries>
         <package android:name="com.tencent.wetype" />
         <package android:name="com.oplus.aiwriter" />
+
+        <!--
+            语音识别服务必须能「看见」调用方，否则整个链路会在最后一步断掉。
+
+            AOSP `RecognitionService` 放行一次会话前会拿**调用方**的 AttributionSource 去查
+            `RECORD_AUDIO` appop；AppOpsService 会先 `AppsFilter.filterAppAccess(caller, 本进程 uid)`
+            验包名可见性，看不见就直接返回 MODE_ERRORED（日志 `io.github.mangi.eta not found
+            from 10652`），于是 `checkPermissionAndStartDataDelivery` 失败，服务被回
+            ERROR_INSUFFICIENT_PERMISSIONS —— 明明调用方权限齐全、我们自己的录音权限也齐全。
+
+            本模块 targetSdk 37，默认受包可见性过滤，只有 `<queries>` 命中的包才可见。
+            按「谁参与语音识别」来放行，而不是硬编码某一个调用方的包名：凡是声明了
+            `android.speech.RecognitionService` 的应用（Eta 自己就带一个兜底实现）都算。
+        -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <application
@@ -31,5 +55,30 @@
             android:name=".ModuleBridgeReceiver"
             android:enabled="true"
             android:exported="true" />
+
+        <!--
+            把微信输入法的识别能力以**标准 RecognitionService** 的形式暴露给系统，
+            于是 Eta 的「识别服务 → 系统语音服务」就能直接路由到本模块。
+
+            刻意**不声明** android:permission：AOSP 里根本不存在
+            BIND_SPEECH_RECOGNITION_SERVICE 这个权限（`pm list permissions` 里只有
+            MANAGE_SPEECH_RECOGNITION，且是 signature 级），RecognitionService.onBind
+            也不做任何权限校验。Google 自家的 GoogleTTS / AiAi 识别服务同样只写
+            exported="true"，不带任何 android:permission。
+
+            Eta 侧按包名排除自己，第三方服务一律有资格；它把
+            permission == "android.permission.BIND_SPEECH_RECOGNITION_SERVICE" 只当作
+            **排序偏好**，而且「配置项命中」「系统应用」两条都排在它前面。所以不写这条
+            既不会被过滤掉，也不会被显著降权。
+        -->
+        <service
+            android:name=".wetype.voice.WeTypeRecognitionService"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

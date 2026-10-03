@@ -47,7 +47,21 @@ internal fun LazyListScope.FeatureTabContent(
         }
     }
 
-    // 2. ColorOS 系统联动卡片
+    // 2. Adr2api 卡片
+    item {
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            ArrowPreference(
+                title = "Adr2api",
+                summary = "将微信输入法的语音识别能力接入系统识别服务，供语音助手等应用调用",
+                onClick = { onOpenSubPage(SettingsSubPage.VOICE) }
+            )
+        }
+    }
+
+    // 3. ColorOS 系统联动卡片
     item {
         SmallTitle(text = "ColorOS 系统联动")
         Card(

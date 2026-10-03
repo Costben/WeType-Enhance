@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.util.Log as AndroidLog
 import com.xposed.wetypehook.ModuleBridgeContract
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 object WeTypeSettings {
@@ -66,6 +67,7 @@ object WeTypeSettings {
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_COLOROS_AI_WRITER_ENABLED = "coloros_aiwriter_enabled"
+    private const val KEY_VOICE_BRIDGE_ENABLED = "voice_bridge_enabled"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
     private const val KEY_ALL_MATERIAL_PRESETS_ENABLED = "all_material_presets_enabled"
@@ -289,6 +291,22 @@ object WeTypeSettings {
     const val MAX_GLOW_INTENSITY = 100
     const val DEFAULT_DISABLE_HOT_UPDATE = true
     const val DEFAULT_COLOROS_AI_WRITER_ENABLED = false
+
+    /** 「Adr2api」的总开关。默认开启：模块装好即可用，用户不需要先去设置页点一遍。 */
+    const val DEFAULT_VOICE_BRIDGE_ENABLED = true
+
+    /** 模块自带的 [android.speech.RecognitionService]，展开成 `包名/类名` 的扁平串。 */
+    const val VOICE_RECOGNITION_COMPONENT =
+        "$MODULE_PACKAGE_NAME/$MODULE_PACKAGE_NAME.wetype.voice.WeTypeRecognitionService"
+
+    /** `Settings.Secure` 里那一条的键名。写它要 `WRITE_SECURE_SETTINGS`，读不用。 */
+    const val VOICE_RECOGNITION_SERVICE_KEY = "voice_recognition_service"
+
+    /**
+     * 写 `Settings.Secure` 的三种结果。UI 只关心「成了没有、没成是为什么」，
+     * 所以把 `su` 的 stderr 收敛成这两种失败，而不是把原始输出抛给界面。
+     */
+    enum class SecureWriteResult { APPLIED, NO_ROOT, FAILED }
     const val DEFAULT_SYSTEM_MATERIAL_ENABLED = false
     const val DEFAULT_HYPER_MATERIAL_ENABLED = false
 
@@ -388,6 +406,7 @@ object WeTypeSettings {
         val edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         val disableHotUpdate: Boolean,
         val colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
+        val voiceBridgeEnabled: Boolean = DEFAULT_VOICE_BRIDGE_ENABLED,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -664,6 +683,105 @@ object WeTypeSettings {
 
     fun isColorosAiWriterEnabled(context: Context): Boolean = readSnapshot(context).colorosAiWriterEnabled
 
+    fun isVoiceBridgeEnabled(context: Context): Boolean = readSnapshot(context).voiceBridgeEnabled
+
+    /**
+     * 系统识别服务此刻是不是真的指向模块。
+     *
+     * 开关显示的是**事实**而不是意图：读的是 `Settings.Secure voice_recognition_service`
+     * 的真实值，所以用户在别处改过之后回到设置页，开关会跟着变。
+     *
+     * 读 `Settings.Secure` 不需要任何权限，所以这里直接读；写才需要
+     * `WRITE_SECURE_SETTINGS`（模块拿不到，见 `applyVoiceSystemService`）。
+     */
+    fun isVoiceSystemServiceApplied(context: Context): Boolean {
+        val current = runCatching {
+            android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                VOICE_RECOGNITION_SERVICE_KEY
+            )
+        }.getOrNull().orEmpty()
+        return current.equals(VOICE_RECOGNITION_COMPONENT, ignoreCase = true)
+    }
+
+    /**
+     * 把系统识别服务指向（或解除指向）模块。
+     *
+     * ## 为什么走 root 而不是 `ContentResolver`
+     *
+     * `Settings.Secure` 的写入口要 `WRITE_SECURE_SETTINGS`，而模块自己声明不了它：
+     * 该权限是 `signature|privileged|development|installer|role`，「development」这一档
+     * 只对 `ro.debuggable=1` 的 userdebug/eng 构建生效，本机是 `user` + `release-keys`，
+     * 实际等同于 signature 级；而 `pm grant` 又只认「应用自己 manifest 里声明过的权限」。
+     * 声明它还会连带触发 Google Play 的 `DUPLICATE_PERMISSIONS` 安装拦截 —— 同一个权限
+     * 不允许两个包同时声明。Shizuku 那条路同样绕不开：Shizuku 自己的
+     * `writeSecureSettings` 要的就是这一个权限。
+     *
+     * 于是只剩 root。这里**借的是微信输入法进程已有的 root 授权**：模块的 hook 就跑在
+     * `com.tencent.wetype:hld` 里，该 uid 在 Magisk 的授权表里，所以 `su` 会直接放行。
+     * 模块自身不需要 root，也就不必给 `com.xposed.wetypehook` 单独开一条策略。
+     *
+     * ## 为什么要套一层 `sh`
+     *
+     * 两个原因，都是实机踩出来的：
+     *
+     * 1. `Runtime.exec("su", "-c", cmd)` 把 `cmd` 当成**单个 argv**，`su` 会用 `execvp`
+     *    直接找名为整串的可执行文件，必然 `No such file or directory`。必须让 shell 去分词。
+     * 2. `settings` 这个 shell 命令自己要在 uid 1000/0 下跑。若只 `su <uid> -c settings ...`，
+     *    命令是以**目标 uid** 执行的，`SettingsService` 会拿它去 `getCurrentUser()`，抛
+     *    `SecurityException: requires android.permission.INTERACT_ACROSS_USERS`，
+     *    写和读都会失败（只有 `su -c` 不带 uid，默认落到 uid 0 才行）。套一层 `sh -c`
+     *    再在**脚本内部**写裸 `settings`，命令就在 root uid 下执行了。
+     */
+    fun applyVoiceSystemService(context: Context, enable: Boolean): SecureWriteResult {
+        val command = if (enable) {
+            "settings put secure $VOICE_RECOGNITION_SERVICE_KEY $VOICE_RECOGNITION_COMPONENT"
+        } else {
+            "settings delete secure $VOICE_RECOGNITION_SERVICE_KEY"
+        }
+        return runSuCommand(command)
+    }
+
+    private fun runSuCommand(command: String): SecureWriteResult {
+        var process: Process? = null
+        return try {
+            process = ProcessBuilder("su", "-c", "sh").redirectErrorStream(true).start()
+            process.outputStream.bufferedWriter().use { writer ->
+                writer.write("$PATH_EXPORT\n")
+                writer.write("$command\n")
+                writer.write("echo \"$RESULT_MARKER$?\"\n")
+                writer.write("exit\n")
+            }
+            val output = process.inputStream.bufferedReader().readText()
+            if (!process.waitFor(SU_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                return SecureWriteResult.FAILED
+            }
+            when {
+                "$RESULT_MARKER$EXIT_OK" in output -> SecureWriteResult.APPLIED
+                DENIAL_MARKERS.any { it in output } -> SecureWriteResult.NO_ROOT
+                else -> SecureWriteResult.FAILED
+            }
+        } catch (_: Throwable) {
+            SecureWriteResult.NO_ROOT
+        } finally {
+            runCatching { process?.destroy() }
+        }
+    }
+
+    private const val PATH_EXPORT = "PATH=/product/bin:/system/bin:/system/xbin"
+    private const val RESULT_MARKER = "__wetype_su_rc="
+    private const val EXIT_OK = "0"
+    private const val SU_TIMEOUT_SECONDS = 12L
+
+    /** Magisk 拒绝授权时的固定措辞，中英两版都要认。 */
+    private val DENIAL_MARKERS = listOf(
+        "request rejected",
+        "permission denied",
+        "not allowed",
+        "拒绝"
+    )
+
     /**
      * 注册远端偏好解析器（仅宿主进程）：`remotePreferences` 被解绑或读取失败时按需重绑，
      * 防止强调色等设置永久回退默认值。lambda 持有 Xposed 接口实例，仅存活于当前模块代际。
@@ -939,6 +1057,7 @@ object WeTypeSettings {
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
         colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
+        voiceBridgeEnabled: Boolean = DEFAULT_VOICE_BRIDGE_ENABLED,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1005,6 +1124,7 @@ object WeTypeSettings {
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
             colorosAiWriterEnabled = colorosAiWriterEnabled,
+            voiceBridgeEnabled = voiceBridgeEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1087,6 +1207,7 @@ object WeTypeSettings {
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
             colorosAiWriterEnabled = current.colorosAiWriterEnabled,
+            voiceBridgeEnabled = current.voiceBridgeEnabled,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
             removeClipboardRetentionLimit = current.removeClipboardRetentionLimit,
             removeClipboardTextLimit = current.removeClipboardTextLimit,
@@ -1193,6 +1314,8 @@ object WeTypeSettings {
     fun isDisableHotUpdateXposed(): Boolean = readSnapshotXposed().disableHotUpdate
 
     fun isColorosAiWriterEnabledXposed(): Boolean = readSnapshotXposed().colorosAiWriterEnabled
+
+    fun isVoiceBridgeEnabledXposed(): Boolean = readSnapshotXposed().voiceBridgeEnabled
 
     fun isSystemMaterialEnabled(context: Context): Boolean = readSnapshot(context).systemMaterialEnabled
 
@@ -1329,6 +1452,7 @@ object WeTypeSettings {
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
         colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
+        voiceBridgeEnabled: Boolean = DEFAULT_VOICE_BRIDGE_ENABLED,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1398,6 +1522,7 @@ object WeTypeSettings {
             },
             disableHotUpdate = disableHotUpdate,
             colorosAiWriterEnabled = colorosAiWriterEnabled,
+            voiceBridgeEnabled = voiceBridgeEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1542,6 +1667,7 @@ object WeTypeSettings {
             .putBoolean(KEY_HYPER_MATERIAL_ENABLED, snapshot.hyperMaterialEnabled)
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
             .putBoolean(KEY_COLOROS_AI_WRITER_ENABLED, snapshot.colorosAiWriterEnabled)
+            .putBoolean(KEY_VOICE_BRIDGE_ENABLED, snapshot.voiceBridgeEnabled)
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
             .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
             .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
@@ -1720,6 +1846,7 @@ object WeTypeSettings {
         putInt(KEY_EDGE_LIGHT_ANGLE, edgeLightAngle)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
         putBoolean(KEY_COLOROS_AI_WRITER_ENABLED, colorosAiWriterEnabled)
+        putBoolean(KEY_VOICE_BRIDGE_ENABLED, voiceBridgeEnabled)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
         putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
@@ -1843,6 +1970,7 @@ object WeTypeSettings {
             ).coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate),
             colorosAiWriterEnabled = getBoolean(KEY_COLOROS_AI_WRITER_ENABLED, defaults.colorosAiWriterEnabled),
+            voiceBridgeEnabled = getBoolean(KEY_VOICE_BRIDGE_ENABLED, defaults.voiceBridgeEnabled),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
@@ -2088,6 +2216,7 @@ object WeTypeSettings {
             },
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, DEFAULT_DISABLE_HOT_UPDATE),
             colorosAiWriterEnabled = getBoolean(KEY_COLOROS_AI_WRITER_ENABLED, DEFAULT_COLOROS_AI_WRITER_ENABLED),
+            voiceBridgeEnabled = getBoolean(KEY_VOICE_BRIDGE_ENABLED, DEFAULT_VOICE_BRIDGE_ENABLED),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
@@ -2195,6 +2324,7 @@ object WeTypeSettings {
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
         colorosAiWriterEnabled = DEFAULT_COLOROS_AI_WRITER_ENABLED,
+        voiceBridgeEnabled = DEFAULT_VOICE_BRIDGE_ENABLED,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -2261,6 +2391,7 @@ object WeTypeSettings {
             contains(KEY_EDGE_LIGHT_ANGLE) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||
             contains(KEY_COLOROS_AI_WRITER_ENABLED) ||
+            contains(KEY_VOICE_BRIDGE_ENABLED) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
             contains(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT) ||

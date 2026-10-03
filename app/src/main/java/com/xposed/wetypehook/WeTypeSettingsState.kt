@@ -115,6 +115,52 @@ internal class WeTypeSettingsState(
     var toolbarIconBgOpacity by mutableIntStateOf(snapshot.toolbarIconBgOpacity)
     var disableHotUpdate by mutableStateOf(snapshot.disableHotUpdate)
     var colorosAiWriterEnabled by mutableStateOf(snapshot.colorosAiWriterEnabled)
+    var voiceBridgeEnabled by mutableStateOf(snapshot.voiceBridgeEnabled)
+
+    /**
+     * 「系统识别服务」开关的真实状态，以及它此刻能不能被操作。
+     *
+     * 这里存的是**从 `Settings.Secure` 现读回来的事实**，不是「用户想开」的意图 ——
+     * 存意图会跟系统实际值迟早对不上（用户以为开了，系统其实还在用别的识别服务）。
+     * 所以除了「正在写入」这一个瞬时标志，其余状态都靠 [setVoiceSystemService] 写完回读。
+     */
+    var voiceSystemServiceApplied by mutableStateOf(
+        WeTypeSettings.isVoiceSystemServiceApplied(preferencesContext)
+    )
+        private set
+    var voiceSystemServiceBusy by mutableStateOf(false)
+        private set
+
+    /**
+     * 把系统识别服务指向（或解除指向）模块，写完回读一次刷新开关。
+     *
+     * 走 root：见 [WeTypeSettings.applyVoiceSystemService] 里对权限模型的说明。
+     * 没有 root 时不报「失败」而报「需要 root」，并提示改用复制命令那条路 ——
+     * 这两种情况用户要做的事完全不同。
+     */
+    fun setVoiceSystemService(enable: Boolean) {
+        if (voiceSystemServiceBusy) return
+        voiceSystemServiceBusy = true
+        coroutineScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                WeTypeSettings.applyVoiceSystemService(preferencesContext, enable)
+            }
+            voiceSystemServiceApplied = WeTypeSettings.isVoiceSystemServiceApplied(preferencesContext)
+            voiceSystemServiceBusy = false
+            val message = when {
+                result == WeTypeSettings.SecureWriteResult.APPLIED && voiceSystemServiceApplied ->
+                    "已指向模块的识别服务"
+                result == WeTypeSettings.SecureWriteResult.APPLIED && !enable ->
+                    "已还原系统默认识别服务"
+                result == WeTypeSettings.SecureWriteResult.NO_ROOT ->
+                    "未获得 root，无法直接写入；请用下方命令自行执行一次"
+                else ->
+                    "写入未生效，请用下方命令自行执行一次"
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
     var showCrossDeviceClipboard by mutableStateOf(snapshot.showCrossDeviceClipboard)
     var removeClipboardRetentionLimit by mutableStateOf(snapshot.removeClipboardRetentionLimit)
     var removeClipboardTextLimit by mutableStateOf(snapshot.removeClipboardTextLimit)
@@ -570,6 +616,7 @@ internal class WeTypeSettingsState(
             appearanceColors = currentAppearanceColors(),
             disableHotUpdate = disableHotUpdate,
             colorosAiWriterEnabled = colorosAiWriterEnabled,
+            voiceBridgeEnabled = voiceBridgeEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -661,6 +708,7 @@ internal class WeTypeSettingsState(
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         colorosAiWriterEnabled = WeTypeSettings.DEFAULT_COLOROS_AI_WRITER_ENABLED
+        voiceBridgeEnabled = WeTypeSettings.DEFAULT_VOICE_BRIDGE_ENABLED
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
         removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT

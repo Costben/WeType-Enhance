@@ -35,7 +35,8 @@ internal enum class SettingsSubPage(val title: String) {
     MATERIAL("高级材质"),
     EDGE_LIGHT("光感设置"),
     ADVANCED_PARAMETERS("高级参数调节"),
-    CLIPBOARD("剪贴板")
+    CLIPBOARD("剪贴板"),
+    VOICE("Adr2api")
 }
 
 /** 返回栈深度上限：一级页 + 二级页 + 三级页 + 四级页（高级材质 → 光感设置 → 高级参数调节）。 */
