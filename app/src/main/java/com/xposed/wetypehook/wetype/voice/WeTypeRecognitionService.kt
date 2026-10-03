@@ -12,6 +12,8 @@ import android.speech.RecognitionService
 import android.speech.RecognitionSupport
 import android.speech.SpeechRecognizer
 import android.util.Log
+import com.xposed.wetypehook.wetype.settings.VoiceTuning
+import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.File
@@ -55,7 +57,7 @@ import kotlin.math.max
  *
  * Eta 在 SYSTEM 路径上不会主动停（`SpeechRecognizer.stopListening` 只在它自己的
  * `EtaRecognitionService` 兜底路径里出现）。所以本服务自己判「说完了」：检测到语音之后
- * 持续静音 [SILENCE_FINISH_MS] 就发 EOS、等桥把尾巴出完，再回 `results()`。
+ * 持续静音一段（时长见设置页「静音判停」）就发 EOS、等桥把尾巴出完，再回 `results()`。
  *
  * ## 一轮一个连接
  *
@@ -86,29 +88,6 @@ class WeTypeRecognitionService : RecognitionService() {
 
         /** 每次读 100ms。桥那头宿主读线程是 20ms/640B 的节奏，这个粒度足够细。 */
         const val BYTES_PER_READ = SAMPLE_RATE * 2 / 10
-
-        /** 峰值门限，约 -36 dBFS。低于它算静音。 */
-        const val SILENCE_PEAK = 500
-
-        /** 连续静音多久算「这句说完了」。 */
-        const val SILENCE_FINISH_MS = 1800L
-
-        /** 一句都没说就静音这么久，直接判本轮无语音。 */
-        const val NO_SPEECH_FINISH_MS = 6000L
-
-        /**
-         * EOS 之后连续多久没有新转录，就认为桥已经出完了。
-         *
-         * 不用固定时限：桥那头是**拉**模型，宿主读线程按 20ms/640B 的节奏从队列取音，
-         * EOS 到达时队列里通常还压着几秒甚至二十秒音频，最后一段转录什么时候到取决于
-         * 宿主引擎的排队情况，实测同一段音频会在 EOS 之后 0.6s ~ 1.0s 之间浮动。
-         * 固定时限要么切掉尾巴（实测 1200ms 时最后一段卡在 941ms，余量只剩 260ms），
-         * 要么无谓地拖长每一轮。改成「安静够了就走」，每次有新转录就把计时重置。
-         */
-        const val EOS_QUIET_MS = 900L
-
-        /** EOS 之后的绝对上限。宿主自己的收尾宽限是 3000ms，这里必须大于它。 */
-        const val EOS_MAX_WAIT_MS = 6000L
 
         /** 转录回调太密，每这么多条才留一行日志。见 [Session.partialCount]。 */
         const val PARTIAL_LOG_EVERY = 50
@@ -218,6 +197,9 @@ class WeTypeRecognitionService : RecognitionService() {
 
     private inner class Session(val callback: RecognitionService.Callback) {
 
+        /** 本轮端点参数。会话开始时读一次，中途改设置不影响正在进行的这一轮。 */
+        private val tuning: VoiceTuning = WeTypeSettings.voiceTuning(this@WeTypeRecognitionService)
+
         private val finished = AtomicBoolean(false)
 
         /** 本轮开始的时刻。端点检测的两条时限都相对它算。 */
@@ -315,17 +297,20 @@ class WeTypeRecognitionService : RecognitionService() {
             if (finished.get()) return
 
             // 让桥把队列里剩下的音频吃完再出最后一段。判据是「安静够了」而不是固定时限：
-            // 桥出完最后一段之后不会再有任何转录，所以连续 [EOS_QUIET_MS] 没有新转录就是收尾了。
+            // 桥那头是**拉**模型，宿主读线程按 20ms/640B 的节奏从队列取音，EOS 到达时队列里
+            // 通常还压着几秒甚至二十秒音频，最后一段转录什么时候到取决于宿主引擎的排队情况，
+            // 实测同一段音频会在 EOS 之后 0.6s ~ 1.0s 之间浮动。所以用「收尾静默」判定：连续
+            // 这么久没有新转录就是出完了，每次有新转录就把计时重置；「收尾上限」是绝对兜底。
             client.sendEos()
             val eosAt = System.currentTimeMillis()
             lastTranscriptAt = eosAt
             while (!finished.get()) {
                 val now = System.currentTimeMillis()
-                if (now - eosAt > EOS_MAX_WAIT_MS) {
+                if (now - eosAt > tuning.eosMaxWaitMs) {
                     Log.i(TAG, "EOS wait hit ceiling, ending turn")
                     break
                 }
-                if (now - lastTranscriptAt > EOS_QUIET_MS) break
+                if (now - lastTranscriptAt > tuning.eosQuietMs) break
                 runCatching { Thread.sleep(50) }
             }
             finishTurn()
@@ -413,7 +398,7 @@ class WeTypeRecognitionService : RecognitionService() {
             // 所以这里给的是 0..10 的线性代理值 —— 严格 dBFS 是负的，喂进去会被夹成 0，表就不动了。
             runCatching { callback.rmsChanged((peak * 10f / 32767f).coerceIn(0f, 10f)) }
             val now = System.currentTimeMillis()
-            if (peak >= SILENCE_PEAK) {
+            if (peak >= tuning.silencePeak) {
                 if (!sawSpeech) {
                     sawSpeech = true
                     runCatching { callback.beginningOfSpeech() }
@@ -424,10 +409,10 @@ class WeTypeRecognitionService : RecognitionService() {
         }
 
         private fun shouldEndTurn(now: Long): Boolean {
-            // 还没开口：给 [NO_SPEECH_FINISH_MS] 的机会，超了就判本轮无语音。
-            if (!sawSpeech) return now - sessionStart > NO_SPEECH_FINISH_MS
+            // 还没开口：给「无语音超时」的机会，超了就判本轮无语音。
+            if (!sawSpeech) return now - sessionStart > tuning.noSpeechFinishMs
             // 开过口：从最后一次有声算起静音够久就算说完。
-            return now - lastVoiceAt > SILENCE_FINISH_MS
+            return now - lastVoiceAt > tuning.silenceFinishMs
         }
 
         // ---- 桥回调 ----

@@ -3,18 +3,14 @@ package com.xposed.wetypehook.wetype.hook
 import android.app.Application
 import android.content.Context
 import android.media.AudioRecord
-import com.xposed.wetypehook.wetype.host.HostContext
-import com.xposed.wetypehook.wetype.host.MethodShape
-import com.xposed.wetypehook.wetype.host.classByDexStrings
-import com.xposed.wetypehook.wetype.host.classByMethodShapes
-import com.xposed.wetypehook.wetype.host.hasStaticSelfField
+import com.xposed.wetypehook.wetype.host.HostContractId
+import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.voice.FakeAudioRecord
 import com.xposed.wetypehook.wetype.voice.WeTypeVoiceBridge
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
-import org.luckypray.dexkit.DexKitBridge
 import java.lang.ref.WeakReference
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -38,14 +34,14 @@ import java.lang.reflect.Modifier
  * 假货（见 [WeTypeVoiceBridge] 的类注释与 `wetype-voice-fake-record-swap` 记录），
  * 静音检查根本不参与，于是不弹键盘也能借到识别。
  *
- * 复用宿主的定位一律按**形状/字符串锚**，不写死混淆名 —— 宿主更新后短名会整体漂移。
+ * 宿主定位全部交给契约层（`voice.*`），本文件不碰 DexKit、不写死任何混淆短名。
+ * 三个受支持版本（3.5.3 / 3.5.4 / 4.0.0）的类名、方法名、录音器字段名全都不同，
+ * 唯一跨版本成立的是**成员形状与调用关系** —— 那正是 `HostContracts.kt` 里那几条
+ * 契约在做的事。
  */
 internal object WeTypeVoiceHooks {
 
     private const val TAG = "WeTypeVoice"
-
-    /** 录音器字符串锚：`voice.E` 的 `initDeviceInLock`。 */
-    private const val RECORDER_ANCHOR = "initDeviceInLock"
 
     /** 输入法服务。只用来问系统「输入法跑在哪个进程」，不 hook 它。 */
     private const val IME_SERVICE_CLASS = "com.tencent.wetype.plugin.hld.WxHldService"
@@ -62,7 +58,7 @@ internal object WeTypeVoiceHooks {
     @Volatile
     private var singletonInstance: Any? = null
 
-    // ---- 录音器（`MMPcmRecorder`，3.5.x = `l6.e`）相关句柄 ----
+    // ---- 录音器（日志里的 `MMPcmRecorder`）相关句柄 ----
 
     @Volatile
     private var pcmRecorderClass: Class<*>? = null
@@ -76,8 +72,9 @@ internal object WeTypeVoiceHooks {
     @Volatile
     private var readThreadRecordField: Field? = null
 
+    /** 录音器清掉 `AudioRecord` 的收尾方法，用来把真货还回去。 */
     @Volatile
-    private var stopRecordMethod: Method? = null
+    private var teardownMethod: Method? = null
 
     @Volatile
     private var realRecord: AudioRecord? = null
@@ -96,136 +93,33 @@ internal object WeTypeVoiceHooks {
     // 安装
     // ------------------------------------------------------------------
 
-    fun install(sourceDir: String?, classLoader: ClassLoader) {
+    fun install(classLoader: ClassLoader) {
         hostClassLoader = classLoader
-        val bridge = runCatching {
-            System.loadLibrary("dexkit")
-            sourceDir?.let { DexKitBridge.create(it) }
-        }.getOrNull()
-        if (bridge == null) {
-            Log.i("$TAG: DexKit bridge unavailable; voice bridge disabled")
+        val singleton = WeTypeHostContracts.classOf(HostContractId.VOICE_SINGLETON)
+        if (singleton == null) {
+            Log.i("$TAG: voice singleton unresolved; voice bridge disabled")
             return
         }
-        try {
-            val context = HostContext(classLoader, bridge) { null }
-            val singleton = resolveVoiceSingleton(context)
-            if (singleton == null) {
-                Log.i("$TAG: voice singleton unresolved; notes=${context.notes}")
-                return
-            }
-            singletonClass = singleton
-            hookTranscript(singleton)
+        singletonClass = singleton
+        hookTranscript()
+        // 门禁与录音器相互独立：录音器定位失败也不该把门禁一起丢掉。
+        hookWindowHiddenGate()
 
-            // 录音器按「持有 AudioRecord + 无参 G()Z / I()Z」的形状定位，
-            // 从锚类的字段类型反向取 —— 编译期字段类型是混淆改不掉的边。
-            val recorderAnchor = context.classByDexStrings("voice.recorder", listOf(RECORDER_ANCHOR))
-            val pcmRecorder = resolvePcmRecorderClass(recorderAnchor)
-            if (pcmRecorder == null) {
-                Log.i("$TAG: pcmRecorder unresolved; cannot borrow recognition")
-                return
-            }
-            grabRecorderFields(pcmRecorder)
-            hookRecordSwap()
-            hookWindowHiddenGate()
-
-            // 会话生命周期挂在 Eta 的连接上：连上就拉起宿主语音，EOS 就收尾。
-            WeTypeVoiceBridge.onClientConnected = { startVoiceSession() }
-            WeTypeVoiceBridge.onStreamEnd = { stopVoiceSession() }
-
-            hookApplicationContext()
-            Log.i("$TAG: installed. singleton=${singleton.name} recorder=${pcmRecorder.name} swapReady=$swapReady")
-        } finally {
-            runCatching { bridge.close() }
+        val pcmRecorder = WeTypeHostContracts.classOf(HostContractId.VOICE_RECORDER)
+        if (pcmRecorder == null) {
+            Log.i("$TAG: pcmRecorder unresolved; cannot borrow recognition")
+            return
         }
+        grabRecorderFields(pcmRecorder)
+        hookRecordSwap()
+
+        // 会话生命周期挂在 Eta 的连接上：连上就拉起宿主语音，EOS 就收尾。
+        WeTypeVoiceBridge.onClientConnected = { startVoiceSession() }
+        WeTypeVoiceBridge.onStreamEnd = { stopVoiceSession() }
+
+        hookApplicationContext()
+        Log.i("$TAG: installed. singleton=${singleton.name} recorder=${pcmRecorder.name} swapReady=$swapReady")
     }
-
-    // ------------------------------------------------------------------
-    // 定位
-    // ------------------------------------------------------------------
-
-    /**
-     * 转录回调的形状在版本间只差尾巴上那个会话句柄，所以两条形状都试；命中即停。
-     *
-     * 同形状还会命中声明它的接口与匿名实现，所以叠一条语义校验：**非接口、非抽象、
-     * 且带静态自引用字段**（宿主单例的固定形状）。
-     */
-    private fun resolveVoiceSingleton(context: HostContext): Class<*>? {
-        val head = listOf(
-            "java.lang.String[]", "java.util.List", "boolean", "boolean",
-            "java.lang.String", "java.lang.String", "java.lang.String",
-            "long", "long", "java.util.List", "boolean", "java.lang.String",
-            "int", "int", "int"
-        )
-        val accept: (Class<*>) -> Boolean = { clazz ->
-            !clazz.isInterface && !Modifier.isAbstract(clazz.modifiers) && hasStaticSelfField(clazz)
-        }
-        for (extra in listOf(emptyList<String>(), listOf("java.lang.Object"))) {
-            val shape = MethodShape(head + extra, "void")
-            context.classByMethodShapes("voice.singleton", listOf(shape), accept)?.let { return it }
-        }
-        return null
-    }
-
-    /**
-     * 按形状认领录音器：**持有 `AudioRecord` 字段** + 声明了无参返回 boolean 的
-     * `G()`（startRecord）/ `I()`（stopRecord）。
-     *
-     * 不写死类名，也不能只在锚的嵌套树里找（录音器是顶层类）。稳的取法是从**持有者的
-     * 字段类型**反向取：锚命中的 `voice.E$c` 是 `voice.E` 的内部类，而 `voice.E` 上
-     * `mPcmRecorder` 字段的声明类型就是它。
-     */
-    private fun resolvePcmRecorderClass(recorderAnchor: Class<*>?): Class<*>? {
-        val owners = linkedSetOf<Class<*>>()
-        recorderAnchor?.let {
-            collectNested(it, owners)
-            it.enclosingClass?.let { outer ->
-                owners += outer
-                outer.enclosingClass?.let { owners += it }
-            }
-        }
-        for (owner in owners) {
-            for (field in owner.declaredFields) {
-                if (Modifier.isStatic(field.modifiers)) continue
-                if (isPcmRecorderShape(field.type)) {
-                    Log.i("$TAG: pcmRecorder via ${owner.simpleName}.${field.name} : ${field.type.name}")
-                    return field.type
-                }
-            }
-        }
-        return null
-    }
-
-    private fun isPcmRecorderShape(clazz: Class<*>): Boolean {
-        if (clazz.isInterface || Modifier.isAbstract(clazz.modifiers)) return false
-        if (clazz.isPrimitive || clazz.isArray) return false
-        val holdsRecord = clazz.declaredFields.any {
-            !Modifier.isStatic(it.modifiers) && AudioRecord::class.java.isAssignableFrom(it.type)
-        }
-        if (!holdsRecord) return false
-        val zeroArgBooleans = clazz.declaredMethods
-            .filter {
-                it.parameterCount == 0 &&
-                    it.returnType == Boolean::class.javaPrimitiveType &&
-                    !Modifier.isStatic(it.modifiers)
-            }
-            .map { it.name }
-            .toSet()
-        return zeroArgBooleans.containsAll(setOf("G", "I"))
-    }
-
-    private fun collectNested(clazz: Class<*>, out: MutableSet<Class<*>>) {
-        if (!out.add(clazz)) return
-        runCatching { clazz.declaredClasses }.getOrDefault(emptyArray())
-            .forEach { collectNested(it, out) }
-    }
-
-    private fun hasStaticSelfField(clazz: Class<*>): Boolean =
-        clazz.declaredFields.any { Modifier.isStatic(it.modifiers) && it.type == clazz }
-
-    private fun staticSelfField(clazz: Class<*>): Field? =
-        clazz.declaredFields.firstOrNull {
-            Modifier.isStatic(it.modifiers) && it.type == clazz
-        }?.apply { isAccessible = true }
 
     // ------------------------------------------------------------------
     // 转录出口
@@ -234,89 +128,70 @@ internal object WeTypeVoiceHooks {
     /**
      * 转录回调：`(String[], List, boolean, boolean, String, …, int, int, int)void`。
      * `args[0]` 是分片，拼起来才是文本；`args[3]` 是本句结束标志。
+     *
+     * `args[6]` 是宿主回填的润色全文，与 `args[0]` 同为累积整句而非分片，可直接整体替换。
+     * 宿主的基础润色对本轮音频可能没有改动，那时两者逐字相同，替换等价于原文。
      */
-    private fun hookTranscript(clazz: Class<*>) {
-        val method = clazz.declaredMethods.firstOrNull(::isTranscriptCallback) ?: run {
-            Log.i("$TAG: transcript callback not found on ${clazz.name}")
+    private fun hookTranscript() {
+        val method = WeTypeHostContracts.methodOf(HostContractId.VOICE_TRANSCRIPT) ?: run {
+            Log.i("$TAG: transcript callback unresolved")
             return
         }
-        method.isAccessible = true
         method.hookAfter { param ->
             val args = param.args
-            val text = (args.getOrNull(0) as? Array<*>)?.joinToString("") { it?.toString().orEmpty() }
+            val raw = (args.getOrNull(0) as? Array<*>)?.joinToString("") { it?.toString().orEmpty() }
                 .orEmpty()
+            val polished = (args.getOrNull(6) as? String).orEmpty()
+            val text = if (WeTypeSettings.isVoiceAiPolishEnabledXposed() && polished.isNotEmpty()) {
+                polished
+            } else {
+                raw
+            }
             val endFlag = args.getOrNull(3) as? Boolean ?: false
             if (text.isNotEmpty()) {
                 WeTypeVoiceBridge.emitTranscript(text, endFlag)
             }
         }
-        Log.i("$TAG: transcript callback hooked on ${clazz.name}#${method.name}")
-    }
-
-    private fun isTranscriptCallback(method: Method): Boolean {
-        if (method.returnType != Void.TYPE) return false
-        if (Modifier.isAbstract(method.modifiers)) return false
-        val types = method.parameterTypes
-        if (types.size < 15) return false
-        return types[0] == Array<String>::class.java &&
-            List::class.java.isAssignableFrom(types[1]) &&
-            types[2] == Boolean::class.javaPrimitiveType &&
-            types[3] == Boolean::class.javaPrimitiveType &&
-            types[4] == String::class.java
+        Log.i("$TAG: transcript callback hooked on ${method.declaringClass.name}#${method.name}")
     }
 
     // ------------------------------------------------------------------
     // 换录音器
     // ------------------------------------------------------------------
 
-    /** 定位录音器上那三个字段与 stopRecord 句柄。 */
+    /** 从契约层取录音器上那两个字段与收尾方法。 */
     private fun grabRecorderFields(pcmRecorder: Class<*>) {
         pcmRecorderClass = pcmRecorder
         // 宿主持有的真 AudioRecord。字段**声明类型**就是 `android.media.AudioRecord`。
-        pcmRecorderRecordField = pcmRecorder.declaredFields.firstOrNull {
-            !Modifier.isStatic(it.modifiers) && AudioRecord::class.java.isAssignableFrom(it.type)
-        }?.apply { isAccessible = true }
-        stopRecordMethod = pcmRecorder.declaredMethods.firstOrNull {
-            it.name == "I" && it.parameterCount == 0 &&
-                it.returnType == Boolean::class.javaPrimitiveType
-        }?.apply { isAccessible = true }
-        // 读线程字段：声明类型是**抽象类**、且抽象方法里有 `()Z` 和 `()V` 的那个实例字段
-        // （3.5.x = `y`，声明类型 `l6.j`，实际装 `l6.i`）。不能按 Runnable 匹配 ——
-        // Runnable 是那个基类的**内部类**；也不能按「声明类型持有 AudioRecord」匹配 ——
-        // AudioRecord 字段在**子类**上，不在基类上。子类那份等 `t()` 跑出实例后按运行时类型取。
-        readModeField = pcmRecorder.declaredFields.firstOrNull { f ->
-            if (Modifier.isStatic(f.modifiers)) return@firstOrNull false
-            val t = f.type
-            if (!Modifier.isAbstract(t.modifiers)) return@firstOrNull false
-            val m = t.declaredMethods
-            m.any { it.parameterCount == 0 && it.returnType == Boolean::class.javaPrimitiveType } &&
-                m.any { it.parameterCount == 0 && it.returnType == Void.TYPE }
-        }?.apply { isAccessible = true }
-        swapReady = pcmRecorderRecordField != null && readModeField != null && stopRecordMethod != null
+        pcmRecorderRecordField = WeTypeHostContracts.fieldOf(HostContractId.VOICE_RECORDER_RECORD)
+        // 读线程字段：声明类型是**抽象类**、且抽象方法里有 `()Z` 和 `()V` 的那个实例字段。
+        // 不能按 Runnable 匹配 —— Runnable 是那个基类的**内部类**；也不能按「声明类型持有
+        // AudioRecord」匹配 —— AudioRecord 字段在**子类**上，不在基类上。子类那份等 init
+        // 跑出实例后按运行时类型取。
+        readModeField = WeTypeHostContracts.fieldOf(HostContractId.VOICE_RECORDER_MODE)
+        teardownMethod = WeTypeHostContracts.methodOf(HostContractId.VOICE_RECORDER_TEARDOWN)
+        swapReady = pcmRecorderRecordField != null && readModeField != null && teardownMethod != null
         Log.i(
             "$TAG: recorder fields: record=${pcmRecorderRecordField?.name} " +
-                "readMode=${readModeField?.name} stop=${stopRecordMethod?.name} ready=$swapReady"
+                "readMode=${readModeField?.name} teardown=${teardownMethod?.name} ready=$swapReady"
         )
     }
 
     /**
-     * 在 `t()`（init）的 after 换掉 `AudioRecord`。
+     * 在录音器 init（建 `AudioRecord` 那个方法）的 after 换掉 `AudioRecord`。
      *
-     * 为什么是 `t()` 而不是 `G()`（startRecord）的 before：`H()` 第一行就是
-     * `if (this.w != null) return false`，`G()` 入口 `w` 按设计是 null；而 `t()` 里
-     * `w` 与读线程都是刚建好的，真正开录的 `H()` 还没跑。此刻两个目标引用都已就位，
+     * 为什么是 init 而不是公开 start 的 before：start 的第一行就是
+     * `if (this.w != null) return false`，入口处 `w` 按设计是 null；而 init 返回时
+     * `w` 与读线程都是刚建好的，真正开录的 start 还没跑。此刻两个目标引用都已就位，
      * 一起换掉，不存在时序窗口。
      *
      * 要换**两个**引用，缺一不可：
-     * - `w`：`H()` 里的 `startRecording()` 与 `getRecordingState() != 3` 两道判据都在它上面。
-     * - 读线程自己那份：`RecordModeAsyncRead` 在**构造时**就把 `AudioRecord` 拷进自己的
-     *   字段，之后改 `w` 影响不到它。它的实例就在 `readModeField` 上，同一时刻一起换。
+     * - `w`：宿主 start 里的 `startRecording()` 与 `getRecordingState()` 两道判据都在它上面。
+     * - 读线程自己那份：读线程在**构造时**就把 `AudioRecord` 拷进自己的字段，之后改 `w`
+     *   影响不到它。它的实例就在读线程字段上，同一时刻一起换。
      */
     private fun hookRecordSwap() {
-        val init = pcmRecorderClass?.declaredMethods?.firstOrNull {
-            it.name == "t" && it.parameterCount == 0 &&
-                it.returnType == Boolean::class.javaPrimitiveType
-        }?.apply { isAccessible = true }
+        val init = WeTypeHostContracts.methodOf(HostContractId.VOICE_RECORDER_INIT)
         if (init == null || !swapReady) {
             Log.i("$TAG: record swap not armed (init=${init != null} ready=$swapReady)")
             return
@@ -325,6 +200,7 @@ internal object WeTypeVoiceHooks {
             val owner = param.thisObject ?: return@hookAfter
             val real = runCatching { pcmRecorderRecordField?.get(owner) }.getOrNull() as? AudioRecord
                 ?: return@hookAfter
+            if (real is FakeAudioRecord) return@hookAfter
             val fake = FakeAudioRecord.from(real) ?: run {
                 Log.i("$TAG: fake record creation failed")
                 return@hookAfter
@@ -350,8 +226,9 @@ internal object WeTypeVoiceHooks {
             if (!swappedThread) Log.i("$TAG: WARNING read-thread record not swapped; stream will be silent")
         }
 
-        // 收尾：`I()` before 把真货还回去，让宿主按原样走完它的 stopRecord。
-        stopRecordMethod?.hookBefore { param ->
+        // 收尾：录音器清 `AudioRecord` 那个方法（353 的 `z()`、4.0.0 的 `L()`）的 before
+        // 把真货还回去，让宿主按原样 release 掉，而不是让假货把这一步吃掉。
+        teardownMethod?.hookBefore { param ->
             val owner = param.thisObject ?: return@hookBefore
             val real = realRecord ?: return@hookBefore
             runCatching { pcmRecorderRecordField?.set(owner, real) }
@@ -366,30 +243,23 @@ internal object WeTypeVoiceHooks {
     /**
      * 录音读线程的「窗口隐藏」门禁。
      *
-     * 读线程每轮都做 `if (WxHldService.N1() != null) { if (!O()) return; }`，
-     * **极性别搞反**：`if-nez O()Z` —— `O()` 为 **true 才继续**，为 false 就 `return-void`
+     * 读线程每轮都做 `if (服务单例 != null) { if (!门禁()) return; }`，
+     * **极性别搞反**：`if-nez 门禁()Z` —— 门禁为 **true 才继续**，为 false 就 `return-void`
      * 打 "mAudioRecord window hidden return"，整条读线程退出（不是 continue，是退出）。
-     * `O()` 的语义就是「窗口已隐藏」这**一个**位（唯一实现是 `WxHldService#O()`，
-     * 方法体 `return this.c`）。借识别期间恒返 true（= 视作窗口可见）即可。
+     * 门禁的语义就是「窗口已隐藏」这**一个**位（方法体 `return this.c`）。
+     * 借识别期间恒返 true（= 视作窗口可见）即可。
+     *
+     * 方法本身由契约层从读循环的日志字符串反查得到 —— 它 3.5.3 叫 `O`、之后叫 `P`。
      */
     private fun hookWindowHiddenGate() {
-        val service = runCatching {
-            Class.forName("com.tencent.wetype.plugin.hld.WxHldService", false, hostClassLoader)
-        }.getOrNull() ?: return
-        val candidates = service.declaredMethods.filter {
-            it.name == "O" && it.parameterCount == 0 &&
-                it.returnType == Boolean::class.javaPrimitiveType &&
-                !Modifier.isAbstract(it.modifiers)
+        val method = WeTypeHostContracts.methodOf(HostContractId.VOICE_GATE) ?: run {
+            Log.i("$TAG: window-hidden gate unresolved")
+            return
         }
-        for (m in candidates) {
-            m.isAccessible = true
-            val outcome = runCatching {
-                m.hookBefore { param ->
-                    if (WeTypeVoiceBridge.isClientConnected) param.result = true
-                }
-            }
-            if (outcome.isSuccess) Log.i("$TAG: window-hidden gate hooked (${service.simpleName}#${m.name})")
+        method.hookBefore { param ->
+            if (WeTypeVoiceBridge.isClientConnected) param.result = true
         }
+        Log.i("$TAG: window-hidden gate hooked (${method.declaringClass.simpleName}#${method.name})")
     }
 
     // ------------------------------------------------------------------
@@ -412,14 +282,14 @@ internal object WeTypeVoiceHooks {
      * 本进程是不是**输入法进程**。
      *
      * 微信输入法有两个进程（主进程与 `:hld`），两个都在作用域里、都会装这套 hook，于是
-     * 两个都会去 bind 18515/18516/18517 —— 先起的赢，后起的只打一行 `EADDRINUSE`。
-     * 谁赢纯看启动顺序，而只有**跑着输入法**的那个进程才有活的录音器：如果主进程抢到端口，
-     * 客户端连上后 `startVoiceSession()` 会在主进程里调，那边没有会话、`mic replaced`
-     * 永远不出现，表现为「协议全对、一个转录都没有」。
+     * 两个都会去 bind 18515 —— 先起的赢，后起的只打一行 `EADDRINUSE`。谁赢纯看启动顺序，
+     * 而只有**跑着输入法**的那个进程才有活的录音器：如果主进程抢到端口，客户端连上后
+     * `startVoiceSession()` 会在主进程里调，那边没有会话、`mic replaced` 永远不出现，
+     * 表现为「协议全对、一个转录都没有」。
      *
      * 判据不写死 `:hld`：直接问 PackageManager 输入法服务的 `processName`，由系统替我们
-     * 解析出进程名（服务类名本来就已经在 [hookWindowHiddenGate] 里用到了）。
-     * 查不到就按「是」处理 —— 宁可回到原来的抢端口行为，也不要因为一次查询失败把功能关死。
+     * 解析出进程名。查不到就按「是」处理 —— 宁可回到原来的抢端口行为，也不要因为一次
+     * 查询失败把功能关死。
      */
     private fun isImeProcess(context: Context): Boolean {
         val info = runCatching {
@@ -462,10 +332,10 @@ internal object WeTypeVoiceHooks {
      * 拉起宿主语音会话。
      *
      * 走宿主自己的启动入口 `(boolean, <场景枚举>)void`。实测它在键盘不可见时**也能**
-     * 跑到 `voiceAddr.start()` + `startRecord()`，所以没必要自己拼链路 —— 让宿主按原本
-     * 顺序建会话，我们只在录音器 init 时把那一个 `AudioRecord` 换掉。
+     * 跑到会话建立 + 开录，所以没必要自己拼链路 —— 让宿主按原本顺序建会话，我们只在
+     * 录音器 init 时把那一个 `AudioRecord` 换掉。
      *
-     * 节流：宿主在会话**已经起来**时 `b1()` 会直接返回，重连时重复调它是无害的，
+     * 节流：宿主在会话**已经起来**时会直接返回，重连时重复调它是无害的，
      * 但没必要每 100ms 调一次，所以加个时间窗。
      */
     @Synchronized
@@ -477,12 +347,13 @@ internal object WeTypeVoiceHooks {
         val now = System.currentTimeMillis()
         if (now - lastStartAt < START_THROTTLE_MS) return
         val clazz = singletonClass ?: return
-        val context = appContextRef?.get() ?: run {
+        if (appContextRef?.get() == null) {
             Log.i("$TAG: cannot start voice session: no application context yet")
             return
         }
-        val singleton = singletonInstance ?: runCatching { staticSelfField(clazz)?.get(null) }
-            .getOrNull()?.also { singletonInstance = it } ?: return
+        val singleton = singletonInstance ?: runCatching {
+            WeTypeHostContracts.fieldOf(HostContractId.VOICE_SINGLETON_INSTANCE)?.get(null)
+        }.getOrNull()?.also { singletonInstance = it } ?: return
         lastStartAt = now
         // 注意：**不要**在这里 resetStream()。缓冲是在客户端连上时清的，此刻队列里
         // 已经攒了本次会话的头几帧 —— 正是靠它们，宿主读线程第一口就吃到真音频，
@@ -493,39 +364,73 @@ internal object WeTypeVoiceHooks {
         Log.i("$TAG: voice session start invoked=$invoked")
     }
 
+    /**
+     * 收尾：调宿主自己的「结束语音输入」入口，让它的状态机回到可再次启动的状态。
+     *
+     * 不能乱挑第一个 void 方法。曾经的写法按形状捞到一个只是离线/在线标志位 setter 的
+     * 两参方法，宿主会话状态于是永远停在 `INPUT`；下一次启动会被开头的「已在会话中就返回」
+     * 直接挡掉，录音器不会被换，表现为**同一个输入法进程里第一轮能用、第二轮一个转录都没有**。
+     *
+     * 宿主自己的收尾分两层，这里按形状认领（不写死混淆名）：
+     * - 简单入口 `(<场景枚举>, boolean forceStop, boolean allowDelay)void`，内部按状态机
+     *   分支，最稳；
+     * - 本体 `(boolean, boolean, <场景枚举>, boolean, boolean)void`，作为兜底。
+     */
     private fun stopVoiceSession() {
         val singleton = singletonInstance ?: return
-        for (method in singleton.javaClass.declaredMethods) {
-            if (Modifier.isAbstract(method.modifiers)) continue
-            val args: Array<Any?> = when {
-                method.returnType != Void.TYPE -> continue
-                method.parameterCount == 2 &&
-                    method.parameterTypes.all { it == Boolean::class.javaPrimitiveType } ->
-                    arrayOf(true, false)
-                method.parameterCount == 1 &&
-                    method.parameterTypes[0] == Boolean::class.javaPrimitiveType -> arrayOf(true)
-                method.parameterCount == 0 -> emptyArray()
-                else -> continue
-            }
-            method.isAccessible = true
-            runCatching { method.invoke(singleton, *args) }
-            Log.i("$TAG: voice session stop invoked ${method.name}")
+        val clazz = singleton.javaClass
+
+        val simpleEnd = clazz.declaredMethods.firstOrNull { m ->
+            val t = m.parameterTypes
+            m.returnType == Void.TYPE && t.size == 3 && t[0].isEnum &&
+                t[1] == Boolean::class.javaPrimitiveType && t[2] == Boolean::class.javaPrimitiveType
+        }
+        val scene = simpleEnd?.parameterTypes?.get(0)?.enumConstants?.firstOrNull()
+        if (simpleEnd != null && scene != null) {
+            simpleEnd.isAccessible = true
+            val ok = runCatching { simpleEnd.invoke(singleton, scene, true, false) }
+                .onFailure { Log.i("$TAG: end voice threw: ${it.javaClass.simpleName}: ${it.message}") }
+                .isSuccess
+            Log.i("$TAG: voice session end invoked ${simpleEnd.name} ok=$ok")
             return
         }
+
+        for (m in clazz.declaredMethods) {
+            val t = m.parameterTypes
+            if (m.returnType != Void.TYPE || t.size != 5) continue
+            if (t[0] != Boolean::class.javaPrimitiveType || t[1] != Boolean::class.javaPrimitiveType) continue
+            if (!t[2].isEnum) continue
+            if (t[3] != Boolean::class.javaPrimitiveType || t[4] != Boolean::class.javaPrimitiveType) continue
+            val scene2 = t[2].enumConstants?.firstOrNull() ?: continue
+            m.isAccessible = true
+            val ok = runCatching { m.invoke(singleton, true, false, scene2, false, false) }
+                .onFailure { Log.i("$TAG: end voice threw: ${it.javaClass.simpleName}: ${it.message}") }
+                .isSuccess
+            Log.i("$TAG: voice session end invoked ${m.name} ok=$ok")
+            return
+        }
+        Log.i("$TAG: voice session end entry not found")
     }
 
-    /** 按形状挑启动入口：`(boolean, <场景枚举>)void`。场景枚举只影响埋点，不影响识别。 */
+    /**
+     * 启动入口：`(boolean, <场景枚举>)void`，场景枚举只影响埋点，不影响识别。
+     *
+     * 形状不足以定唯一 —— 3.5.4 / 4.0.0 上「按键松开触发发送」的收尾方法与它形状逐字相同，
+     * 盲取第一个会把会话直接结束掉（日志表现为 `voice session start invoked=true` 之后
+     * 一个 `mic replaced` 都没有）。认领逻辑放在 `voice.start` 契约里。
+     */
     private fun invokeStart(singleton: Any): Boolean {
-        for (method in singleton.javaClass.declaredMethods) {
-            val types = method.parameterTypes
-            if (types.size != 2) continue
-            if (types[0] != Boolean::class.javaPrimitiveType) continue
-            if (!types[1].isEnum) continue
-            val scene = types[1].enumConstants?.firstOrNull() ?: continue
-            method.isAccessible = true
-            method.invoke(singleton, false, scene)
-            return true
+        val entry = WeTypeHostContracts.methodOf(HostContractId.VOICE_START) ?: run {
+            Log.i("$TAG: voice session start entry not resolved")
+            return false
         }
-        return false
+        val types = entry.parameterTypes
+        val scene = types[1].enumConstants?.firstOrNull() ?: run {
+            Log.i("$TAG: voice session start scene enum empty")
+            return false
+        }
+        entry.isAccessible = true
+        entry.invoke(singleton, false, scene)
+        return true
     }
 }

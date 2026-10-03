@@ -50,6 +50,12 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "disableHotUpdate" to disableHotUpdate,
     "colorosAiWriterEnabled" to colorosAiWriterEnabled,
     "voiceBridgeEnabled" to voiceBridgeEnabled,
+    "voiceAiPolishEnabled" to voiceAiPolishEnabled,
+    "voiceSilenceFinishMs" to voiceSilenceFinishMs,
+    "voiceNoSpeechFinishMs" to voiceNoSpeechFinishMs,
+    "voiceSilencePeak" to voiceSilencePeak,
+    "voiceEosQuietMs" to voiceEosQuietMs,
+    "voiceEosMaxWaitMs" to voiceEosMaxWaitMs,
     "showCrossDeviceClipboard" to showCrossDeviceClipboard,
     "removeClipboardRetentionLimit" to removeClipboardRetentionLimit,
     "removeClipboardTextLimit" to removeClipboardTextLimit,
@@ -175,6 +181,12 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
     disableHotUpdate = saved["disableHotUpdate"] as? Boolean ?: disableHotUpdate
     colorosAiWriterEnabled = saved["colorosAiWriterEnabled"] as? Boolean ?: colorosAiWriterEnabled
     voiceBridgeEnabled = saved["voiceBridgeEnabled"] as? Boolean ?: voiceBridgeEnabled
+    voiceAiPolishEnabled = saved["voiceAiPolishEnabled"] as? Boolean ?: voiceAiPolishEnabled
+    voiceSilenceFinishMs = saved["voiceSilenceFinishMs"] as? Int ?: voiceSilenceFinishMs
+    voiceNoSpeechFinishMs = saved["voiceNoSpeechFinishMs"] as? Int ?: voiceNoSpeechFinishMs
+    voiceSilencePeak = saved["voiceSilencePeak"] as? Int ?: voiceSilencePeak
+    voiceEosQuietMs = saved["voiceEosQuietMs"] as? Int ?: voiceEosQuietMs
+    voiceEosMaxWaitMs = saved["voiceEosMaxWaitMs"] as? Int ?: voiceEosMaxWaitMs
     showCrossDeviceClipboard = saved["showCrossDeviceClipboard"] as? Boolean ?: showCrossDeviceClipboard
     removeClipboardRetentionLimit = saved["removeClipboardRetentionLimit"] as? Boolean
         ?: removeClipboardRetentionLimit

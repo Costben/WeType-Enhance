@@ -57,6 +57,37 @@
             android:exported="true" />
 
         <!--
+            「Shizuku 授权」入口。宿主进程（设置页）用显式组件拉起它，所以必须 exported；
+            它自己不接受任何外部数据，只把授权请求发出去，暴露出去没有额外风险。
+
+            excludeFromRecents + noHistory：它是个一次性的授权中转页，授权完就退，
+            不该在最近任务里留一张卡片。
+        -->
+        <activity
+            android:name=".ShizukuAuthActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+
+        <!--
+            Shizuku 客户端声明。Shizuku 只把 binder 递给**声明了这个 provider 的进程**；
+            没有它 `Shizuku.getBinder()` 永远是 null，而 binder 是拿 shell 权限写
+            `Settings.Secure` 的唯一入口。authority 必须与 applicationId 对齐。
+
+            注意它只覆盖模块 App 进程：设置页跑在宿主进程里，拿不到这份 binder，
+            所以「先 Shizuku 后 root」里的 Shizuku 那一步必须由模块 App 代跑。
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!--
             把微信输入法的识别能力以**标准 RecognitionService** 的形式暴露给系统，
             于是 Eta 的「识别服务 → 系统语音服务」就能直接路由到本模块。
 

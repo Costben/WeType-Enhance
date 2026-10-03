@@ -68,6 +68,12 @@ object WeTypeSettings {
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_COLOROS_AI_WRITER_ENABLED = "coloros_aiwriter_enabled"
     private const val KEY_VOICE_BRIDGE_ENABLED = "voice_bridge_enabled"
+    private const val KEY_VOICE_SILENCE_FINISH_MS = "voice_silence_finish_ms"
+    private const val KEY_VOICE_NO_SPEECH_FINISH_MS = "voice_no_speech_finish_ms"
+    private const val KEY_VOICE_SILENCE_PEAK = "voice_silence_peak"
+    private const val KEY_VOICE_EOS_QUIET_MS = "voice_eos_quiet_ms"
+    private const val KEY_VOICE_EOS_MAX_WAIT_MS = "voice_eos_max_wait_ms"
+    private const val KEY_VOICE_AI_POLISH = "voice_ai_polish"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
     private const val KEY_ALL_MATERIAL_PRESETS_ENABLED = "all_material_presets_enabled"
@@ -292,8 +298,19 @@ object WeTypeSettings {
     const val DEFAULT_DISABLE_HOT_UPDATE = true
     const val DEFAULT_COLOROS_AI_WRITER_ENABLED = false
 
-    /** 「Adr2api」的总开关。默认开启：模块装好即可用，用户不需要先去设置页点一遍。 */
+    /** 「Asr2api」的总开关。默认开启：模块装好即可用，用户不需要先去设置页点一遍。 */
     const val DEFAULT_VOICE_BRIDGE_ENABLED = true
+
+    // 语音端点判定参数。原本硬编码在识别服务里，这里把同一组实调值挪成可调设置；
+    // 默认值直接决定识别手感和切句时机，不要随手改动。
+    const val DEFAULT_VOICE_SILENCE_FINISH_MS = 1800
+    const val DEFAULT_VOICE_NO_SPEECH_FINISH_MS = 6000
+    const val DEFAULT_VOICE_SILENCE_PEAK = 500
+    const val DEFAULT_VOICE_EOS_QUIET_MS = 900
+    const val DEFAULT_VOICE_EOS_MAX_WAIT_MS = 6000
+
+    /** 转录回传前是否改用宿主回填的润色文本。默认关闭，保持「原样回传原始识别文本」。 */
+    const val DEFAULT_VOICE_AI_POLISH = false
 
     /** 模块自带的 [android.speech.RecognitionService]，展开成 `包名/类名` 的扁平串。 */
     const val VOICE_RECOGNITION_COMPONENT =
@@ -407,6 +424,12 @@ object WeTypeSettings {
         val disableHotUpdate: Boolean,
         val colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         val voiceBridgeEnabled: Boolean = DEFAULT_VOICE_BRIDGE_ENABLED,
+        val voiceSilenceFinishMs: Int = DEFAULT_VOICE_SILENCE_FINISH_MS,
+        val voiceNoSpeechFinishMs: Int = DEFAULT_VOICE_NO_SPEECH_FINISH_MS,
+        val voiceSilencePeak: Int = DEFAULT_VOICE_SILENCE_PEAK,
+        val voiceEosQuietMs: Int = DEFAULT_VOICE_EOS_QUIET_MS,
+        val voiceEosMaxWaitMs: Int = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
+        val voiceAiPolishEnabled: Boolean = DEFAULT_VOICE_AI_POLISH,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -465,6 +488,22 @@ object WeTypeSettings {
 
     fun getClipboardImageMaxSizeMb(context: Context): Int =
         readSnapshot(context).clipboardImageMaxSizeMb
+
+    /**
+     * 语音端点判定参数。识别服务跑在模块进程，读的就是模块自己那份偏好（由桥接写入），
+     * 所以这里直接走 [readSnapshot]，不另造一套存储。
+     */
+    fun voiceTuning(context: Context): VoiceTuning {
+        val snapshot = readSnapshot(context)
+        return VoiceTuning(
+            silenceFinishMs = snapshot.voiceSilenceFinishMs,
+            noSpeechFinishMs = snapshot.voiceNoSpeechFinishMs,
+            silencePeak = snapshot.voiceSilencePeak,
+            eosQuietMs = snapshot.voiceEosQuietMs,
+            eosMaxWaitMs = snapshot.voiceEosMaxWaitMs,
+            aiPolishEnabled = snapshot.voiceAiPolishEnabled
+        )
+    }
 
     private val backupSettingKeys = arrayOf(
         KEY_BACKUP_LOCAL_FOLDER_URI,
@@ -692,7 +731,7 @@ object WeTypeSettings {
      * 的真实值，所以用户在别处改过之后回到设置页，开关会跟着变。
      *
      * 读 `Settings.Secure` 不需要任何权限，所以这里直接读；写才需要
-     * `WRITE_SECURE_SETTINGS`（模块拿不到，见 `applyVoiceSystemService`）。
+     * `WRITE_SECURE_SETTINGS`（模块拿不到，见 `applyVoiceSystemServiceViaRoot`）。
      */
     fun isVoiceSystemServiceApplied(context: Context): Boolean {
         val current = runCatching {
@@ -705,21 +744,25 @@ object WeTypeSettings {
     }
 
     /**
-     * 把系统识别服务指向（或解除指向）模块。
+     * 把系统识别服务指向（或解除指向）模块 —— **root 那条路**。
      *
-     * ## 为什么走 root 而不是 `ContentResolver`
+     * Shizuku 那条路在模块 App 进程里，见 [com.xposed.wetypehook.ModuleBridgeReceiver]；
+     * 两条路的先后由设置页的状态层编排。
+     *
+     * ## 为什么写不了 `ContentResolver`
      *
      * `Settings.Secure` 的写入口要 `WRITE_SECURE_SETTINGS`，而模块自己声明不了它：
      * 该权限是 `signature|privileged|development|installer|role`，「development」这一档
      * 只对 `ro.debuggable=1` 的 userdebug/eng 构建生效，本机是 `user` + `release-keys`，
      * 实际等同于 signature 级；而 `pm grant` 又只认「应用自己 manifest 里声明过的权限」。
      * 声明它还会连带触发 Google Play 的 `DUPLICATE_PERMISSIONS` 安装拦截 —— 同一个权限
-     * 不允许两个包同时声明。Shizuku 那条路同样绕不开：Shizuku 自己的
-     * `writeSecureSettings` 要的就是这一个权限。
+     * 不允许两个包同时声明。于是只剩「借别人的 shell 身份」这一条路：root，或者 Shizuku。
      *
-     * 于是只剩 root。这里**借的是微信输入法进程已有的 root 授权**：模块的 hook 就跑在
-     * `com.tencent.wetype:hld` 里，该 uid 在 Magisk 的授权表里，所以 `su` 会直接放行。
-     * 模块自身不需要 root，也就不必给 `com.xposed.wetypehook` 单独开一条策略。
+     * ## 为什么这里借的是微信输入法进程的 root
+     *
+     * 模块的 hook 就跑在 `com.tencent.wetype:hld` 里，该 uid 在 Magisk 的授权表里，
+     * 所以 `su` 会直接放行。模块自身不需要 root，也就不必给 `com.xposed.wetypehook`
+     * 单独开一条策略。
      *
      * ## 为什么要套一层 `sh`
      *
@@ -733,7 +776,7 @@ object WeTypeSettings {
      *    写和读都会失败（只有 `su -c` 不带 uid，默认落到 uid 0 才行）。套一层 `sh -c`
      *    再在**脚本内部**写裸 `settings`，命令就在 root uid 下执行了。
      */
-    fun applyVoiceSystemService(context: Context, enable: Boolean): SecureWriteResult {
+    fun applyVoiceSystemServiceViaRoot(context: Context, enable: Boolean): SecureWriteResult {
         val command = if (enable) {
             "settings put secure $VOICE_RECOGNITION_SERVICE_KEY $VOICE_RECOGNITION_COMPONENT"
         } else {
@@ -1058,6 +1101,12 @@ object WeTypeSettings {
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
         colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         voiceBridgeEnabled: Boolean = DEFAULT_VOICE_BRIDGE_ENABLED,
+        voiceSilenceFinishMs: Int = DEFAULT_VOICE_SILENCE_FINISH_MS,
+        voiceNoSpeechFinishMs: Int = DEFAULT_VOICE_NO_SPEECH_FINISH_MS,
+        voiceSilencePeak: Int = DEFAULT_VOICE_SILENCE_PEAK,
+        voiceEosQuietMs: Int = DEFAULT_VOICE_EOS_QUIET_MS,
+        voiceEosMaxWaitMs: Int = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
+        voiceAiPolishEnabled: Boolean = DEFAULT_VOICE_AI_POLISH,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1125,6 +1174,12 @@ object WeTypeSettings {
             disableHotUpdate = disableHotUpdate,
             colorosAiWriterEnabled = colorosAiWriterEnabled,
             voiceBridgeEnabled = voiceBridgeEnabled,
+            voiceSilenceFinishMs = voiceSilenceFinishMs,
+            voiceNoSpeechFinishMs = voiceNoSpeechFinishMs,
+            voiceSilencePeak = voiceSilencePeak,
+            voiceEosQuietMs = voiceEosQuietMs,
+            voiceEosMaxWaitMs = voiceEosMaxWaitMs,
+            voiceAiPolishEnabled = voiceAiPolishEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1208,6 +1263,12 @@ object WeTypeSettings {
             disableHotUpdate = current.disableHotUpdate,
             colorosAiWriterEnabled = current.colorosAiWriterEnabled,
             voiceBridgeEnabled = current.voiceBridgeEnabled,
+            voiceSilenceFinishMs = current.voiceSilenceFinishMs,
+            voiceNoSpeechFinishMs = current.voiceNoSpeechFinishMs,
+            voiceSilencePeak = current.voiceSilencePeak,
+            voiceEosQuietMs = current.voiceEosQuietMs,
+            voiceEosMaxWaitMs = current.voiceEosMaxWaitMs,
+            voiceAiPolishEnabled = current.voiceAiPolishEnabled,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
             removeClipboardRetentionLimit = current.removeClipboardRetentionLimit,
             removeClipboardTextLimit = current.removeClipboardTextLimit,
@@ -1316,6 +1377,8 @@ object WeTypeSettings {
     fun isColorosAiWriterEnabledXposed(): Boolean = readSnapshotXposed().colorosAiWriterEnabled
 
     fun isVoiceBridgeEnabledXposed(): Boolean = readSnapshotXposed().voiceBridgeEnabled
+
+    fun isVoiceAiPolishEnabledXposed(): Boolean = readSnapshotXposed().voiceAiPolishEnabled
 
     fun isSystemMaterialEnabled(context: Context): Boolean = readSnapshot(context).systemMaterialEnabled
 
@@ -1453,6 +1516,12 @@ object WeTypeSettings {
         disableHotUpdate: Boolean,
         colorosAiWriterEnabled: Boolean = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         voiceBridgeEnabled: Boolean = DEFAULT_VOICE_BRIDGE_ENABLED,
+        voiceSilenceFinishMs: Int = DEFAULT_VOICE_SILENCE_FINISH_MS,
+        voiceNoSpeechFinishMs: Int = DEFAULT_VOICE_NO_SPEECH_FINISH_MS,
+        voiceSilencePeak: Int = DEFAULT_VOICE_SILENCE_PEAK,
+        voiceEosQuietMs: Int = DEFAULT_VOICE_EOS_QUIET_MS,
+        voiceEosMaxWaitMs: Int = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
+        voiceAiPolishEnabled: Boolean = DEFAULT_VOICE_AI_POLISH,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1523,6 +1592,12 @@ object WeTypeSettings {
             disableHotUpdate = disableHotUpdate,
             colorosAiWriterEnabled = colorosAiWriterEnabled,
             voiceBridgeEnabled = voiceBridgeEnabled,
+            voiceSilenceFinishMs = voiceSilenceFinishMs.coerceIn(300, 10000),
+            voiceNoSpeechFinishMs = voiceNoSpeechFinishMs.coerceIn(1000, 30000),
+            voiceSilencePeak = voiceSilencePeak.coerceIn(50, 5000),
+            voiceEosQuietMs = voiceEosQuietMs.coerceIn(200, 3000),
+            voiceEosMaxWaitMs = voiceEosMaxWaitMs.coerceIn(1000, 15000),
+            voiceAiPolishEnabled = voiceAiPolishEnabled,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1668,6 +1743,12 @@ object WeTypeSettings {
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
             .putBoolean(KEY_COLOROS_AI_WRITER_ENABLED, snapshot.colorosAiWriterEnabled)
             .putBoolean(KEY_VOICE_BRIDGE_ENABLED, snapshot.voiceBridgeEnabled)
+            .putInt(KEY_VOICE_SILENCE_FINISH_MS, snapshot.voiceSilenceFinishMs)
+            .putInt(KEY_VOICE_NO_SPEECH_FINISH_MS, snapshot.voiceNoSpeechFinishMs)
+            .putInt(KEY_VOICE_SILENCE_PEAK, snapshot.voiceSilencePeak)
+            .putInt(KEY_VOICE_EOS_QUIET_MS, snapshot.voiceEosQuietMs)
+            .putInt(KEY_VOICE_EOS_MAX_WAIT_MS, snapshot.voiceEosMaxWaitMs)
+            .putBoolean(KEY_VOICE_AI_POLISH, snapshot.voiceAiPolishEnabled)
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
             .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
             .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
@@ -1847,6 +1928,12 @@ object WeTypeSettings {
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
         putBoolean(KEY_COLOROS_AI_WRITER_ENABLED, colorosAiWriterEnabled)
         putBoolean(KEY_VOICE_BRIDGE_ENABLED, voiceBridgeEnabled)
+        putInt(KEY_VOICE_SILENCE_FINISH_MS, voiceSilenceFinishMs)
+        putInt(KEY_VOICE_NO_SPEECH_FINISH_MS, voiceNoSpeechFinishMs)
+        putInt(KEY_VOICE_SILENCE_PEAK, voiceSilencePeak)
+        putInt(KEY_VOICE_EOS_QUIET_MS, voiceEosQuietMs)
+        putInt(KEY_VOICE_EOS_MAX_WAIT_MS, voiceEosMaxWaitMs)
+        putBoolean(KEY_VOICE_AI_POLISH, voiceAiPolishEnabled)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
         putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
@@ -1971,6 +2058,19 @@ object WeTypeSettings {
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, defaults.disableHotUpdate),
             colorosAiWriterEnabled = getBoolean(KEY_COLOROS_AI_WRITER_ENABLED, defaults.colorosAiWriterEnabled),
             voiceBridgeEnabled = getBoolean(KEY_VOICE_BRIDGE_ENABLED, defaults.voiceBridgeEnabled),
+            voiceSilenceFinishMs = getInt(KEY_VOICE_SILENCE_FINISH_MS, defaults.voiceSilenceFinishMs)
+                .coerceIn(300, 10000),
+            voiceNoSpeechFinishMs = getInt(
+                KEY_VOICE_NO_SPEECH_FINISH_MS,
+                defaults.voiceNoSpeechFinishMs
+            ).coerceIn(1000, 30000),
+            voiceSilencePeak = getInt(KEY_VOICE_SILENCE_PEAK, defaults.voiceSilencePeak)
+                .coerceIn(50, 5000),
+            voiceEosQuietMs = getInt(KEY_VOICE_EOS_QUIET_MS, defaults.voiceEosQuietMs)
+                .coerceIn(200, 3000),
+            voiceEosMaxWaitMs = getInt(KEY_VOICE_EOS_MAX_WAIT_MS, defaults.voiceEosMaxWaitMs)
+                .coerceIn(1000, 15000),
+            voiceAiPolishEnabled = getBoolean(KEY_VOICE_AI_POLISH, defaults.voiceAiPolishEnabled),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
@@ -2217,6 +2317,21 @@ object WeTypeSettings {
             disableHotUpdate = getBoolean(KEY_DISABLE_HOT_UPDATE, DEFAULT_DISABLE_HOT_UPDATE),
             colorosAiWriterEnabled = getBoolean(KEY_COLOROS_AI_WRITER_ENABLED, DEFAULT_COLOROS_AI_WRITER_ENABLED),
             voiceBridgeEnabled = getBoolean(KEY_VOICE_BRIDGE_ENABLED, DEFAULT_VOICE_BRIDGE_ENABLED),
+            voiceSilenceFinishMs = getInt(
+                KEY_VOICE_SILENCE_FINISH_MS,
+                DEFAULT_VOICE_SILENCE_FINISH_MS
+            ).coerceIn(300, 10000),
+            voiceNoSpeechFinishMs = getInt(
+                KEY_VOICE_NO_SPEECH_FINISH_MS,
+                DEFAULT_VOICE_NO_SPEECH_FINISH_MS
+            ).coerceIn(1000, 30000),
+            voiceSilencePeak = getInt(KEY_VOICE_SILENCE_PEAK, DEFAULT_VOICE_SILENCE_PEAK)
+                .coerceIn(50, 5000),
+            voiceEosQuietMs = getInt(KEY_VOICE_EOS_QUIET_MS, DEFAULT_VOICE_EOS_QUIET_MS)
+                .coerceIn(200, 3000),
+            voiceEosMaxWaitMs = getInt(KEY_VOICE_EOS_MAX_WAIT_MS, DEFAULT_VOICE_EOS_MAX_WAIT_MS)
+                .coerceIn(1000, 15000),
+            voiceAiPolishEnabled = getBoolean(KEY_VOICE_AI_POLISH, DEFAULT_VOICE_AI_POLISH),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
@@ -2325,6 +2440,12 @@ object WeTypeSettings {
         disableHotUpdate = DEFAULT_DISABLE_HOT_UPDATE,
         colorosAiWriterEnabled = DEFAULT_COLOROS_AI_WRITER_ENABLED,
         voiceBridgeEnabled = DEFAULT_VOICE_BRIDGE_ENABLED,
+        voiceSilenceFinishMs = DEFAULT_VOICE_SILENCE_FINISH_MS,
+        voiceNoSpeechFinishMs = DEFAULT_VOICE_NO_SPEECH_FINISH_MS,
+        voiceSilencePeak = DEFAULT_VOICE_SILENCE_PEAK,
+        voiceEosQuietMs = DEFAULT_VOICE_EOS_QUIET_MS,
+        voiceEosMaxWaitMs = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
+        voiceAiPolishEnabled = DEFAULT_VOICE_AI_POLISH,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -2392,6 +2513,12 @@ object WeTypeSettings {
             contains(KEY_DISABLE_HOT_UPDATE) ||
             contains(KEY_COLOROS_AI_WRITER_ENABLED) ||
             contains(KEY_VOICE_BRIDGE_ENABLED) ||
+            contains(KEY_VOICE_SILENCE_FINISH_MS) ||
+            contains(KEY_VOICE_NO_SPEECH_FINISH_MS) ||
+            contains(KEY_VOICE_SILENCE_PEAK) ||
+            contains(KEY_VOICE_EOS_QUIET_MS) ||
+            contains(KEY_VOICE_EOS_MAX_WAIT_MS) ||
+            contains(KEY_VOICE_AI_POLISH) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
             contains(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT) ||
@@ -2441,3 +2568,13 @@ object WeTypeSettings {
     }
 
 }
+
+/** 语音端点判定参数的一次性快照，见 [WeTypeSettings.voiceTuning]。 */
+data class VoiceTuning(
+    val silenceFinishMs: Int,
+    val noSpeechFinishMs: Int,
+    val silencePeak: Int,
+    val eosQuietMs: Int,
+    val eosMaxWaitMs: Int,
+    val aiPolishEnabled: Boolean = WeTypeSettings.DEFAULT_VOICE_AI_POLISH
+)

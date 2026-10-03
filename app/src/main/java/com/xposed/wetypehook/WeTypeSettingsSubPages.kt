@@ -253,9 +253,23 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                 SettingsSubPage.VOICE -> VoiceSubPageContent(
                     bridgeEnabled = voiceBridgeEnabled,
                     onBridgeEnabledChange = { voiceBridgeEnabled = it },
+                    aiPolishEnabled = voiceAiPolishEnabled,
+                    onAiPolishChange = { voiceAiPolishEnabled = it },
+                    silenceFinishMs = voiceSilenceFinishMs,
+                    onSilenceFinishChange = { voiceSilenceFinishMs = it },
+                    noSpeechFinishMs = voiceNoSpeechFinishMs,
+                    onNoSpeechFinishChange = { voiceNoSpeechFinishMs = it },
+                    silencePeak = voiceSilencePeak,
+                    onSilencePeakChange = { voiceSilencePeak = it },
+                    eosQuietMs = voiceEosQuietMs,
+                    onEosQuietChange = { voiceEosQuietMs = it },
+                    eosMaxWaitMs = voiceEosMaxWaitMs,
+                    onEosMaxWaitChange = { voiceEosMaxWaitMs = it },
                     systemServiceEnabled = voiceSystemServiceApplied,
                     systemServiceBusy = voiceSystemServiceBusy,
-                    onSystemServiceChange = ::setVoiceSystemService
+                    onSystemServiceChange = ::setVoiceSystemService,
+                    shizukuInstalled = shizukuInstalled,
+                    onRequestShizukuAuthorization = ::requestShizukuAuthorization
                 )
 
                 SettingsSubPage.KEYBOARD_LOGO -> KeyboardLogoSubPageContent(

@@ -26,13 +26,41 @@ object ModuleBridgeContract {
     const val ACTION_BRIDGE = "com.xposed.wetypehook.action.BRIDGE"
     const val MESSAGE_SAVE_SETTINGS = 1
     const val MESSAGE_RECORD_ACTIVATION = 2
+    const val MESSAGE_APPLY_VOICE_SERVICE = 3
     const val EXTRA_MESSAGE_TYPE = "message_type"
     const val EXTRA_SETTINGS = "settings"
     const val EXTRA_REVISION = "revision"
     const val EXTRA_BRIDGE_PENDING_INTENT = "bridge_pending_intent"
     const val EXTRA_BRIDGE_SESSION_TOKEN = "bridge_session_token"
 
-    private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
+    /** 宿主包名。设置页跑在它里面，写 `Settings.Secure` 的请求从那边发出。 */
+    const val HOST_PACKAGE_NAME = "com.tencent.wetype"
+
+    /**
+     * 「系统识别服务」写入的结果回执。
+     *
+     * 与 [ACTION_BRIDGE] 不同，这是**模块 App → 宿主**的方向，也是这条通道上唯一的回执：
+     * Shizuku 只有模块 App 进程拿得到 binder，宿主必须等它把结论送回来才能决定要不要
+     * 退回 root，所以不能像设置镜像那样发完就算。
+     */
+    const val ACTION_VOICE_SERVICE_RESULT = "com.xposed.wetypehook.action.VOICE_SERVICE_RESULT"
+    const val EXTRA_VOICE_SERVICE_ENABLE = "voice_service_enable"
+    const val EXTRA_VOICE_SERVICE_CHANNEL = "voice_service_channel"
+
+    /** 写入成功。 */
+    const val VOICE_CHANNEL_APPLIED = "applied"
+
+    /** Shizuku 在跑但本模块没被授权，已代用户发出授权请求。 */
+    const val VOICE_CHANNEL_NEEDS_PERMISSION = "needs_permission"
+
+    /** Shizuku 没装或没运行。 */
+    const val VOICE_CHANNEL_UNAVAILABLE = "unavailable"
+
+    /** 授权了但命令没跑通。 */
+    const val VOICE_CHANNEL_FAILED = "failed"
+
+    /** 模块自己的包名。授权入口、显式组件都按它拼。 */
+    const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
     private const val BRIDGE_SESSION_PREFERENCES = "module_bridge_session"
     private const val KEY_BRIDGE_SESSION_TOKEN = "bridge_session_token"
     private const val SETTINGS_BRIDGE_REQUEST_CODE = 102
@@ -40,6 +68,16 @@ object ModuleBridgeContract {
     fun explicitBridgeIntent(): Intent = Intent(ACTION_BRIDGE).setComponent(
         ComponentName(MODULE_PACKAGE_NAME, ModuleBridgeReceiver::class.java.name)
     )
+
+    /** 请模块 App 代写一次 `Settings.Secure`，[enable] 区分「指向模块」还是「还原」。 */
+    fun voiceServiceRequestIntent(enable: Boolean): Intent = explicitBridgeIntent()
+        .putExtra(EXTRA_MESSAGE_TYPE, MESSAGE_APPLY_VOICE_SERVICE)
+        .putExtra(EXTRA_VOICE_SERVICE_ENABLE, enable)
+
+    /** 模块 App 回宿主的结果意图。 */
+    fun voiceServiceResultIntent(channel: String): Intent =
+        Intent(ACTION_VOICE_SERVICE_RESULT).setPackage(HOST_PACKAGE_NAME)
+            .putExtra(EXTRA_VOICE_SERVICE_CHANNEL, channel)
 
     fun createSettingsBridgePendingIntent(context: Context): PendingIntent {
         check(context.packageName == MODULE_PACKAGE_NAME)
@@ -101,7 +139,10 @@ object ModuleBridgeContract {
 class ModuleBridgeReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "MIUIIME.ModuleBridge"
-        private const val WETYPE_PACKAGE_NAME = "com.tencent.wetype"
+        private const val WETYPE_PACKAGE_NAME = ModuleBridgeContract.HOST_PACKAGE_NAME
+
+        /** 刚被广播拉起的进程里 binder 可能还没推到，留一点等待窗口。 */
+        private const val BINDER_WAIT_MILLIS = 2_500L
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -109,6 +150,64 @@ class ModuleBridgeReceiver : BroadcastReceiver() {
         when (intent.getIntExtra(ModuleBridgeContract.EXTRA_MESSAGE_TYPE, 0)) {
             ModuleBridgeContract.MESSAGE_SAVE_SETTINGS -> importSettings(context, intent)
             ModuleBridgeContract.MESSAGE_RECORD_ACTIVATION -> recordActivation(context, intent)
+            ModuleBridgeContract.MESSAGE_APPLY_VOICE_SERVICE -> applyVoiceSystemService(context, intent)
+        }
+    }
+
+    /**
+     * 替宿主写 `Settings.Secure` 的 `voice_recognition_service`。
+     *
+     * 宿主进程拿不到 Shizuku 的 binder（只有声明了 `rikka.shizuku.ShizukuProvider` 的进程才有），
+     * 所以这一步只能在这里做。结论用广播送回宿主，由它决定是退回 root 还是提示用户。
+     *
+     * 走 `goAsync()`：`exec` 会阻塞到远程进程退出，占着主线程会撞上广播的 10 秒上限。
+     */
+    private fun applyVoiceSystemService(context: Context, intent: Intent) {
+        if (!isTrustedSender(context, ModuleBridgeContract.HOST_PACKAGE_NAME)) {
+            Log.w(TAG, "Rejected voice service request from an untrusted sender")
+            return
+        }
+        val enable = intent.getBooleanExtra(ModuleBridgeContract.EXTRA_VOICE_SERVICE_ENABLE, false)
+        val pendingResult = goAsync()
+        Thread {
+            val channel = try {
+                when {
+                    !ShizukuShell.isInstalled(context) ->
+                        ModuleBridgeContract.VOICE_CHANNEL_UNAVAILABLE
+
+                    !ShizukuShell.awaitBinder(BINDER_WAIT_MILLIS) ->
+                        ModuleBridgeContract.VOICE_CHANNEL_UNAVAILABLE
+
+                    !ShizukuShell.isAuthorized() -> {
+                        ShizukuShell.requestPermission()
+                        ModuleBridgeContract.VOICE_CHANNEL_NEEDS_PERMISSION
+                    }
+
+                    ShizukuShell.exec(voiceServiceCommand(enable)) ->
+                        ModuleBridgeContract.VOICE_CHANNEL_APPLIED
+
+                    else -> ModuleBridgeContract.VOICE_CHANNEL_FAILED
+                }
+            } catch (error: Throwable) {
+                Log.w(TAG, "voice service write failed", error)
+                ModuleBridgeContract.VOICE_CHANNEL_FAILED
+            } finally {
+                pendingResult.finish()
+            }
+            Log.i(TAG, "voice service request (enable=$enable) -> $channel")
+            ModuleBridgeContract.sendWithIdentity(
+                context,
+                ModuleBridgeContract.voiceServiceResultIntent(channel)
+            )
+        }.apply { name = "voice-service-write" }.start()
+    }
+
+    private fun voiceServiceCommand(enable: Boolean): String {
+        val key = WeTypeSettings.VOICE_RECOGNITION_SERVICE_KEY
+        return if (enable) {
+            "settings put secure $key ${WeTypeSettings.VOICE_RECOGNITION_COMPONENT}"
+        } else {
+            "settings delete secure $key"
         }
     }
 

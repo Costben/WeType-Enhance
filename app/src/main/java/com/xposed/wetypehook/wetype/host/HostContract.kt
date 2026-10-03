@@ -196,6 +196,86 @@ internal fun HostContext.classByFieldCandidates(
     return null
 }
 
+/**
+ * 按**字段类型**定位类，不设包范围。
+ *
+ * 包锚对 `plugin.hld` 之外的类无效 —— 宿主把 `MMPcmRecorder` 放在默认包 `l6` 下，包名
+ * 本身也是 R8 产物。但「哪个类持有 `android.media.AudioRecord`」是结构事实，与包名和类名
+ * 都无关。候选里通常还混着读线程一类的同类持有者，靠 [accept] 的成员形状区分。
+ */
+internal fun HostContext.classByFieldType(
+    label: String,
+    typeName: String,
+    accept: (Class<*>) -> Boolean
+): Class<*>? {
+    val dexKit = bridge ?: return null
+    val classes = runCatching {
+        dexKit.findField {
+            matcher { type = typeName }
+        }
+    }.getOrNull().orEmpty()
+        .mapNotNull { data -> runCatching { data.getFieldInstance(classLoader).declaringClass }.getOrNull() }
+    return pickUniqueClass(label, "fieldType:$typeName", classes, accept)
+}
+
+/**
+ * 写 [owner] 上字段 [fieldName] 的**全部**方法。
+ *
+ * `FieldData.writers` 描述的是「宿主自己怎么用它」，比方法名稳：录音器的 init 与收尾写的是
+ * 同一个 `AudioRecord` 字段，两者的差异只剩返回类型（init 返回 boolean，收尾是 void）。
+ * 这样两个挂载点都能算出来，不必写死 `t` / `u` / `z` / `L` 这类每次发版都重排的短名。
+ */
+internal fun HostContext.fieldWriters(label: String, owner: Class<*>, fieldName: String): List<Method> {
+    val dexKit = bridge ?: return emptyList()
+    val fields = runCatching {
+        dexKit.findField {
+            matcher {
+                declaredClass = owner.name
+                name = fieldName
+            }
+        }
+    }.getOrNull().orEmpty()
+    if (fields.isEmpty()) {
+        note("$label 找不到 ${owner.simpleName}#$fieldName")
+        return emptyList()
+    }
+    return fields.asSequence()
+        .flatMap { data -> runCatching { data.writers }.getOrNull().orEmpty().asSequence() }
+        .mapNotNull { writer -> runCatching { writer.getMethodInstance(classLoader) }.getOrNull() }
+        .distinct()
+        .toList()
+}
+
+/**
+ * 「用到字符串 [anchors] 中某一条的方法」所调用的全部方法。
+ *
+ * 日志字符串能活过 R8，而它调用的门禁方法名每次发版都在重排。用锚字符串反查调用关系，
+ * 就不必写死 `O` / `P` 这类短名。
+ *
+ * 锚按顺序试，取**第一个唯一命中**的 —— 单条字符串被删改是宿主更新里最容易发生的事，
+ * 多备几条就多一层。全部不唯一时不猜，交给下一级策略。
+ */
+internal fun HostContext.methodsInvokedByStringAnchor(label: String, anchors: List<String>): List<Method> {
+    val dexKit = bridge ?: return emptyList()
+    val tried = mutableListOf<String>()
+    for (anchor in anchors) {
+        val hits = runCatching {
+            dexKit.findMethod {
+                matcher { usingStrings(anchor) }
+            }
+        }.getOrNull().orEmpty()
+        if (hits.size != 1) {
+            tried += "$anchor×${hits.size}"
+            continue
+        }
+        if (tried.isNotEmpty()) note("$label 前 ${tried.size} 个锚未唯一命中（${tried.joinToString(";")}），改用 $anchor")
+        return hits[0].invokes
+            .mapNotNull { invoked -> runCatching { invoked.getMethodInstance(classLoader) }.getOrNull() }
+    }
+    note("$label dexString 全部未唯一命中：${tried.joinToString(";")}")
+    return emptyList()
+}
+
 /** R 类都是「清一色静态 int」的资源表；字段类型不对或数量太少就不是。 */
 internal fun looksLikeResourceTable(clazz: Class<*>, minFields: Int = 300): Boolean {
     val statics = clazz.declaredFields.filter { Modifier.isStatic(it.modifiers) }
@@ -231,6 +311,10 @@ internal data class MethodShape(val paramTypes: List<String>, val returnType: St
  *
  * 单条形状通常不唯一（`(CharSequence)void` 在 4.0.0 命中 116 个类），所以判据是
  * **若干条形状的交集**再叠 [accept] 的结构校验；任一环节不唯一就返回 null 交给下一级策略。
+ *
+ * 形状优先挑**框架回调**（View / IME 生命周期覆写）：R8 不能给虚方法改名，也不能删掉它，
+ * 签名跨版本天然稳定。**别用合成方法**（lambda 宿主方法、匿名类成员）——它们的宿主方法会随
+ * 版本被合并或挪走，实测 `(Canvas,View,long)boolean` 在 3.5.3 上就从候选视图挪到了 `view.qmui.b`。
  */
 internal fun HostContext.classByMethodShapes(
     label: String,

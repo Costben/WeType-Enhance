@@ -1,6 +1,7 @@
 package com.xposed.wetypehook
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -116,6 +117,12 @@ internal class WeTypeSettingsState(
     var disableHotUpdate by mutableStateOf(snapshot.disableHotUpdate)
     var colorosAiWriterEnabled by mutableStateOf(snapshot.colorosAiWriterEnabled)
     var voiceBridgeEnabled by mutableStateOf(snapshot.voiceBridgeEnabled)
+    var voiceAiPolishEnabled by mutableStateOf(snapshot.voiceAiPolishEnabled)
+    var voiceSilenceFinishMs by mutableIntStateOf(snapshot.voiceSilenceFinishMs)
+    var voiceNoSpeechFinishMs by mutableIntStateOf(snapshot.voiceNoSpeechFinishMs)
+    var voiceSilencePeak by mutableIntStateOf(snapshot.voiceSilencePeak)
+    var voiceEosQuietMs by mutableIntStateOf(snapshot.voiceEosQuietMs)
+    var voiceEosMaxWaitMs by mutableIntStateOf(snapshot.voiceEosMaxWaitMs)
 
     /**
      * 「系统识别服务」开关的真实状态，以及它此刻能不能被操作。
@@ -132,33 +139,90 @@ internal class WeTypeSettingsState(
         private set
 
     /**
+     * Shizuku 装没装。
+     *
+     * 宿主进程拿不到 Shizuku 的 binder（只有模块 App 声明了 `ShizukuProvider`），但「装没装」
+     * 看包名就够 —— 授权入口要按它决定是给出可点的入口，还是直接说明这条路不存在。
+     */
+    val shizukuInstalled: Boolean = runCatching {
+        preferencesContext.packageManager.getPackageInfo(SHIZUKU_PACKAGE_NAME, 0)
+        true
+    }.getOrDefault(false)
+
+    /**
      * 把系统识别服务指向（或解除指向）模块，写完回读一次刷新开关。
      *
-     * 走 root：见 [WeTypeSettings.applyVoiceSystemService] 里对权限模型的说明。
-     * 没有 root 时不报「失败」而报「需要 root」，并提示改用复制命令那条路 ——
-     * 这两种情况用户要做的事完全不同。
+     * 写入顺序是 **Shizuku → root → 提示用户**：
+     *
+     * 1. 先请模块 App 代跑 Shizuku。binder 只在它那个进程里，而且这条路不需要 root，
+     *    是权限最小的一条。
+     * 2. Shizuku 没装 / 没运行 / 没授权 / 写失败，都退回宿主进程里自己 `su`。
+     * 3. 两条都不通才提示用户去授权 —— 对用户来说这两种失败要做的事是同一件。
      */
     fun setVoiceSystemService(enable: Boolean) {
         if (voiceSystemServiceBusy) return
         voiceSystemServiceBusy = true
         coroutineScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                WeTypeSettings.applyVoiceSystemService(preferencesContext, enable)
+            val shizuku = if (shizukuInstalled) {
+                withContext(Dispatchers.IO) {
+                    VoiceServiceBridge.request(preferencesContext, enable)
+                }
+            } else {
+                null
+            }
+            val rootResult = if (shizuku == VoiceServiceBridge.Channel.APPLIED) {
+                null
+            } else {
+                withContext(Dispatchers.IO) {
+                    WeTypeSettings.applyVoiceSystemServiceViaRoot(preferencesContext, enable)
+                }
             }
             voiceSystemServiceApplied = WeTypeSettings.isVoiceSystemServiceApplied(preferencesContext)
             voiceSystemServiceBusy = false
+            val applied = shizuku == VoiceServiceBridge.Channel.APPLIED ||
+                rootResult == WeTypeSettings.SecureWriteResult.APPLIED
             val message = when {
-                result == WeTypeSettings.SecureWriteResult.APPLIED && voiceSystemServiceApplied ->
-                    "已指向模块的识别服务"
-                result == WeTypeSettings.SecureWriteResult.APPLIED && !enable ->
-                    "已还原系统默认识别服务"
-                result == WeTypeSettings.SecureWriteResult.NO_ROOT ->
-                    "未获得 root，无法直接写入；请用下方命令自行执行一次"
+                applied && enable -> "已指向模块的识别服务"
+                applied -> "已还原系统默认识别服务"
+                shizuku == VoiceServiceBridge.Channel.NEEDS_PERMISSION ||
+                    shizuku == VoiceServiceBridge.Channel.UNAVAILABLE ||
+                    shizuku == null ||
+                    rootResult == WeTypeSettings.SecureWriteResult.NO_ROOT ->
+                    "请在 Shizuku 中授权本模块，或授予 root 权限"
                 else ->
                     "写入未生效，请用下方命令自行执行一次"
             }
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
+    }
+
+    /**
+     * 打开模块 App 里的 Shizuku 授权页。
+     *
+     * 必须在模块 App 自己的进程里请求：Shizuku 只认声明了 `ShizukuProvider` 的进程，而且
+     * 授权框要求请求方有可见界面 —— 从宿主进程悄悄发一条请求是弹不出框的。
+     */
+    fun requestShizukuAuthorization() {
+        val launched = runCatching {
+            preferencesContext.startActivity(
+                Intent()
+                    .setComponent(
+                        ComponentName(
+                            ModuleBridgeContract.MODULE_PACKAGE_NAME,
+                            "${ModuleBridgeContract.MODULE_PACKAGE_NAME}.ShizukuAuthActivity"
+                        )
+                    )
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            true
+        }.getOrDefault(false)
+        if (!launched) {
+            Toast.makeText(context, "无法打开 Shizuku 授权页", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private companion object {
+        const val SHIZUKU_PACKAGE_NAME = ShizukuShell.SHIZUKU_PACKAGE_NAME
     }
 
     var showCrossDeviceClipboard by mutableStateOf(snapshot.showCrossDeviceClipboard)
@@ -617,6 +681,12 @@ internal class WeTypeSettingsState(
             disableHotUpdate = disableHotUpdate,
             colorosAiWriterEnabled = colorosAiWriterEnabled,
             voiceBridgeEnabled = voiceBridgeEnabled,
+            voiceAiPolishEnabled = voiceAiPolishEnabled,
+            voiceSilenceFinishMs = voiceSilenceFinishMs,
+            voiceNoSpeechFinishMs = voiceNoSpeechFinishMs,
+            voiceSilencePeak = voiceSilencePeak,
+            voiceEosQuietMs = voiceEosQuietMs,
+            voiceEosMaxWaitMs = voiceEosMaxWaitMs,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -709,6 +779,12 @@ internal class WeTypeSettingsState(
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         colorosAiWriterEnabled = WeTypeSettings.DEFAULT_COLOROS_AI_WRITER_ENABLED
         voiceBridgeEnabled = WeTypeSettings.DEFAULT_VOICE_BRIDGE_ENABLED
+        voiceSilenceFinishMs = WeTypeSettings.DEFAULT_VOICE_SILENCE_FINISH_MS
+        voiceNoSpeechFinishMs = WeTypeSettings.DEFAULT_VOICE_NO_SPEECH_FINISH_MS
+        voiceSilencePeak = WeTypeSettings.DEFAULT_VOICE_SILENCE_PEAK
+        voiceEosQuietMs = WeTypeSettings.DEFAULT_VOICE_EOS_QUIET_MS
+        voiceEosMaxWaitMs = WeTypeSettings.DEFAULT_VOICE_EOS_MAX_WAIT_MS
+        voiceAiPolishEnabled = WeTypeSettings.DEFAULT_VOICE_AI_POLISH
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
         removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT

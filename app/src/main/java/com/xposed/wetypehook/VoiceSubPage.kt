@@ -15,33 +15,42 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
+import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.SwitchPreference
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 「Adr2api」二级页。
+ * 「Asr2api」二级页。
  *
- * 把微信输入法的语音识别能力，以**系统标准接口**的形式对外提供：
+ * 把微信输入法的语音识别能力，以**系统标准接口**的形式对外提供：模块自带一个标准的
+ * [android.speech.RecognitionService]，并把 `Settings.Secure` 的 `voice_recognition_service`
+ * 指向它。生效后所有走系统语音识别的应用都会落到微信输入法的识别引擎上。
  *
- * 模块自带一个标准的 [android.speech.RecognitionService]，并把 `Settings.Secure` 的
- * `voice_recognition_service` 指向它。生效后，**所有**走系统语音识别的应用
- * （语音助手、各家 App 的语音输入）都会落到微信输入法的识别引擎上。
- *
- * 能力来自模块在微信输入法进程内借用它的识别引擎：模块进程的服务收到请求后，把麦克风
- * PCM 推到回环端口，由输入法进程内的桥接层喂给宿主识别引擎，转录再原路返回。
- * 所以总开关关闭后，这一路虽然开关仍然可点，但实际识别会失败 ——
- * 它的开关只代表 `Settings.Secure` 有没有指向模块，不代表底层可用。
+ * 页面上不放说明段落 —— 状态本身由开关和摘要行表达，长篇解释只会把真正要点的两三个开关
+ * 埋掉。
  */
 internal fun LazyListScope.VoiceSubPageContent(
     bridgeEnabled: Boolean,
     onBridgeEnabledChange: (Boolean) -> Unit,
+    aiPolishEnabled: Boolean,
+    onAiPolishChange: (Boolean) -> Unit,
+    silenceFinishMs: Int,
+    onSilenceFinishChange: (Int) -> Unit,
+    noSpeechFinishMs: Int,
+    onNoSpeechFinishChange: (Int) -> Unit,
+    silencePeak: Int,
+    onSilencePeakChange: (Int) -> Unit,
+    eosQuietMs: Int,
+    onEosQuietChange: (Int) -> Unit,
+    eosMaxWaitMs: Int,
+    onEosMaxWaitChange: (Int) -> Unit,
     systemServiceEnabled: Boolean,
     systemServiceBusy: Boolean,
-    onSystemServiceChange: (Boolean) -> Unit
+    onSystemServiceChange: (Boolean) -> Unit,
+    shizukuInstalled: Boolean,
+    onRequestShizukuAuthorization: () -> Unit
 ) {
     item {
         SmallTitle(text = "识别能力")
@@ -50,17 +59,17 @@ internal fun LazyListScope.VoiceSubPageContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                Text(
-                    text = "模块在微信输入法进程内借用其语音识别引擎，并通过系统标准接口对外提供。",
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    style = MiuixTheme.textStyles.body2,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
                 SwitchPreference(
                     title = "启用识别能力",
                     summary = "关闭后模块不再启动桥接，系统识别服务一并失效",
                     checked = bridgeEnabled,
                     onCheckedChange = onBridgeEnabledChange
+                )
+                SwitchPreference(
+                    title = "AI 润色",
+                    summary = "识别结果先经微信输入法的文字润色再回传，关闭则直接回传原始识别文本",
+                    checked = aiPolishEnabled,
+                    onCheckedChange = onAiPolishChange
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -74,19 +83,78 @@ internal fun LazyListScope.VoiceSubPageContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                Text(
-                    text = "将系统语音识别服务指向模块。生效后，所有使用系统识别的应用" +
-                        "（语音助手、应用内语音输入等）均由微信输入法识别引擎处理。",
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    style = MiuixTheme.textStyles.body2,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
                 SystemServiceSwitch(
                     enabled = systemServiceEnabled,
                     busy = systemServiceBusy,
                     onChange = onSystemServiceChange
                 )
+                BasicComponent(
+                    title = "Shizuku 授权",
+                    summary = if (shizukuInstalled) {
+                        "点击后在 Shizuku 弹窗中允许本模块写入"
+                    } else {
+                        "未检测到 Shizuku，将改用 root 写入"
+                    },
+                    onClick = onRequestShizukuAuthorization
+                )
                 SystemServiceCommandCard()
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+
+    item {
+        SmallTitle(text = "端点参数")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                SliderPreferenceItem(
+                    title = "静音判停",
+                    summary = "开口后连续静音多久算说完",
+                    value = silenceFinishMs.toFloat(),
+                    range = 300f..10000f,
+                    step = 100f,
+                    format = { "${it.roundToInt()} ms" },
+                    onValueChange = { onSilenceFinishChange(it.roundToInt()) }
+                )
+                SliderPreferenceItem(
+                    title = "无语音超时",
+                    summary = "一直没开口，多久判本轮无语音",
+                    value = noSpeechFinishMs.toFloat(),
+                    range = 1000f..30000f,
+                    step = 500f,
+                    format = { "${it.roundToInt()} ms" },
+                    onValueChange = { onNoSpeechFinishChange(it.roundToInt()) }
+                )
+                SliderPreferenceItem(
+                    title = "静音门限",
+                    summary = "低于这个峰值算静音，越小越不容易被当停顿",
+                    value = silencePeak.toFloat(),
+                    range = 50f..5000f,
+                    step = 50f,
+                    format = { "${it.roundToInt()}" },
+                    onValueChange = { onSilencePeakChange(it.roundToInt()) }
+                )
+                SliderPreferenceItem(
+                    title = "收尾静默",
+                    summary = "收尾后连续多久没有新转录就结束",
+                    value = eosQuietMs.toFloat(),
+                    range = 200f..3000f,
+                    step = 100f,
+                    format = { "${it.roundToInt()} ms" },
+                    onValueChange = { onEosQuietChange(it.roundToInt()) }
+                )
+                SliderPreferenceItem(
+                    title = "收尾上限",
+                    summary = "收尾等待的绝对上限",
+                    value = eosMaxWaitMs.toFloat(),
+                    range = 1000f..15000f,
+                    step = 500f,
+                    format = { "${it.roundToInt()} ms" },
+                    onValueChange = { onEosMaxWaitChange(it.roundToInt()) }
+                )
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
@@ -97,10 +165,9 @@ internal fun LazyListScope.VoiceSubPageContent(
  * 「系统识别服务」开关。
  *
  * 开关直接读写 `Settings.Secure`，所以显示的是**事实**而非意图：在别处改过之后回到本页，
- * 开关会跟着变。写入走 root，权限模型与踩过的坑见
- * [WeTypeSettings.applyVoiceSystemService]。
+ * 开关会跟着变。写入顺序（Shizuku → root → 提示）见 [WeTypeSettingsState.setVoiceSystemService]。
  *
- * 无 root 时**不隐藏也不置灰**：写失败后回读会发现值没变，开关自己弹回原位，同时给出
+ * 没有可用通道时**不隐藏也不置灰**：写失败后回读会发现值没变，开关自己弹回原位，同时给出
  * 下方那条可复制的命令。置灰会让用户以为是模块坏了，而实际只是少一次授权。
  */
 @Composable
@@ -128,6 +195,8 @@ private fun SystemServiceSwitch(
  * 两条都给，是因为「还原」有两种语义：用户原来配过别的识别服务（用 `settings put` 写回原值），
  * 或者原来是空的、走系统默认（用 `settings delete`）。模块分不清是哪种 —— 它读不到
  * 「打开开关之前」的值，也不该猜。所以把两条都摆出来，由用户按自己的情况选。
+ *
+ * 这是 Shizuku 与 root 都不可用时的兜底：命令由用户自己在 adb 或 root 终端里跑一次。
  */
 @Composable
 private fun SystemServiceCommandCard() {

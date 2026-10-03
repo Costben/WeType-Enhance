@@ -2,10 +2,13 @@ package com.xposed.wetypehook.wetype.host
 
 import android.content.Context
 import android.inputmethodservice.InputMethodService
+import android.media.AudioRecord
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import com.xposed.wetypehook.xposed.loadClassOrNull
 import java.io.File
+import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
@@ -67,6 +70,18 @@ internal object HostContractId {
     const val GLIDE_ENTRY = "glide.entry"
     const val HOST_CRYPTO_FILE = "host.crypto.file"
     const val HOST_HASH_FILE = "host.hash.file"
+
+    // ---- 语音（把宿主识别引擎借给系统识别服务） ----
+    const val VOICE_SINGLETON = "voice.singleton"
+    const val VOICE_SINGLETON_INSTANCE = "voice.singleton.instance"
+    const val VOICE_TRANSCRIPT = "voice.transcript"
+    const val VOICE_START = "voice.start"
+    const val VOICE_RECORDER = "voice.recorder"
+    const val VOICE_RECORDER_RECORD = "voice.recorder.record"
+    const val VOICE_RECORDER_MODE = "voice.recorder.mode"
+    const val VOICE_RECORDER_INIT = "voice.recorder.init"
+    const val VOICE_RECORDER_TEARDOWN = "voice.recorder.teardown"
+    const val VOICE_GATE = "voice.gate"
 }
 
 // 名字候选表：3.5.3 / 3.5.4 的实测值，仅作结构锚失效时的最后手段。
@@ -445,6 +460,141 @@ internal fun looksLikeFileHash(clazz: Class<*>): Boolean {
         declares(String::class.java)
 }
 
+// ---------------------------------------------------------------------------
+// 语音：把宿主的识别引擎借给系统识别服务
+// ---------------------------------------------------------------------------
+
+/** 语音单例所在的包。整包扫描是这一条契约唯一可行的入口 —— 类名每次都变。 */
+private const val VOICE_PACKAGE = "com.tencent.wetype.plugin.hld.voice"
+
+/** 名字候选：三版实测都是 `voice.j`，但它是 R8 短名，只在整包扫描失效时接手。 */
+private const val VOICE_SINGLETON_CLASS = "com.tencent.wetype.plugin.hld.voice.j"
+
+/**
+ * 录音器候选短名。它在默认包 `l6` 下（不在 `plugin.hld` 里），所以包锚用不上；
+ * 4.0.0 起 `l6.e` 还被同包的匿名 Runnable 占用，只能靠形状校验把错的筛掉。
+ */
+private val VOICE_RECORDER_CLASSES = listOf("l6.f", "l6.e")
+
+/**
+ * 读线程在窗口隐藏时打的日志，外加同一方法里的两条旁证。
+ *
+ * 它调用的门禁方法名每版都在变，字符串不变 —— 但**单条字符串也可能被删改**，所以按顺序
+ * 备了三条：主锚不唯一（或消失）时自动退到下一条，全不中才认短名。三条都在读循环
+ * `run()` 的方法体里，反查出来的调用集合因此是同一份。
+ */
+private val VOICE_GATE_ANCHORS = listOf(
+    "mAudioRecord window hidden return",
+    "startRecord failed : last record is NOT stopped now",
+    "[startRecord] dumpRunningTask"
+)
+
+/** 名字候选：三版实测 3.5.3 / 3.5.4 是 `O`，4.0.0 是 `P`。 */
+private val VOICE_GATE_NAMES = listOf("P", "O")
+
+/** 输入法服务类。类名来自清单，不是混淆产物。 */
+private const val VOICE_IME_SERVICE_CLASS = "com.tencent.wetype.plugin.hld.WxHldService"
+
+/**
+ * 「按键松开触发发送」方法体内的日志串，用来把与启动入口同形的那条方法排除掉。
+ *
+ * 那个方法与真正的启动入口**形状完全相同**（`(boolean, <场景枚举>)void`），只差语义：
+ * 启动入口单语句 `launch` 一段协程，它是按状态机分支 + 收尾。名字每次发版都重排，但日志
+ * 字符串活得过 R8，于是用它当排除锚。
+ *
+ * **只在 4.0.0 上命中**（三版实测：3.5.3 / 3.5.4 零命中，那两版同形方法本就只有一个，
+ * 空排除集也能定唯一）。所以它是锦上添花 —— 真到形状不唯一那一步，兜底全靠下面的名字表。
+ */
+private const val VOICE_SEND_ACTION_ANCHOR = "handleVoiceSendAction allowDelay="
+
+/**
+ * 启动入口的名字候选。三版实测：4.0.0 是 `z1`，3.5.4 是 `k1`，3.5.3 是 `b1`。
+ *
+ * 只在排除锚与形状都没定下来时才用，且 [methodByNames] 会再校验形状。`w1` 是早先记录的
+ * 3.5.4 候选、本轮三版未复现，一并留着当冗余。
+ */
+private val VOICE_START_NAMES = listOf("z1", "k1", "w1", "b1")
+
+/** 启动入口的形状判据。三版一致。 */
+private fun Method.isVoiceStartEntry(): Boolean =
+    parameterCount == 2 && returnType == Void.TYPE &&
+        parameterTypes[0] == Boolean::class.javaPrimitiveType && parameterTypes[1].isEnum
+
+/**
+ * 语音单例的判据：具体类 + 静态自引用字段（Kotlin `object` 的固定形状）+ 声明转录回调。
+ *
+ * 三项缺一不可：`voice` 包里有几十个带自引用字段的单例，只有会话单例声明转录回调。
+ */
+private fun looksLikeVoiceSingleton(clazz: Class<*>, minParams: Int = VOICE_TRANSCRIPT_PARAMS): Boolean {
+    if (clazz.isInterface || clazz.isEnum || Modifier.isAbstract(clazz.modifiers)) return false
+    if (clazz.declaredFields.none { Modifier.isStatic(it.modifiers) && it.type == clazz }) return false
+    return clazz.declaredMethods.any { it.isVoiceTranscriptCallback(minParams) }
+}
+
+/**
+ * 转录回调的参数下限。3.5.3 恰好 15 个（**正好压线，没有余量**），3.5.4 / 4.0.0 是 16。
+ *
+ * 压线是危险的：宿主哪版少带一个尾部字段，严格判据就整条落空。所以下方留了
+ * [VOICE_TRANSCRIPT_MIN_PARAMS] 这一档兜底 —— 严格档先试，不中再放宽。
+ */
+private const val VOICE_TRANSCRIPT_PARAMS = 15
+
+/** 兜底下限：只认前五参的源码签名，尾巴（会话句柄、进度字段）有几个不管。 */
+private const val VOICE_TRANSCRIPT_MIN_PARAMS = 5
+
+/**
+ * 转录回调：`(String[], List, boolean, boolean, String, …)void`。
+ *
+ * 前五个参数是源码签名，跨版本不动；尾巴上挂着会话句柄与进度字段（3.5.3 共 15 个参数，
+ * 3.5.4 起 16 个），所以只判下限，不判精确形状 —— 精确形状正是旧实现漏掉
+ * 3.5.4 / 4.0.0 的原因。
+ */
+internal fun Method.isVoiceTranscriptCallback(minParams: Int = VOICE_TRANSCRIPT_PARAMS): Boolean {
+    if (returnType != Void.TYPE || Modifier.isStatic(modifiers) || Modifier.isAbstract(modifiers)) return false
+    val types = parameterTypes
+    if (types.size < minParams) return false
+    return types[0] == Array<String>::class.java &&
+        List::class.java.isAssignableFrom(types[1]) &&
+        types[2] == Boolean::class.javaPrimitiveType &&
+        types[3] == Boolean::class.javaPrimitiveType &&
+        types[4] == String::class.java
+}
+
+/**
+ * 录音器的判据：具体类 + 恰好一个实例 `AudioRecord` 字段 + 两个以上无参 boolean 方法 +
+ * 持有读线程字段。
+ *
+ * 读线程自己也持有 `AudioRecord`，前两项它同样满足；第三项（读线程字段）才是分水岭。
+ */
+internal fun looksLikePcmRecorder(clazz: Class<*>): Boolean {
+    if (clazz.isInterface || clazz.isEnum || Modifier.isAbstract(clazz.modifiers)) return false
+    val records = clazz.declaredFields.count {
+        !Modifier.isStatic(it.modifiers) && AudioRecord::class.java.isAssignableFrom(it.type)
+    }
+    if (records != 1) return false
+    val zeroArgBooleans = clazz.declaredMethods.count {
+        !Modifier.isStatic(it.modifiers) && it.parameterCount == 0 &&
+            it.returnType == Boolean::class.javaPrimitiveType
+    }
+    if (zeroArgBooleans < 2) return false
+    return clazz.declaredFields.any { it.isVoiceReadModeHolder() }
+}
+
+/**
+ * 读线程字段：声明类型是**抽象类**，且它自己声明了无参的 `()Z` 与 `()V`。
+ *
+ * 不能按「类型持有 AudioRecord」判 —— 那份引用在具体子类上，基类上只有这一对开关
+ * （`()Z` 开录、`()V` 停录）。
+ */
+internal fun Field.isVoiceReadModeHolder(): Boolean {
+    if (Modifier.isStatic(modifiers)) return false
+    val declaredType = type
+    if (declaredType.isInterface || !Modifier.isAbstract(declaredType.modifiers)) return false
+    val methods = declaredType.declaredMethods
+    return methods.any { it.parameterCount == 0 && it.returnType == Boolean::class.javaPrimitiveType } &&
+        methods.any { it.parameterCount == 0 && it.returnType == Void.TYPE }
+}
+
 internal val HOST_CONTRACTS: List<HostContract> = listOf(
 
     // ---- 面板枚举与切换 ----
@@ -536,19 +686,24 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
 
     // ---- 剪贴板搜索的 native 提交链 ----
 
+    // 三条形状全部取框架回调（onStartInputView / onLayout / onMeasure）：R8 既不能给虚方法改名，
+    // 也不能把它删掉，签名跨版本天然稳定。**不要换回合成方法形状**——以前这里的中间一条是
+    // (Canvas,View,long)boolean，那是宿主 lambda 的宿主方法，3.5.4 / 4.0.0 落在 ImeCandidateView
+    // 与 view.qmui.b 两个类上（靠第三条才收成唯一），3.5.3 上干脆只剩 view.qmui.b，交集为空直接
+    // 跌回写死类名。
     contract(
         HostContractId.CLIPBOARD_CANDIDATE_VIEW,
-        "候选视图类。按「只有候选条容器才有的三条 View/ViewGroup 形状」锚定，不认类名"
+        "候选视图类。按「只有候选条容器才有的三条框架覆写形状」锚定，不认类名"
     ) { ctx ->
         ctx.classByMethodShapes(
             HostContractId.CLIPBOARD_CANDIDATE_VIEW,
             listOf(
-                MethodShape(listOf("boolean", "int", "int", "int", "int"), "void"),
-                MethodShape(listOf("android.graphics.Canvas", "android.view.View", "long"), "boolean"),
                 MethodShape(
                     listOf("android.view.inputmethod.EditorInfo", "boolean", "boolean", "int"),
                     "void"
-                )
+                ),
+                MethodShape(listOf("boolean", "int", "int", "int", "int"), "void"),
+                MethodShape(listOf("int", "int"), "void")
             )
         ) { View::class.java.isAssignableFrom(it) }
             ?.let { return@contract HostHandle(owner = it) }
@@ -1110,6 +1265,170 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
             ::looksLikeFileHash
         )?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(HASH_FILE_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    // ---- 语音：把宿主的识别引擎借给系统识别服务 ----
+    //
+    // 三版实测矩阵（3.5.3 / 3.5.4 / 4.0.0，三版均跑通端到端）：
+    //
+    //   契约                      3.5.3     3.5.4     4.0.0     实际命中策略
+    //   voice.singleton           voice.j   voice.j   voice.j   packageScan
+    //   voice.singleton.instance  j#k       j#k       j#l       自引用字段
+    //   voice.transcript          j#c       j#c       j#g       形状
+    //   voice.start               j#b1      j#k1      j#z1      形状（排除锚仅 4.0.0 命中）
+    //   voice.recorder            l6.e      l6.f      l6.f      AudioRecord 字段类型
+    //   voice.recorder.record     w         w         w         字段类型
+    //   voice.recorder.mode       y         y         y         抽象基类字段
+    //   voice.recorder.init       t         u         u         写 AudioRecord 字段
+    //   voice.recorder.teardown   z         L         L         写 AudioRecord 字段
+    //   voice.gate                #O        #O        #P        读循环日志串反查
+    //
+    // 三版都是 59/59 契约解析成功、零条落到写死的短名。名字列每版全变 —— 这正是整套形状
+    // 判据存在的理由；下面那些短名表只是形状全部落空时的最后一档，别当主路径用。
+
+    contract(
+        HostContractId.VOICE_SINGLETON,
+        "语音单例类。整包扫描 +「具体类 + 静态自引用字段 + 声明转录回调」三重校验；参数下限先严后宽，最后才认类名"
+    ) { ctx ->
+        ctx.classByPackageScan(
+            HostContractId.VOICE_SINGLETON,
+            "packageScan:$VOICE_PACKAGE",
+            listOf(VOICE_PACKAGE)
+        ) { looksLikeVoiceSingleton(it, VOICE_TRANSCRIPT_PARAMS) }
+            ?.let { return@contract HostHandle(owner = it) }
+        ctx.classByPackageScan(
+            HostContractId.VOICE_SINGLETON,
+            "packageScan-loose:$VOICE_PACKAGE",
+            listOf(VOICE_PACKAGE)
+        ) { looksLikeVoiceSingleton(it, VOICE_TRANSCRIPT_MIN_PARAMS) }
+            ?.let { return@contract HostHandle(owner = it) }
+        ctx.classByNames(VOICE_SINGLETON_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(HostContractId.VOICE_SINGLETON_INSTANCE, "语音单例的静态自引用字段") { ctx ->
+        val owner = ctx.classOf(HostContractId.VOICE_SINGLETON) ?: return@contract null
+        ctx.firstSingletonField(HostContractId.VOICE_SINGLETON_INSTANCE, owner)
+            ?.let { HostHandle(owner = owner, hostField = it) }
+    },
+
+    contract(
+        HostContractId.VOICE_TRANSCRIPT,
+        "转录回调。前五参是源码签名，尾巴上的会话句柄按版本增删，所以只判下限；下限先严后宽"
+    ) { ctx ->
+        val owner = ctx.classOf(HostContractId.VOICE_SINGLETON) ?: return@contract null
+        ctx.uniqueMethod(HostContractId.VOICE_TRANSCRIPT, owner) {
+            isVoiceTranscriptCallback(VOICE_TRANSCRIPT_PARAMS)
+        }?.let { return@contract HostHandle(owner = owner, method = it) }
+        ctx.uniqueMethod(HostContractId.VOICE_TRANSCRIPT, owner) {
+            isVoiceTranscriptCallback(VOICE_TRANSCRIPT_MIN_PARAMS)
+        }?.let { HostHandle(owner = owner, method = it) }
+    },
+
+    contract(
+        HostContractId.VOICE_START,
+        "启动入口。先用「发送时收尾」的日志字符串把同形方法排除掉，再按形状取唯一，最后才认短名"
+    ) { ctx ->
+        val owner = ctx.classOf(HostContractId.VOICE_SINGLETON) ?: return@contract null
+        val excluded = ctx
+            .methodsByDexStrings(
+                HostContractId.VOICE_START,
+                owner,
+                listOf(VOICE_SEND_ACTION_ANCHOR)
+            ) { isVoiceStartEntry() }
+            .toSet()
+        ctx.uniqueMethodExcluding(HostContractId.VOICE_START, owner, excluded) { isVoiceStartEntry() }
+            ?.let { return@contract HostHandle(owner = owner, method = it) }
+        ctx.methodByNames(owner, VOICE_START_NAMES) { isVoiceStartEntry() }
+            ?.let { HostHandle(owner = owner, method = it) }
+    },
+
+    contract(
+        HostContractId.VOICE_RECORDER,
+        "录音器。按「持有 AudioRecord + 两个以上无参 boolean + 持有读线程字段」定位，不限包"
+    ) { ctx ->
+        ctx.classByFieldType(
+            HostContractId.VOICE_RECORDER,
+            "android.media.AudioRecord",
+            ::looksLikePcmRecorder
+        )?.let { return@contract HostHandle(owner = it) }
+        VOICE_RECORDER_CLASSES.firstNotNullOfOrNull { name ->
+            loadClassOrNull(name, ctx.classLoader)?.takeIf(::looksLikePcmRecorder)
+        }?.let { return@contract HostHandle(owner = it) }
+        null
+    },
+
+    contract(HostContractId.VOICE_RECORDER_RECORD, "录音器持有的 AudioRecord 字段") { ctx ->
+        val owner = ctx.classOf(HostContractId.VOICE_RECORDER) ?: return@contract null
+        ctx.uniqueField(HostContractId.VOICE_RECORDER_RECORD, owner) {
+            !Modifier.isStatic(modifiers) && AudioRecord::class.java.isAssignableFrom(type)
+        }?.let { HostHandle(owner = owner, hostField = it) }
+    },
+
+    contract(HostContractId.VOICE_RECORDER_MODE, "录音器持有的读线程字段（声明类型是抽象基类）") { ctx ->
+        val owner = ctx.classOf(HostContractId.VOICE_RECORDER) ?: return@contract null
+        ctx.uniqueField(HostContractId.VOICE_RECORDER_MODE, owner) { isVoiceReadModeHolder() }
+            ?.let { HostHandle(owner = owner, hostField = it) }
+    },
+
+    contract(
+        HostContractId.VOICE_RECORDER_INIT,
+        "录音器建 AudioRecord 的入口。按「写 AudioRecord 字段、且返回 boolean」取，不写死 t/u"
+    ) { ctx ->
+        val owner = ctx.classOf(HostContractId.VOICE_RECORDER) ?: return@contract null
+        val record = ctx.handle(HostContractId.VOICE_RECORDER_RECORD)?.hostField ?: return@contract null
+        val hits = ctx.fieldWriters(HostContractId.VOICE_RECORDER_INIT, owner, record.name)
+            .filter { it.parameterCount == 0 && it.returnType == Boolean::class.javaPrimitiveType }
+        if (hits.size != 1) {
+            ctx.note("${HostContractId.VOICE_RECORDER_INIT} 命中 ${hits.map { it.name }}")
+            return@contract null
+        }
+        ctx.winner = "fieldWriter:${owner.simpleName}#${record.name}"
+        HostHandle(owner = owner, method = hits[0].apply { isAccessible = true })
+    },
+
+    contract(
+        HostContractId.VOICE_RECORDER_TEARDOWN,
+        "录音器清掉 AudioRecord 的收尾。按「写 AudioRecord 字段、且返回 void」取，不写死 z/L"
+    ) { ctx ->
+        val owner = ctx.classOf(HostContractId.VOICE_RECORDER) ?: return@contract null
+        val record = ctx.handle(HostContractId.VOICE_RECORDER_RECORD)?.hostField ?: return@contract null
+        val hits = ctx.fieldWriters(HostContractId.VOICE_RECORDER_TEARDOWN, owner, record.name)
+            .filter { it.parameterCount == 0 && it.returnType == Void.TYPE }
+        if (hits.size != 1) {
+            ctx.note("${HostContractId.VOICE_RECORDER_TEARDOWN} 命中 ${hits.map { it.name }}")
+            return@contract null
+        }
+        ctx.winner = "fieldWriter:${owner.simpleName}#${record.name}"
+        HostHandle(owner = owner, method = hits[0].apply { isAccessible = true })
+    },
+
+    contract(
+        HostContractId.VOICE_GATE,
+        "窗口隐藏门禁。从读循环的日志字符串（三条互备）反查它调用的那个零参 boolean 接口方法，再取 WxHldService 上的实现"
+    ) { ctx ->
+        val service = loadClassOrNull(VOICE_IME_SERVICE_CLASS, ctx.classLoader)
+            ?: return@contract null
+        val interfaces = service.interfaces.mapTo(mutableSetOf()) { it.name }
+        val invoked = ctx.methodsInvokedByStringAnchor(HostContractId.VOICE_GATE, VOICE_GATE_ANCHORS)
+            .filter {
+                it.parameterCount == 0 && it.returnType == Boolean::class.javaPrimitiveType &&
+                    it.declaringClass.name in interfaces
+            }
+        val impl = invoked.mapNotNull { iface ->
+            service.declaredMethods.firstOrNull {
+                it.name == iface.name && it.parameterCount == 0 &&
+                    it.returnType == Boolean::class.javaPrimitiveType
+            }
+        }.distinct()
+        if (impl.size == 1) {
+            impl[0].isAccessible = true
+            ctx.winner = "invoke:${VOICE_GATE_ANCHORS.first()}"
+            return@contract HostHandle(owner = service, method = impl[0])
+        }
+        ctx.note("${HostContractId.VOICE_GATE} 反查命中 ${impl.map { it.name }}")
+        ctx.methodByNames(service, VOICE_GATE_NAMES) {
+            parameterCount == 0 && returnType == Boolean::class.javaPrimitiveType
+        }?.let { HostHandle(owner = service, method = it) }
     }
 )
 

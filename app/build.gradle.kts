@@ -75,6 +75,9 @@ dependencies {
     }
     implementation("io.github.kyant0:capsule:2.1.3")
     implementation("org.luckypray:dexkit:2.2.0")
+    // 系统识别服务开关要写 Settings.Secure：优先借 Shizuku 的 shell 权限，没有才退回 root
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
     // S2 剪贴板搜索：TinyPinyin 轻量拼音（不引 jieba；原坐标 com.github.promeg:tinypinyin:2.0.3 已不可用——见信箱说明，改用同源 MavenCentral 坐标）
     implementation("io.github.biezhi:TinyPinyin:2.0.3.RELEASE")
     // 自定义图片 Logo：SVG 栅格化（Apache-2.0）

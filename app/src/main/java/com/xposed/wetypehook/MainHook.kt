@@ -365,7 +365,7 @@ class MainHook : XposedModule() {
             WeTypeSettingsToolbarHooks.install(classLoader)
         }
         HookEnvironment.withHookScope("wetype.voice") {
-            WeTypeVoiceHooks.install(sourceDir, classLoader)
+            WeTypeVoiceHooks.install(classLoader)
         }
     }
 
