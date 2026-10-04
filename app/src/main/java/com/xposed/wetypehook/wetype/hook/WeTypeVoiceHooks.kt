@@ -83,6 +83,15 @@ internal object WeTypeVoiceHooks {
     @Volatile
     private var swapReady = false
 
+    /**
+     * 最近一个见过 `AudioRecord` 的录音器实例。
+     *
+     * 给「客户端在宿主会话**已经跑起来之后**才连上」兜底：那种情况下宿主不会重建录音器，
+     * init 的 after 不会再跑，只能拿着这个引用补换一次。
+     */
+    @Volatile
+    private var lastRecorderOwner: WeakReference<Any>? = null
+
     /** 上一次拉起会话的时间，用来给「连上就启动」做节流，避免重连风暴里反复调宿主。 */
     @Volatile
     private var lastStartAt = 0L
@@ -189,6 +198,9 @@ internal object WeTypeVoiceHooks {
      * - `w`：宿主 start 里的 `startRecording()` 与 `getRecordingState()` 两道判据都在它上面。
      * - 读线程自己那份：读线程在**构造时**就把 `AudioRecord` 拷进自己的字段，之后改 `w`
      *   影响不到它。它的实例就在读线程字段上，同一时刻一起换。
+     *
+     * **只在外部客户端连着的会话里换。** 宿主自己发起的语音输入要放行真麦克风，否则
+     * 桥接队列空着、读线程只能补静音，宿主识别引擎永远拿不到语音。
      */
     private fun hookRecordSwap() {
         val init = WeTypeHostContracts.methodOf(HostContractId.VOICE_RECORDER_INIT)
@@ -198,32 +210,12 @@ internal object WeTypeVoiceHooks {
         }
         init.hookAfter { param ->
             val owner = param.thisObject ?: return@hookAfter
-            val real = runCatching { pcmRecorderRecordField?.get(owner) }.getOrNull() as? AudioRecord
-                ?: return@hookAfter
-            if (real is FakeAudioRecord) return@hookAfter
-            val fake = FakeAudioRecord.from(real) ?: run {
-                Log.i("$TAG: fake record creation failed")
-                return@hookAfter
-            }
-            realRecord = real
-            runCatching { pcmRecorderRecordField?.set(owner, fake) }
-
-            val mode = runCatching { readModeField?.get(owner) }.getOrNull()
-            val threadField = readThreadRecordField ?: mode?.javaClass?.let { mc ->
-                mc.declaredFields.firstOrNull {
-                    !Modifier.isStatic(it.modifiers) && AudioRecord::class.java.isAssignableFrom(it.type)
-                }?.apply { isAccessible = true }?.also { readThreadRecordField = it }
-            }
-            val swappedThread = mode != null && threadField != null &&
-                runCatching { threadField.set(mode, fake) }.isSuccess
-
-            val rate = runCatching { real.sampleRate }.getOrDefault(-1)
-            val ch = runCatching { real.channelCount }.getOrDefault(-1)
-            Log.i(
-                "$TAG: mic replaced (rate=$rate ch=$ch host=${real.javaClass.simpleName} " +
-                    "readThread=${mode?.javaClass?.simpleName} threadSwapped=$swappedThread)"
-            )
-            if (!swappedThread) Log.i("$TAG: WARNING read-thread record not swapped; stream will be silent")
+            lastRecorderOwner = WeakReference(owner)
+            // **只换外部会话的麦克风。** 宿主自己发起的语音输入（长按空格、键盘上的麦克风）
+            // 必须放行真麦克风：桥接队列里此刻没有任何外部音频，换成假货后宿主读到的是
+            // 纯静音，识别引擎一帧有效音频都拿不到，表现为「怎么说话都没反应」。
+            if (!WeTypeVoiceBridge.isClientConnected) return@hookAfter
+            swapRecorder(owner)
         }
 
         // 收尾：录音器清 `AudioRecord` 那个方法（353 的 `z()`、4.0.0 的 `L()`）的 before
@@ -238,6 +230,40 @@ internal object WeTypeVoiceHooks {
             }
             realRecord = null
         }
+    }
+
+    /**
+     * 把 [owner] 上那个真 `AudioRecord` 换成 [FakeAudioRecord]，连同读线程自己那份。
+     *
+     * 字段里已经是假货就直接返回 —— 补换路径与 init 路径会同时走到这里，靠这一步去重。
+     */
+    private fun swapRecorder(owner: Any) {
+        val real = runCatching { pcmRecorderRecordField?.get(owner) }.getOrNull() as? AudioRecord
+            ?: return
+        if (real is FakeAudioRecord) return
+        val fake = FakeAudioRecord.from(real) ?: run {
+            Log.i("$TAG: fake record creation failed")
+            return
+        }
+        realRecord = real
+        runCatching { pcmRecorderRecordField?.set(owner, fake) }
+
+        val mode = runCatching { readModeField?.get(owner) }.getOrNull()
+        val threadField = readThreadRecordField ?: mode?.javaClass?.let { mc ->
+            mc.declaredFields.firstOrNull {
+                !Modifier.isStatic(it.modifiers) && AudioRecord::class.java.isAssignableFrom(it.type)
+            }?.apply { isAccessible = true }?.also { readThreadRecordField = it }
+        }
+        val swappedThread = mode != null && threadField != null &&
+            runCatching { threadField.set(mode, fake) }.isSuccess
+
+        val rate = runCatching { real.sampleRate }.getOrDefault(-1)
+        val ch = runCatching { real.channelCount }.getOrDefault(-1)
+        Log.i(
+            "$TAG: mic replaced (rate=$rate ch=$ch host=${real.javaClass.simpleName} " +
+                "readThread=${mode?.javaClass?.simpleName} threadSwapped=$swappedThread)"
+        )
+        if (!swappedThread) Log.i("$TAG: WARNING read-thread record not swapped; stream will be silent")
     }
 
     /**
@@ -362,6 +388,10 @@ internal object WeTypeVoiceHooks {
             .onFailure { Log.i("$TAG: start threw: ${it.javaClass.simpleName}: ${it.message}") }
             .getOrDefault(false)
         Log.i("$TAG: voice session start invoked=$invoked")
+        // 客户端可能是在宿主**已经跑着一轮**的时候连上的：那种情况宿主内部的「已在会话中
+        // 就返回」会让它不重建录音器，init 的 after 便不再触发。这里拿最近见过的录音器补换一次，
+        // 换过了会在 [swapRecorder] 里直接返回。
+        if (invoked) lastRecorderOwner?.get()?.let { swapRecorder(it) }
     }
 
     /**
