@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -82,3 +82,30 @@ jobs:
         with:
           name: WeType_Enhance-${{ steps.version.outputs.name }}-signed
           path: ${{ env.SIGNED_APK }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            TITLE="$(head -1 "$NOTES_FILE" | sed -E 's/^#+[[:space:]]*//')"
+          else
+            TITLE="$TAG"
+          fi
+          echo "Publishing $TAG -> $TITLE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ -f "$NOTES_FILE" ]; then
+              gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE"
+            else
+              gh release edit "$TAG" --title "$TITLE"
+            fi
+            gh release upload "$TAG" "$SIGNED_APK" --clobber
+          elif [ -f "$NOTES_FILE" ]; then
+            gh release create "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE" "$SIGNED_APK"
+          else
+            gh release create "$TAG" --title "$TITLE" --generate-notes "$SIGNED_APK"
+          fi
