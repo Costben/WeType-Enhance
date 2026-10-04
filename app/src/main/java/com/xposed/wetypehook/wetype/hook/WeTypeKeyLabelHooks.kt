@@ -16,6 +16,7 @@ import com.xposed.wetypehook.wetype.gesture.KeyGestureResolver
 import com.xposed.wetypehook.wetype.graphics.WeTypeSelfDrawnEdgeLightCache
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.EdgeLightTarget
+import com.xposed.wetypehook.wetype.settings.GestureLabelLayout
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -277,25 +278,62 @@ internal object WeTypeKeyLabelHooks {
 
         val snapshot = LabelStyleSnapshot.capture(keyView) ?: return
         ensurePaint(snapshot)
+        val density = keyView.resources.displayMetrics.density
+        val keyHeightPx = rect.height().toFloat()
+        // 键帽相对参考高度的比例：悬浮/横屏键盘会把键帽压矮，边距与字号都按它收缩（issue #3）。
+        val fitScale = GestureLabelLayout.fitScale(density, keyHeightPx)
+        val hideMode = snapshot.shortKeyMode == WeTypeSettings.GESTURE_LABEL_SHORT_KEY_HIDE
+        if (hideMode && GestureLabelLayout.hidesAtThisSize(fitScale)) return
+        // 「隐藏标签」策略在上面就返回了，这里只对「缩小标签」策略生效。
+        val shrink = if (hideMode) 1f else GestureLabelLayout.shrinkTextScale(fitScale)
         // 原版按字数缩放：≥4 字 0.78×，3 字 0.88×，画完恢复。
         val baseTextSize = paint.textSize
         paint.textSize = when {
             text.length >= 4 -> baseTextSize * 0.78f
             text.length == 3 -> baseTextSize * 0.88f
             else -> baseTextSize
-        }
+        } * shrink
         val metrics = paint.fontMetrics
         // 两个轴都锚在**键帽**（真正画出来的圆角方块）上，跟宿主的字母同一个基准。用键帽
         // 而不是格子，是因为格子含不等宽的左右 padding，会让每个键各自偏一点点。
-        val x = (rect.left + rect.right) / 2f +
-            (snapshot.marginLeftPx - snapshot.marginRightPx) / 2f
         // 垂直基准是键帽中线：边距为 0 时标签墨迹中心正压在中线上，顶部往上、底部往下
-        // 各偏移各自的边距，默认各 15dp 落在字母与键帽下沿之间。
+        // 各偏移各自的边距，默认各 15dp 落在字母与键帽下沿之间。偏移再按同一比例收缩并
+        // 夹在键帽内，任何缩放档位下墨迹都不会越出键帽。
+        val marginPx = when (snapshot.verticalPosition) {
+            WeTypeSettings.GESTURE_LABEL_POSITION_TOP -> snapshot.marginTopPx
+            else -> snapshot.marginBottomPx
+        }
+        val inkHalf = (metrics.descent - metrics.ascent) / 2f
+        // 键位被明显压矮（悬浮/横屏）时先往下让一点；夹紧后仍贴着字母的宽扁键位，再靠右
+        // 放进字母右侧的空档——横屏每键更宽，字母居中后右边本来就有一块空白。竖屏全尺寸
+        // 键帽比例贴着 1，不进这条分支，保持调好的 15dp 基线。
+        val compressed = GestureLabelLayout.isCompressed(fitScale)
+        val wideKey = compressed &&
+            GestureLabelLayout.isWideKey(rect.width().toFloat(), keyHeightPx)
+        // 靠右的键位离右下角留一块固定留白，不随标签缩放：正好贴上角落太挤。
+        val gapPx = if (wideKey) {
+            GestureLabelLayout.WIDE_KEY_EDGE_PADDING_DP * density
+        } else {
+            GestureLabelLayout.MIN_EDGE_GAP_DP * density * shrink
+        }
+        val nudgePx = if (compressed) GestureLabelLayout.compressedNudgePx(density, shrink) else 0f
+        val offset = GestureLabelLayout.clampOffsetPx(
+            offsetPx = marginPx * fitScale + nudgePx,
+            keyHeightPx = keyHeightPx,
+            inkHalfPx = inkHalf,
+            gapPx = gapPx
+        )
+        val x = if (wideKey) {
+            rect.right - gapPx - snapshot.marginRightPx - paint.measureText(text) / 2f
+        } else {
+            (rect.left + rect.right) / 2f +
+                (snapshot.marginLeftPx - snapshot.marginRightPx) / 2f
+        }
         val midline = (rect.top + rect.bottom) / 2f
         val midlineBaseline = midline - (metrics.ascent + metrics.descent) / 2f
         val y = when (snapshot.verticalPosition) {
-            WeTypeSettings.GESTURE_LABEL_POSITION_TOP -> midlineBaseline - snapshot.marginTopPx
-            else -> midlineBaseline + snapshot.marginBottomPx
+            WeTypeSettings.GESTURE_LABEL_POSITION_TOP -> midlineBaseline - offset
+            else -> midlineBaseline + offset
         }
         canvas.drawText(text, x, y, paint)
         paint.textSize = baseTextSize
@@ -359,6 +397,7 @@ internal object WeTypeKeyLabelHooks {
         val textSizePx: Float,
         val color: Int,
         val verticalPosition: Int,
+        val shortKeyMode: Int,
         val marginLeftPx: Float,
         val marginTopPx: Float,
         val marginRightPx: Float,
@@ -384,6 +423,7 @@ internal object WeTypeKeyLabelHooks {
                             WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM,
                             WeTypeSettings.GESTURE_LABEL_POSITION_TOP
                         ),
+                    shortKeyMode = WeTypeSettings.getGestureLabelShortKeyModeXposed(),
                     marginLeftPx = WeTypeSettings.getGestureLabelMarginLeftDpXposed()
                         .coerceIn(
                             WeTypeSettings.GESTURE_LABEL_MARGIN_MIN_DP,

@@ -77,6 +77,7 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "gestureLabelTextSizeSp" to gestureLabelTextSizeSp,
     "gestureLabelAlpha" to gestureLabelAlpha,
     "gestureLabelPosition" to gestureLabelPosition,
+    "gestureLabelShortKeyMode" to gestureLabelShortKeyMode,
     "gestureLabelMarginTopDp" to gestureLabelMarginTopDp,
     "gestureLabelMarginBottomDp" to gestureLabelMarginBottomDp,
     "gestureLabelMarginLeftDp" to gestureLabelMarginLeftDp,
@@ -212,6 +213,7 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
     gestureLabelTextSizeSp = saved["gestureLabelTextSizeSp"] as? Int ?: gestureLabelTextSizeSp
     gestureLabelAlpha = saved["gestureLabelAlpha"] as? Int ?: gestureLabelAlpha
     gestureLabelPosition = saved["gestureLabelPosition"] as? Int ?: gestureLabelPosition
+    gestureLabelShortKeyMode = saved["gestureLabelShortKeyMode"] as? Int ?: gestureLabelShortKeyMode
     gestureLabelMarginTopDp = saved["gestureLabelMarginTopDp"] as? Int ?: gestureLabelMarginTopDp
     gestureLabelMarginBottomDp = saved["gestureLabelMarginBottomDp"] as? Int
         ?: gestureLabelMarginBottomDp

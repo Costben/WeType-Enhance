@@ -246,6 +246,7 @@ internal class WeTypeSettingsState(
     var gestureLabelTextSizeSp by mutableIntStateOf(snapshot.gestureLabelTextSizeSp)
     var gestureLabelAlpha by mutableIntStateOf(snapshot.gestureLabelAlpha)
     var gestureLabelPosition by mutableIntStateOf(snapshot.gestureLabelPosition)
+    var gestureLabelShortKeyMode by mutableIntStateOf(snapshot.gestureLabelShortKeyMode)
     var gestureLabelMarginTopDp by mutableIntStateOf(snapshot.gestureLabelMarginTopDp)
     var gestureLabelMarginBottomDp by mutableIntStateOf(snapshot.gestureLabelMarginBottomDp)
     var gestureLabelMarginLeftDp by mutableIntStateOf(snapshot.gestureLabelMarginLeftDp)
@@ -708,6 +709,7 @@ internal class WeTypeSettingsState(
             gestureLabelTextSizeSp = gestureLabelTextSizeSp,
             gestureLabelAlpha = gestureLabelAlpha,
             gestureLabelPosition = gestureLabelPosition,
+            gestureLabelShortKeyMode = gestureLabelShortKeyMode,
             gestureLabelMarginTopDp = gestureLabelMarginTopDp,
             gestureLabelMarginBottomDp = gestureLabelMarginBottomDp,
             gestureLabelMarginLeftDp = gestureLabelMarginLeftDp,
@@ -806,6 +808,7 @@ internal class WeTypeSettingsState(
         gestureLabelTextSizeSp = WeTypeSettings.DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP
         gestureLabelAlpha = WeTypeSettings.DEFAULT_GESTURE_LABEL_ALPHA
         gestureLabelPosition = WeTypeSettings.DEFAULT_GESTURE_LABEL_POSITION
+        gestureLabelShortKeyMode = WeTypeSettings.DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE
         gestureLabelMarginTopDp = WeTypeSettings.DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP
         gestureLabelMarginBottomDp = WeTypeSettings.DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP
         gestureLabelMarginLeftDp = WeTypeSettings.DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP

@@ -260,6 +260,8 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                                     onGestureLabelAlphaChange = { gestureLabelAlpha = it },
                                     gestureLabelPosition = gestureLabelPosition,
                                     onGestureLabelPositionChange = { gestureLabelPosition = it },
+                                    gestureLabelShortKeyMode = gestureLabelShortKeyMode,
+                                    onGestureLabelShortKeyModeChange = { gestureLabelShortKeyMode = it },
                                     gestureLabelMarginTopDp = gestureLabelMarginTopDp,
                                     onGestureLabelMarginTopDpChange = { gestureLabelMarginTopDp = it },
                                     gestureLabelMarginBottomDp = gestureLabelMarginBottomDp,

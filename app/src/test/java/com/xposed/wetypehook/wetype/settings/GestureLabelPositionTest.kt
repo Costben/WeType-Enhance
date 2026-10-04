@@ -86,6 +86,53 @@ class GestureLabelPositionTest {
     }
 
     /**
+     * 「被压矮」必须走带容差的判据：竖屏全尺寸键帽高度贴着参考值，1~2px 浮动若被当成压缩，
+     * 额外下移量会把竖屏调好的基线推走。
+     */
+    @Test fun compressionGateHasToleranceForFullSizeKeys() {
+        assertTrue(
+            "压缩判定要收敛到布局函数里，不能就地写 fitScale < 1",
+            hooks.contains("GestureLabelLayout.isCompressed(fitScale)")
+        )
+        assertFalse(hooks.contains("fitScale < 1f"))
+    }
+
+    /**
+     * 横屏被字母挡住时，宽扁键位改走右对齐：标签放进字母右侧的空档。仅压缩且宽扁的
+     * 键位走这条路，竖屏与悬浮仍是居中，所以两条分支必须同时存在。
+     */
+    @Test fun wideCompressedKeyRightAlignsIntoTheFreeSpace() {
+        assertTrue(
+            "宽扁键位右对齐：右沿内缩，再减去右外边距与半个墨迹宽",
+            hooks.contains("rect.right - gapPx - snapshot.marginRightPx - paint.measureText(text) / 2f")
+        )
+        assertTrue(
+            "右对齐只对压缩且宽扁的键位生效，否则仍是居中",
+            hooks.contains("val wideKey = compressed &&") &&
+                hooks.contains("GestureLabelLayout.isWideKey(rect.width().toFloat(), keyHeightPx)")
+        )
+    }
+
+    /**
+     * 靠右的标签不能正好贴在键帽右下角：留白要明显大于「不压边」的下限，且不随标签缩放，
+     * 否则键帽越小留白越小，看着就是挤在角落里。
+     */
+    @Test fun rightAlignedLabelKeepsPaddingFromTheCorner() {
+        assertTrue(
+            "靠右的键位要用专门的角落留白常量",
+            hooks.contains("GestureLabelLayout.WIDE_KEY_EDGE_PADDING_DP * density")
+        )
+        assertTrue(
+            "角落留白必须大于最小呼吸量，否则等于没留",
+            GestureLabelLayout.WIDE_KEY_EDGE_PADDING_DP > GestureLabelLayout.MIN_EDGE_GAP_DP
+        )
+        assertTrue(
+            "留白不能乘 shrink，键帽尺寸不随标签字号变",
+            !hooks.contains("WIDE_KEY_EDGE_PADDING_DP * density * shrink")
+        )
+    }
+
+    /**
      * 横向基准必须是**键帽**而不是宿主分配的格子。绘制上下文里有两个矩形：格子含不等宽的
      * 左右 padding（Q 左 13 右 8、Z 左 18 右 8…），拿格子当基准会让每个键按自己的 padding
      * 各自偏移，肉眼看到的就是"全选没对齐"。取被包住且更窄的那个才是键帽。
@@ -182,16 +229,33 @@ class GestureLabelPositionTest {
     /**
      * 垂直基准只能是按键区域的中线。锚到按键上下边缘是错的：那样"边距 0"落在按键外沿，
      * 用户无论怎么调都回不到中线，正是评论区"怎么调都不居中"的成因。
+     *
+     * 偏移量不再是写死的边距：悬浮/横屏键盘把键帽压矮后，固定 dp 会把标签顶出键帽
+     * （issue #3），必须交给 [GestureLabelLayout] 按高度自适应并夹在键帽内。
      */
     @Test fun verticalAnchorIsTheKeyMidline() {
         assertTrue(
             "垂直基准必须取 rect 的垂直中线",
             hooks.contains("val midline = (rect.top + rect.bottom) / 2f")
         )
+        assertTrue(
+            "偏移量必须走按键帽高度自适应的布局函数",
+            hooks.contains("GestureLabelLayout.clampOffsetPx(")
+        )
+        assertTrue(
+            "压缩键位要先往下让一点（悬浮键盘太贴字母）",
+            hooks.contains("GestureLabelLayout.compressedNudgePx(")
+        )
+        assertTrue(
+            "让不下时宽扁键位靠右，放进字母右侧的空档",
+            hooks.contains("GestureLabelLayout.isWideKey(")
+        )
         val whenBlock = hooks.substringAfter("val y = when (snapshot.verticalPosition) {")
             .substringBefore("canvas.drawText")
-        assertTrue(whenBlock.contains("GESTURE_LABEL_POSITION_TOP -> midlineBaseline - snapshot.marginTopPx"))
-        assertTrue(whenBlock.contains("else -> midlineBaseline + snapshot.marginBottomPx"))
+        assertTrue(whenBlock.contains("GESTURE_LABEL_POSITION_TOP -> midlineBaseline - offset"))
+        assertTrue(whenBlock.contains("else -> midlineBaseline + offset"))
+        assertFalse("不能再把写死的边距直接当偏移", hooks.contains("midlineBaseline - snapshot.marginTopPx"))
+        assertFalse("不能再把写死的边距直接当偏移", hooks.contains("midlineBaseline + snapshot.marginBottomPx"))
         assertFalse("不能再锚到按键上边缘", hooks.contains("zoneTop - metrics.ascent"))
         assertFalse("不能再锚到按键下边缘", hooks.contains("zoneBottom - metrics.descent"))
     }
@@ -205,5 +269,30 @@ class GestureLabelPositionTest {
 
     @Test fun dropdownOffersOnlyBottomAndTop() {
         assertTrue(ui.contains("items = listOf(\"底部\", \"顶部\")"))
+    }
+
+    /**
+     * 悬浮/横屏键盘把键帽压矮后，固定 dp 边距会把标签顶出键帽（issue #3）。两种策略都要
+     * 真的落进画布代码：按键帽高度比例缩小字号，或在键位过矮时干脆不画。
+     */
+    @Test fun shortKeyCapStrategyIsWiredIntoTheCanvasCode() {
+        assertTrue(hooks.contains("GestureLabelLayout.fitScale("))
+        assertTrue(hooks.contains("GestureLabelLayout.shrinkTextScale("))
+        assertTrue(hooks.contains("GestureLabelLayout.hidesAtThisSize("))
+        assertTrue(
+            "隐藏策略必须在画之前返回",
+            hooks.contains("WeTypeSettings.GESTURE_LABEL_SHORT_KEY_HIDE")
+        )
+        assertTrue(
+            "缩小策略的系数必须真的乘进字号",
+            hooks.contains("} * shrink")
+        )
+        assertTrue(ui.contains("items = listOf(\"缩小标签\", \"隐藏标签\")"))
+        assertTrue(
+            "默认必须是缩小标签，隐藏是用户的显式选择",
+            settings.contains(
+                "const val DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE = GESTURE_LABEL_SHORT_KEY_SHRINK"
+            )
+        )
     }
 }

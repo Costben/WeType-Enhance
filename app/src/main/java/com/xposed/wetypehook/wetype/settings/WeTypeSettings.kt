@@ -160,6 +160,7 @@ object WeTypeSettings {
     const val KEY_GESTURE_LABEL_TEXT_SIZE_SP = "gesture_label_text_size_sp"
     const val KEY_GESTURE_LABEL_ALPHA = "gesture_label_alpha"
     const val KEY_GESTURE_LABEL_POSITION = "gesture_label_position"
+    const val KEY_GESTURE_LABEL_SHORT_KEY_MODE = "gesture_label_short_key_mode"
     const val KEY_GESTURE_LABEL_MARGIN_TOP_DP = "gesture_label_margin_top_dp"
     const val KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP = "gesture_label_margin_bottom_dp"
     const val KEY_GESTURE_LABEL_MARGIN_LEFT_DP = "gesture_label_margin_left_dp"
@@ -167,6 +168,10 @@ object WeTypeSettings {
 
     const val GESTURE_LABEL_POSITION_BOTTOM = 0
     const val GESTURE_LABEL_POSITION_TOP = 1
+
+    // 键位过矮时的标签策略：缩小标签保住辨识度，隐藏标签则把空间完全让给键面。
+    const val GESTURE_LABEL_SHORT_KEY_SHRINK = 0
+    const val GESTURE_LABEL_SHORT_KEY_HIDE = 1
 
     // 边距上限取 48dp：默认 15dp 之后向下只剩约 8dp 余量（216 实测键格高 143px、
     // 中线到底边 71px≈23.7dp），再往上加标签就顶穿按键底边，所以上限只作兜底，
@@ -183,6 +188,7 @@ object WeTypeSettings {
     // 20dp(60px) 落到中线下方 60.5px，顶到按键底边（1637 > 1636），太局促；
     // 15dp(45px) 落在中线下方约 45px，字母与按键底边之间才留出上下呼吸。
     const val DEFAULT_GESTURE_LABEL_POSITION = GESTURE_LABEL_POSITION_BOTTOM
+    const val DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE = GESTURE_LABEL_SHORT_KEY_SHRINK
     const val DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP = 15
     const val DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP = 15
     const val DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP = 0
@@ -451,6 +457,7 @@ object WeTypeSettings {
         val gestureLabelTextSizeSp: Int = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
         val gestureLabelAlpha: Int = DEFAULT_GESTURE_LABEL_ALPHA,
         val gestureLabelPosition: Int = DEFAULT_GESTURE_LABEL_POSITION,
+        val gestureLabelShortKeyMode: Int = DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE,
         val gestureLabelMarginTopDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
         val gestureLabelMarginBottomDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
         val gestureLabelMarginLeftDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
@@ -604,6 +611,7 @@ object WeTypeSettings {
     fun getGestureLabelTextSizeSp(context: Context): Int = readSnapshot(context).gestureLabelTextSizeSp
     fun getGestureLabelAlpha(context: Context): Int = readSnapshot(context).gestureLabelAlpha
     fun getGestureLabelPosition(context: Context): Int = readSnapshot(context).gestureLabelPosition
+    fun getGestureLabelShortKeyMode(context: Context): Int = readSnapshot(context).gestureLabelShortKeyMode
     fun getGestureLabelMarginTopDp(context: Context): Int = readSnapshot(context).gestureLabelMarginTopDp
     fun getGestureLabelMarginBottomDp(context: Context): Int = readSnapshot(context).gestureLabelMarginBottomDp
     fun getGestureLabelMarginLeftDp(context: Context): Int = readSnapshot(context).gestureLabelMarginLeftDp
@@ -635,6 +643,7 @@ object WeTypeSettings {
     fun getGestureLabelTextSizeSpXposed(): Int = readSnapshotXposed().gestureLabelTextSizeSp
     fun getGestureLabelAlphaXposed(): Int = readSnapshotXposed().gestureLabelAlpha
     fun getGestureLabelPositionXposed(): Int = readSnapshotXposed().gestureLabelPosition
+    fun getGestureLabelShortKeyModeXposed(): Int = readSnapshotXposed().gestureLabelShortKeyMode
     fun getGestureLabelMarginTopDpXposed(): Int = readSnapshotXposed().gestureLabelMarginTopDp
     fun getGestureLabelMarginBottomDpXposed(): Int = readSnapshotXposed().gestureLabelMarginBottomDp
     fun getGestureLabelMarginLeftDpXposed(): Int = readSnapshotXposed().gestureLabelMarginLeftDp
@@ -1128,6 +1137,7 @@ object WeTypeSettings {
         gestureLabelTextSizeSp: Int = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
         gestureLabelAlpha: Int = DEFAULT_GESTURE_LABEL_ALPHA,
         gestureLabelPosition: Int = DEFAULT_GESTURE_LABEL_POSITION,
+        gestureLabelShortKeyMode: Int = DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE,
         gestureLabelMarginTopDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
         gestureLabelMarginBottomDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
         gestureLabelMarginLeftDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
@@ -1201,6 +1211,7 @@ object WeTypeSettings {
             gestureLabelTextSizeSp = gestureLabelTextSizeSp.coerceIn(6, 16),
             gestureLabelAlpha = gestureLabelAlpha.coerceIn(0, 255),
             gestureLabelPosition = normalizeGestureLabelPosition(gestureLabelPosition),
+            gestureLabelShortKeyMode = normalizeGestureLabelShortKeyMode(gestureLabelShortKeyMode),
             gestureLabelMarginTopDp = gestureLabelMarginTopDp.coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
             gestureLabelMarginBottomDp = gestureLabelMarginBottomDp.coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
             gestureLabelMarginLeftDp = gestureLabelMarginLeftDp.coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
@@ -1290,6 +1301,7 @@ object WeTypeSettings {
             gestureLabelTextSizeSp = current.gestureLabelTextSizeSp,
             gestureLabelAlpha = current.gestureLabelAlpha,
             gestureLabelPosition = current.gestureLabelPosition,
+            gestureLabelShortKeyMode = current.gestureLabelShortKeyMode,
             gestureLabelMarginTopDp = current.gestureLabelMarginTopDp,
             gestureLabelMarginBottomDp = current.gestureLabelMarginBottomDp,
             gestureLabelMarginLeftDp = current.gestureLabelMarginLeftDp,
@@ -1543,6 +1555,7 @@ object WeTypeSettings {
         gestureLabelTextSizeSp: Int = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
         gestureLabelAlpha: Int = DEFAULT_GESTURE_LABEL_ALPHA,
         gestureLabelPosition: Int = DEFAULT_GESTURE_LABEL_POSITION,
+        gestureLabelShortKeyMode: Int = DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE,
         gestureLabelMarginTopDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
         gestureLabelMarginBottomDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
         gestureLabelMarginLeftDp: Int = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
@@ -1619,6 +1632,7 @@ object WeTypeSettings {
             gestureLabelTextSizeSp = gestureLabelTextSizeSp.coerceIn(6, 16),
             gestureLabelAlpha = gestureLabelAlpha.coerceIn(0, 255),
             gestureLabelPosition = normalizeGestureLabelPosition(gestureLabelPosition),
+            gestureLabelShortKeyMode = normalizeGestureLabelShortKeyMode(gestureLabelShortKeyMode),
             gestureLabelMarginTopDp = gestureLabelMarginTopDp.coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
             gestureLabelMarginBottomDp = gestureLabelMarginBottomDp.coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
             gestureLabelMarginLeftDp = gestureLabelMarginLeftDp.coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
@@ -1770,6 +1784,7 @@ object WeTypeSettings {
             .putInt(KEY_GESTURE_LABEL_TEXT_SIZE_SP, snapshot.gestureLabelTextSizeSp)
             .putInt(KEY_GESTURE_LABEL_ALPHA, snapshot.gestureLabelAlpha)
             .putInt(KEY_GESTURE_LABEL_POSITION, snapshot.gestureLabelPosition)
+            .putInt(KEY_GESTURE_LABEL_SHORT_KEY_MODE, snapshot.gestureLabelShortKeyMode)
             .putInt(KEY_GESTURE_LABEL_MARGIN_TOP_DP, snapshot.gestureLabelMarginTopDp)
             .putInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, snapshot.gestureLabelMarginBottomDp)
             .putInt(KEY_GESTURE_LABEL_MARGIN_LEFT_DP, snapshot.gestureLabelMarginLeftDp)
@@ -1955,6 +1970,7 @@ object WeTypeSettings {
         putInt(KEY_GESTURE_LABEL_TEXT_SIZE_SP, gestureLabelTextSizeSp)
         putInt(KEY_GESTURE_LABEL_ALPHA, gestureLabelAlpha)
         putInt(KEY_GESTURE_LABEL_POSITION, gestureLabelPosition)
+        putInt(KEY_GESTURE_LABEL_SHORT_KEY_MODE, gestureLabelShortKeyMode)
         putInt(KEY_GESTURE_LABEL_MARGIN_TOP_DP, gestureLabelMarginTopDp)
         putInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, gestureLabelMarginBottomDp)
         putInt(KEY_GESTURE_LABEL_MARGIN_LEFT_DP, gestureLabelMarginLeftDp)
@@ -2112,6 +2128,9 @@ object WeTypeSettings {
             gestureLabelPosition = normalizeGestureLabelPosition(
                 getInt(KEY_GESTURE_LABEL_POSITION, defaults.gestureLabelPosition)
             ),
+            gestureLabelShortKeyMode = normalizeGestureLabelShortKeyMode(
+                getInt(KEY_GESTURE_LABEL_SHORT_KEY_MODE, defaults.gestureLabelShortKeyMode)
+            ),
             gestureLabelMarginTopDp = getInt(KEY_GESTURE_LABEL_MARGIN_TOP_DP, defaults.gestureLabelMarginTopDp)
                 .coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
             gestureLabelMarginBottomDp = getInt(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP, defaults.gestureLabelMarginBottomDp)
@@ -2157,6 +2176,14 @@ object WeTypeSettings {
             value
         } else {
             DEFAULT_GESTURE_LABEL_POSITION
+        }
+
+    /** 键位过矮时的标签策略归一化：只认缩小/隐藏，其余回到默认。 */
+    private fun normalizeGestureLabelShortKeyMode(value: Int): Int =
+        if (value == GESTURE_LABEL_SHORT_KEY_SHRINK || value == GESTURE_LABEL_SHORT_KEY_HIDE) {
+            value
+        } else {
+            DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE
         }
 
     /**
@@ -2368,6 +2395,9 @@ object WeTypeSettings {
             gestureLabelAlpha = getInt(KEY_GESTURE_LABEL_ALPHA, DEFAULT_GESTURE_LABEL_ALPHA)
                 .coerceIn(0, 255),
             gestureLabelPosition = migratedLabelPosition,
+            gestureLabelShortKeyMode = normalizeGestureLabelShortKeyMode(
+                getInt(KEY_GESTURE_LABEL_SHORT_KEY_MODE, DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE)
+            ),
             gestureLabelMarginTopDp = migratedMarginTopDp
                 .coerceIn(GESTURE_LABEL_MARGIN_MIN_DP, GESTURE_LABEL_MARGIN_MAX_DP),
             gestureLabelMarginBottomDp = migratedMarginBottomDp
@@ -2467,6 +2497,7 @@ object WeTypeSettings {
         gestureLabelTextSizeSp = DEFAULT_GESTURE_LABEL_TEXT_SIZE_SP,
         gestureLabelAlpha = DEFAULT_GESTURE_LABEL_ALPHA,
         gestureLabelPosition = DEFAULT_GESTURE_LABEL_POSITION,
+        gestureLabelShortKeyMode = DEFAULT_GESTURE_LABEL_SHORT_KEY_MODE,
         gestureLabelMarginTopDp = DEFAULT_GESTURE_LABEL_MARGIN_TOP_DP,
         gestureLabelMarginBottomDp = DEFAULT_GESTURE_LABEL_MARGIN_BOTTOM_DP,
         gestureLabelMarginLeftDp = DEFAULT_GESTURE_LABEL_MARGIN_LEFT_DP,
@@ -2537,6 +2568,7 @@ object WeTypeSettings {
             contains(KEY_GESTURE_LABEL_TEXT_SIZE_SP) ||
             contains(KEY_GESTURE_LABEL_ALPHA) ||
             contains(KEY_GESTURE_LABEL_POSITION) ||
+            contains(KEY_GESTURE_LABEL_SHORT_KEY_MODE) ||
             contains(KEY_GESTURE_LABEL_MARGIN_TOP_DP) ||
             contains(KEY_GESTURE_LABEL_MARGIN_BOTTOM_DP) ||
             contains(KEY_GESTURE_LABEL_MARGIN_LEFT_DP) ||

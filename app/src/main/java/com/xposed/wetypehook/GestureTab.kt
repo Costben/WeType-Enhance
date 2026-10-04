@@ -38,6 +38,8 @@ internal fun LazyListScope.GestureTabContent(
     onGestureLabelAlphaChange: (Int) -> Unit,
     gestureLabelPosition: Int,
     onGestureLabelPositionChange: (Int) -> Unit,
+    gestureLabelShortKeyMode: Int,
+    onGestureLabelShortKeyModeChange: (Int) -> Unit,
     gestureLabelMarginTopDp: Int,
     onGestureLabelMarginTopDpChange: (Int) -> Unit,
     gestureLabelMarginBottomDp: Int,
@@ -148,6 +150,23 @@ internal fun LazyListScope.GestureTabContent(
                                 WeTypeSettings.GESTURE_LABEL_POSITION_TOP
                             } else {
                                 WeTypeSettings.GESTURE_LABEL_POSITION_BOTTOM
+                            }
+                        )
+                    }
+                )
+                OverlayDropdownPreference(
+                    title = "键位过矮时",
+                    items = listOf("缩小标签", "隐藏标签"),
+                    selectedIndex = when (gestureLabelShortKeyMode) {
+                        WeTypeSettings.GESTURE_LABEL_SHORT_KEY_HIDE -> 1
+                        else -> 0
+                    },
+                    onSelectedIndexChange = { index ->
+                        onGestureLabelShortKeyModeChange(
+                            if (index == 1) {
+                                WeTypeSettings.GESTURE_LABEL_SHORT_KEY_HIDE
+                            } else {
+                                WeTypeSettings.GESTURE_LABEL_SHORT_KEY_SHRINK
                             }
                         )
                     }
