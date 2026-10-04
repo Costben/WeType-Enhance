@@ -83,7 +83,6 @@
 ### 下载
 
 - 本仓库 Releases：https://github.com/Costben/WeType-Enhance/releases
-- Xposed 模块仓库：https://github.com/Xposed-Modules-Repo/com.xposed.wetypehook
 
 ### 使用要求
 
