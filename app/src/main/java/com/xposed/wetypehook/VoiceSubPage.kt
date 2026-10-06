@@ -7,10 +7,15 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -19,7 +24,10 @@ import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 「Asr2api」二级页。
@@ -48,9 +56,17 @@ internal fun LazyListScope.VoiceSubPageContent(
     onEosMaxWaitChange: (Int) -> Unit,
     systemServiceEnabled: Boolean,
     systemServiceBusy: Boolean,
+    systemServiceMasterEnabled: Boolean,
+    onSystemServiceMasterChange: (Boolean) -> Unit,
     onSystemServiceChange: (Boolean) -> Unit,
     shizukuInstalled: Boolean,
-    onRequestShizukuAuthorization: () -> Unit
+    onRequestShizukuAuthorization: () -> Unit,
+    shellEnabled: Boolean,
+    onShellEnabledChange: (Boolean) -> Unit,
+    shellPort: Int,
+    onShellPortChange: (Int) -> Unit,
+    shellAllowLan: Boolean,
+    onShellAllowLanChange: (Boolean) -> Unit
 ) {
     item {
         SmallTitle(text = "识别能力")
@@ -67,7 +83,7 @@ internal fun LazyListScope.VoiceSubPageContent(
                 )
                 SwitchPreference(
                     title = "AI 润色",
-                    summary = "识别结果先经微信输入法的文字润色再回传，关闭则直接回传原始识别文本",
+                    summary = "识别结果先经微信输入法的文字润色再回传",
                     checked = aiPolishEnabled,
                     onCheckedChange = onAiPolishChange
                 )
@@ -83,21 +99,69 @@ internal fun LazyListScope.VoiceSubPageContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
-                SystemServiceSwitch(
-                    enabled = systemServiceEnabled,
-                    busy = systemServiceBusy,
-                    onChange = onSystemServiceChange
-                )
-                BasicComponent(
-                    title = "Shizuku 授权",
-                    summary = if (shizukuInstalled) {
-                        "点击后在 Shizuku 弹窗中允许本模块写入"
-                    } else {
-                        "未检测到 Shizuku，将改用 root 写入"
+                SwitchPreference(
+                    title = "启用系统识别服务",
+                    summary = when {
+                        systemServiceBusy -> "正在处理…"
+
+                        systemServiceMasterEnabled -> "已开启，下方可把系统识别服务指向本模块"
+
+                        else -> "已关闭，本模块不参与系统语音识别"
                     },
-                    onClick = onRequestShizukuAuthorization
+                    checked = systemServiceMasterEnabled,
+                    onCheckedChange = onSystemServiceMasterChange
                 )
-                SystemServiceCommandCard()
+                SettingExpandGroup(visible = systemServiceMasterEnabled) {
+                    SystemServiceSwitch(
+                        enabled = systemServiceEnabled,
+                        busy = systemServiceBusy,
+                        onChange = onSystemServiceChange
+                    )
+                    BasicComponent(
+                        title = "Shizuku 授权",
+                        summary = if (shizukuInstalled) {
+                            "点击后在 Shizuku 弹窗中允许本模块写入"
+                        } else {
+                            "未检测到 Shizuku，将改用 root 写入"
+                        },
+                        onClick = onRequestShizukuAuthorization
+                    )
+                    SystemServiceCommandCard()
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+
+    item {
+        SmallTitle(text = "千问 / 豆包服务")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                SwitchPreference(
+                    title = "启用本地监听",
+                    summary = when {
+                        shellEnabled && shellAllowLan -> "监听中，同网段设备可访问"
+
+                        shellEnabled -> "监听中，仅本机可访问"
+
+                        else -> "未启用，给 Eta 用的本地识别服务"
+                    },
+                    checked = shellEnabled,
+                    onCheckedChange = onShellEnabledChange
+                )
+                SettingExpandGroup(visible = shellEnabled) {
+                    ShellPortField(port = shellPort, onPortChange = onShellPortChange)
+                    SwitchPreference(
+                        title = "允许局域网访问",
+                        summary = "同网段的设备才能连进来；只在手机上用请保持关闭",
+                        checked = shellAllowLan,
+                        onCheckedChange = onShellAllowLanChange
+                    )
+                    ShellAddressCopyRow(port = shellPort, allowLan = shellAllowLan)
+                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
@@ -177,11 +241,11 @@ private fun SystemServiceSwitch(
     onChange: (Boolean) -> Unit
 ) {
     SwitchPreference(
-        title = "指向模块的识别服务",
+        title = "将系统识别服务指向本模块",
         summary = when {
             busy -> "正在写入…"
-            enabled -> "已生效，所有系统语音识别请求由本模块处理"
-            else -> "未生效，系统仍在使用原识别服务"
+            enabled -> "已生效，系统语音识别请求由本模块处理"
+            else -> "未生效，系统仍在用原来的识别服务"
         },
         checked = enabled,
         enabled = !busy,
@@ -239,3 +303,90 @@ internal fun copyToClipboard(context: Context, label: String, text: String) {
         Toast.LENGTH_SHORT
     ).show()
 }
+
+/**
+ * 壳服务的监听端口输入框。
+ *
+ * 只在输入落成一个**合法端口**时才写回状态：逐字输入时的中间态（空串、`18`）不写，
+ * 否则每敲一个数字都要重启一次监听。非法值只提示不纠正，用户改完自然落到合法区间。
+ */
+@Composable
+private fun ShellPortField(port: Int, onPortChange: (Int) -> Unit) {
+    var draft by remember(port) { mutableStateOf(port.toString()) }
+    val parsed = draft.toIntOrNull()
+    val inRange = parsed != null &&
+        parsed in WeTypeSettings.VOICE_SHELL_PORT_MIN..WeTypeSettings.VOICE_SHELL_PORT_MAX
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(text = "监听端口", style = MiuixTheme.textStyles.main)
+        Text(
+            text = "端口范围 ${WeTypeSettings.VOICE_SHELL_PORT_MIN}–${WeTypeSettings.VOICE_SHELL_PORT_MAX}",
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        TextField(
+            value = draft,
+            onValueChange = { raw ->
+                val next = raw.filter { it.isDigit() }.take(5)
+                draft = next
+                next.toIntOrNull()?.let { value ->
+                    if (value in WeTypeSettings.VOICE_SHELL_PORT_MIN..WeTypeSettings.VOICE_SHELL_PORT_MAX) {
+                        onPortChange(value)
+                    }
+                }
+            },
+            label = "端口",
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (draft.isNotEmpty() && !inRange) {
+            Text(
+                text = "端口需在 ${WeTypeSettings.VOICE_SHELL_PORT_MIN}–${WeTypeSettings.VOICE_SHELL_PORT_MAX} 之间",
+                color = MiuixTheme.colorScheme.error,
+                style = MiuixTheme.textStyles.body2
+            )
+        }
+    }
+}
+
+/**
+ * 一键把 Eta 该填的服务地址复制走。
+ *
+ * 地址跟着「允许局域网访问」变：关着只有本机能连，给回环地址；开着才给局域网 IP ——
+ * 复制一个连不上的地址比不给更误导。
+ */
+@Composable
+private fun ShellAddressCopyRow(port: Int, allowLan: Boolean) {
+    val context = LocalContext.current
+    val address = shellServiceAddress(port = port, allowLan = allowLan)
+    BasicComponent(
+        title = "复制 base URL",
+        summary = address,
+        onClick = { copyToClipboard(context, "asr_shell_address", address) }
+    )
+}
+
+/**
+ * 壳对外的根地址。
+ *
+ * 只走 `http://` 明文，不需要任何证书，新用户开箱即用。Eta 的 `speechBaseUrl` 只认
+ * https，模块在 Eta 进程里把回环地址放行成 http（见 `EtaSpeechHooks`），所以这一栏
+ * 填 http 就能过它的校验。
+ */
+internal fun shellServiceAddress(port: Int, allowLan: Boolean): String {
+    val host = if (allowLan) localIpv4Address() ?: LOOPBACK_ADDRESS else LOOPBACK_ADDRESS
+    return "http://$host:$port"
+}
+
+private const val LOOPBACK_ADDRESS = "127.0.0.1"
+
+/** 本机在局域网里的 IPv4 地址。没有可用的（没连 Wi-Fi、只有蜂窝）就返回 null。 */
+private fun localIpv4Address(): String? = runCatching {
+    java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+        .asSequence()
+        .filter { it.isUp && !it.isLoopback }
+        .flatMap { java.util.Collections.list(it.inetAddresses).asSequence() }
+        .filterIsInstance<java.net.Inet4Address>()
+        .firstOrNull { it.isSiteLocalAddress }
+        ?.hostAddress
+}.getOrNull()

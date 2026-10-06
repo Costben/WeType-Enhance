@@ -33,6 +33,7 @@ import com.xposed.wetypehook.wetype.hook.WeTypeVoiceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
+import com.xposed.wetypehook.wetype.voice.shell.EtaSpeechHooks
 import com.xposed.wetypehook.xposed.HookEnvironment
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.findMethod
@@ -67,6 +68,7 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "miuiime"
 private const val WETYPE_PACKAGE = "com.tencent.wetype"
+private const val ETA_PACKAGE = ModuleBridgeContract.ETA_PACKAGE_NAME
 private const val MIUI_PHRASE_PACKAGE = "com.miui.phrase"
 private const val MIUI_INPUT_PROVIDER = "com.miui.provider.InputProvider"
 private const val INPUT_METHOD_BOTTOM_MANAGER = "com.miui.inputmethod.InputMethodBottomManager"
@@ -176,6 +178,13 @@ class MainHook : XposedModule() {
             }
             return
         }
+        if (packageName == ETA_PACKAGE) {
+            recordActiveTarget(ActiveTarget(TARGET_KIND_PACKAGE, packageName, sourceDir = param.applicationInfo.sourceDir))
+            HookEnvironment.withHookScope("eta.speech") {
+                EtaSpeechHooks.install(param.classLoader, param.applicationInfo.sourceDir)
+            }
+            return
+        }
         if (packageName == MIUI_PHRASE_PACKAGE) {
             recordActiveTarget(ActiveTarget(
                 kind = TARGET_KIND_PHRASE,
@@ -246,6 +255,12 @@ class MainHook : XposedModule() {
                 }
 
                 TARGET_KIND_PACKAGE -> target.packageName?.let { packageName ->
+                    if (packageName == ETA_PACKAGE) {
+                        HookEnvironment.withHookScope("eta.speech") {
+                            EtaSpeechHooks.install(classLoader, target.sourceDir)
+                        }
+                        return@let
+                    }
                     startHook(packageName, classLoader, target.sourceDir, isMiuiImeSupport)
                     bottomManagersToReconcile += reinstallDynamicBottomManagerHooks(
                         param.oldHookHandles,

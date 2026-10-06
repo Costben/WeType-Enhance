@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 object WeTypeSettings {
     const val PREF_GROUP = "wetype_settings"
+
     private const val TAG = "WeTypeSettings"
     private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
     private const val WETYPE_PACKAGE_NAME = "com.tencent.wetype"
@@ -74,6 +75,10 @@ object WeTypeSettings {
     private const val KEY_VOICE_EOS_QUIET_MS = "voice_eos_quiet_ms"
     private const val KEY_VOICE_EOS_MAX_WAIT_MS = "voice_eos_max_wait_ms"
     private const val KEY_VOICE_AI_POLISH = "voice_ai_polish"
+    private const val KEY_VOICE_SHELL_ENABLED = "voice_shell_enabled"
+    private const val KEY_VOICE_SHELL_PORT = "voice_shell_port"
+    private const val KEY_VOICE_SHELL_ALLOW_LAN = "voice_shell_allow_lan"
+    private const val KEY_VOICE_SYSTEM_SERVICE_ENABLED = "voice_system_service_enabled"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
     private const val KEY_ALL_MATERIAL_PRESETS_ENABLED = "all_material_presets_enabled"
@@ -318,6 +323,29 @@ object WeTypeSettings {
     /** 转录回传前是否改用宿主回填的润色文本。默认关闭，保持「原样回传原始识别文本」。 */
     const val DEFAULT_VOICE_AI_POLISH = false
 
+    /** 千问 / 豆包 壳。默认关：它会开一个可被外部访问的端口，不该在用户点之前就监听。 */
+    const val DEFAULT_VOICE_SHELL_ENABLED = false
+
+    /** 系统识别服务总控。默认关：不主动改写系统设置，下方写入入口由用户点开后才展开。 */
+    const val DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED = false
+
+    /**
+     * 壳的默认监听端口。
+     *
+     * 刻意与回环桥的 18515 错开：桥是模块内部的 PCM 通道，壳是对外给 Eta 填地址的那一面，
+     * 两者挤在同一个端口上只会让「到底谁在监听」变成猜谜。
+     */
+    const val DEFAULT_VOICE_SHELL_PORT = 18516
+
+    /** 默认只绑回环。允许局域网访问是显式选项 —— 打开它等于把识别能力放到同网段上。 */
+    const val DEFAULT_VOICE_SHELL_ALLOW_LAN = false
+
+    const val VOICE_SHELL_PORT_MIN = 1024
+    const val VOICE_SHELL_PORT_MAX = 65535
+
+    fun sanitizeVoiceShellPort(value: Int): Int =
+        value.coerceIn(VOICE_SHELL_PORT_MIN, VOICE_SHELL_PORT_MAX)
+
     /** 模块自带的 [android.speech.RecognitionService]，展开成 `包名/类名` 的扁平串。 */
     const val VOICE_RECOGNITION_COMPONENT =
         "$MODULE_PACKAGE_NAME/$MODULE_PACKAGE_NAME.wetype.voice.WeTypeRecognitionService"
@@ -436,6 +464,10 @@ object WeTypeSettings {
         val voiceEosQuietMs: Int = DEFAULT_VOICE_EOS_QUIET_MS,
         val voiceEosMaxWaitMs: Int = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
         val voiceAiPolishEnabled: Boolean = DEFAULT_VOICE_AI_POLISH,
+        val voiceShellEnabled: Boolean = DEFAULT_VOICE_SHELL_ENABLED,
+        val voiceSystemServiceEnabled: Boolean = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
+        val voiceShellPort: Int = DEFAULT_VOICE_SHELL_PORT,
+        val voiceShellAllowLan: Boolean = DEFAULT_VOICE_SHELL_ALLOW_LAN,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -732,6 +764,12 @@ object WeTypeSettings {
     fun isColorosAiWriterEnabled(context: Context): Boolean = readSnapshot(context).colorosAiWriterEnabled
 
     fun isVoiceBridgeEnabled(context: Context): Boolean = readSnapshot(context).voiceBridgeEnabled
+
+    fun isVoiceShellEnabled(context: Context): Boolean = readSnapshot(context).voiceShellEnabled
+
+    fun getVoiceShellPort(context: Context): Int = readSnapshot(context).voiceShellPort
+
+    fun isVoiceShellAllowLan(context: Context): Boolean = readSnapshot(context).voiceShellAllowLan
 
     /**
      * 系统识别服务此刻是不是真的指向模块。
@@ -1116,6 +1154,10 @@ object WeTypeSettings {
         voiceEosQuietMs: Int = DEFAULT_VOICE_EOS_QUIET_MS,
         voiceEosMaxWaitMs: Int = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
         voiceAiPolishEnabled: Boolean = DEFAULT_VOICE_AI_POLISH,
+        voiceShellEnabled: Boolean = DEFAULT_VOICE_SHELL_ENABLED,
+        voiceSystemServiceEnabled: Boolean = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
+        voiceShellPort: Int = DEFAULT_VOICE_SHELL_PORT,
+        voiceShellAllowLan: Boolean = DEFAULT_VOICE_SHELL_ALLOW_LAN,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1190,6 +1232,10 @@ object WeTypeSettings {
             voiceEosQuietMs = voiceEosQuietMs,
             voiceEosMaxWaitMs = voiceEosMaxWaitMs,
             voiceAiPolishEnabled = voiceAiPolishEnabled,
+            voiceShellEnabled = voiceShellEnabled,
+            voiceSystemServiceEnabled = voiceSystemServiceEnabled,
+            voiceShellPort = sanitizeVoiceShellPort(voiceShellPort),
+            voiceShellAllowLan = voiceShellAllowLan,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1280,6 +1326,10 @@ object WeTypeSettings {
             voiceEosQuietMs = current.voiceEosQuietMs,
             voiceEosMaxWaitMs = current.voiceEosMaxWaitMs,
             voiceAiPolishEnabled = current.voiceAiPolishEnabled,
+            voiceShellEnabled = current.voiceShellEnabled,
+            voiceSystemServiceEnabled = current.voiceSystemServiceEnabled,
+            voiceShellPort = current.voiceShellPort,
+            voiceShellAllowLan = current.voiceShellAllowLan,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
             removeClipboardRetentionLimit = current.removeClipboardRetentionLimit,
             removeClipboardTextLimit = current.removeClipboardTextLimit,
@@ -1534,6 +1584,10 @@ object WeTypeSettings {
         voiceEosQuietMs: Int = DEFAULT_VOICE_EOS_QUIET_MS,
         voiceEosMaxWaitMs: Int = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
         voiceAiPolishEnabled: Boolean = DEFAULT_VOICE_AI_POLISH,
+        voiceShellEnabled: Boolean = DEFAULT_VOICE_SHELL_ENABLED,
+        voiceSystemServiceEnabled: Boolean = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
+        voiceShellPort: Int = DEFAULT_VOICE_SHELL_PORT,
+        voiceShellAllowLan: Boolean = DEFAULT_VOICE_SHELL_ALLOW_LAN,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1611,6 +1665,10 @@ object WeTypeSettings {
             voiceEosQuietMs = voiceEosQuietMs.coerceIn(200, 3000),
             voiceEosMaxWaitMs = voiceEosMaxWaitMs.coerceIn(1000, 15000),
             voiceAiPolishEnabled = voiceAiPolishEnabled,
+            voiceShellEnabled = voiceShellEnabled,
+            voiceSystemServiceEnabled = voiceSystemServiceEnabled,
+            voiceShellPort = sanitizeVoiceShellPort(voiceShellPort),
+            voiceShellAllowLan = voiceShellAllowLan,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1763,6 +1821,10 @@ object WeTypeSettings {
             .putInt(KEY_VOICE_EOS_QUIET_MS, snapshot.voiceEosQuietMs)
             .putInt(KEY_VOICE_EOS_MAX_WAIT_MS, snapshot.voiceEosMaxWaitMs)
             .putBoolean(KEY_VOICE_AI_POLISH, snapshot.voiceAiPolishEnabled)
+            .putBoolean(KEY_VOICE_SHELL_ENABLED, snapshot.voiceShellEnabled)
+            .putBoolean(KEY_VOICE_SYSTEM_SERVICE_ENABLED, snapshot.voiceSystemServiceEnabled)
+            .putInt(KEY_VOICE_SHELL_PORT, snapshot.voiceShellPort)
+            .putBoolean(KEY_VOICE_SHELL_ALLOW_LAN, snapshot.voiceShellAllowLan)
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
             .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
             .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
@@ -1949,6 +2011,10 @@ object WeTypeSettings {
         putInt(KEY_VOICE_EOS_QUIET_MS, voiceEosQuietMs)
         putInt(KEY_VOICE_EOS_MAX_WAIT_MS, voiceEosMaxWaitMs)
         putBoolean(KEY_VOICE_AI_POLISH, voiceAiPolishEnabled)
+        putBoolean(KEY_VOICE_SHELL_ENABLED, voiceShellEnabled)
+        putBoolean(KEY_VOICE_SYSTEM_SERVICE_ENABLED, voiceSystemServiceEnabled)
+        putInt(KEY_VOICE_SHELL_PORT, voiceShellPort)
+        putBoolean(KEY_VOICE_SHELL_ALLOW_LAN, voiceShellAllowLan)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
         putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
@@ -2087,6 +2153,15 @@ object WeTypeSettings {
             voiceEosMaxWaitMs = getInt(KEY_VOICE_EOS_MAX_WAIT_MS, defaults.voiceEosMaxWaitMs)
                 .coerceIn(1000, 15000),
             voiceAiPolishEnabled = getBoolean(KEY_VOICE_AI_POLISH, defaults.voiceAiPolishEnabled),
+            voiceShellEnabled = getBoolean(KEY_VOICE_SHELL_ENABLED, defaults.voiceShellEnabled),
+            voiceSystemServiceEnabled = getBoolean(
+                KEY_VOICE_SYSTEM_SERVICE_ENABLED,
+                defaults.voiceSystemServiceEnabled
+            ),
+            voiceShellPort = sanitizeVoiceShellPort(
+                getInt(KEY_VOICE_SHELL_PORT, defaults.voiceShellPort)
+            ),
+            voiceShellAllowLan = getBoolean(KEY_VOICE_SHELL_ALLOW_LAN, defaults.voiceShellAllowLan),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
@@ -2359,6 +2434,15 @@ object WeTypeSettings {
             voiceEosMaxWaitMs = getInt(KEY_VOICE_EOS_MAX_WAIT_MS, DEFAULT_VOICE_EOS_MAX_WAIT_MS)
                 .coerceIn(1000, 15000),
             voiceAiPolishEnabled = getBoolean(KEY_VOICE_AI_POLISH, DEFAULT_VOICE_AI_POLISH),
+            voiceShellEnabled = getBoolean(KEY_VOICE_SHELL_ENABLED, DEFAULT_VOICE_SHELL_ENABLED),
+            voiceSystemServiceEnabled = getBoolean(
+                KEY_VOICE_SYSTEM_SERVICE_ENABLED,
+                DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED
+            ),
+            voiceShellPort = sanitizeVoiceShellPort(
+                getInt(KEY_VOICE_SHELL_PORT, DEFAULT_VOICE_SHELL_PORT)
+            ),
+            voiceShellAllowLan = getBoolean(KEY_VOICE_SHELL_ALLOW_LAN, DEFAULT_VOICE_SHELL_ALLOW_LAN),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
@@ -2476,6 +2560,10 @@ object WeTypeSettings {
         voiceEosQuietMs = DEFAULT_VOICE_EOS_QUIET_MS,
         voiceEosMaxWaitMs = DEFAULT_VOICE_EOS_MAX_WAIT_MS,
         voiceAiPolishEnabled = DEFAULT_VOICE_AI_POLISH,
+        voiceShellEnabled = DEFAULT_VOICE_SHELL_ENABLED,
+        voiceSystemServiceEnabled = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
+        voiceShellPort = DEFAULT_VOICE_SHELL_PORT,
+        voiceShellAllowLan = DEFAULT_VOICE_SHELL_ALLOW_LAN,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -2550,6 +2638,10 @@ object WeTypeSettings {
             contains(KEY_VOICE_EOS_QUIET_MS) ||
             contains(KEY_VOICE_EOS_MAX_WAIT_MS) ||
             contains(KEY_VOICE_AI_POLISH) ||
+            contains(KEY_VOICE_SHELL_ENABLED) ||
+            contains(KEY_VOICE_SYSTEM_SERVICE_ENABLED) ||
+            contains(KEY_VOICE_SHELL_PORT) ||
+            contains(KEY_VOICE_SHELL_ALLOW_LAN) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
             contains(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT) ||

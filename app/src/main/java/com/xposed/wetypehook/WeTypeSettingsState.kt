@@ -44,6 +44,8 @@ import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -123,6 +125,14 @@ internal class WeTypeSettingsState(
     var voiceSilencePeak by mutableIntStateOf(snapshot.voiceSilencePeak)
     var voiceEosQuietMs by mutableIntStateOf(snapshot.voiceEosQuietMs)
     var voiceEosMaxWaitMs by mutableIntStateOf(snapshot.voiceEosMaxWaitMs)
+
+    /** 「千问 / 豆包 壳」的三项配置。落盘，改完由 [syncVoiceShellService] 推给模块 App。 */
+    var voiceShellEnabled by mutableStateOf(snapshot.voiceShellEnabled)
+    var voiceShellPort by mutableIntStateOf(snapshot.voiceShellPort)
+    var voiceShellAllowLan by mutableStateOf(snapshot.voiceShellAllowLan)
+
+    /** 「系统识别服务」的总控，纯本机偏好，不依赖 Shizuku 或 root。 */
+    var voiceSystemServiceEnabled by mutableStateOf(snapshot.voiceSystemServiceEnabled)
 
     /**
      * 「系统识别服务」开关的真实状态，以及它此刻能不能被操作。
@@ -221,8 +231,76 @@ internal class WeTypeSettingsState(
         }
     }
 
+    // ------------------------------------------------------------------
+    // 千问 / 豆包 壳
+    // ------------------------------------------------------------------
+
+    /** 总控。开关一变就立刻推给模块 App，不等自动保存的防抖。 */
+    fun updateVoiceShellEnabled(enabled: Boolean) {
+        voiceShellEnabled = enabled
+        syncVoiceShellService(immediate = true)
+    }
+
+    /** 系统识别服务的总控。关掉时若系统设置还指着本模块，顺手还原。 */
+    fun updateVoiceSystemServiceEnabled(enabled: Boolean) {
+        voiceSystemServiceEnabled = enabled
+        if (!enabled && voiceSystemServiceApplied) setVoiceSystemService(false)
+    }
+
+    /** 监听端口。逐字输入时会连着来几次，走防抖，避免每按一个键就重启一次监听。 */
+    fun updateVoiceShellPort(port: Int) {
+        voiceShellPort = WeTypeSettings.sanitizeVoiceShellPort(port)
+        syncVoiceShellService()
+    }
+
+    fun updateVoiceShellAllowLan(allowLan: Boolean) {
+        voiceShellAllowLan = allowLan
+        syncVoiceShellService()
+    }
+
+    /**
+     * 把壳的启停与监听参数推出去。
+     *
+     * 监听跑在微信输入法输入法进程里，所以只发一条 [ModuleBridgeContract.ACTION_SHELL_SYNC]
+     * 给宿主包，由那边的接收器按新配置起停。
+     *
+     * 端口是逐字输入的，每一次按键都重启监听会把正在跑的识别打断，所以除开关外都防抖。
+     */
+    private fun syncVoiceShellService(immediate: Boolean = false) {
+        val enabled = voiceShellEnabled
+        val port = voiceShellPort
+        val allowLan = voiceShellAllowLan
+        shellSyncJob?.cancel()
+        shellSyncJob = coroutineScope.launch {
+            if (!immediate) delay(SHELL_SYNC_DEBOUNCE_MS)
+            val hostDispatched = ModuleBridgeContract.sendWithIdentity(
+                preferencesContext,
+                ModuleBridgeContract.shellSyncIntent(enabled, port, allowLan)
+            )
+            if (enabled && !hostDispatched) {
+                Toast.makeText(
+                    context,
+                    "无法启动壳监听：宿主进程未运行",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    /** 端口输入的防抖任务。下一次改动会把它取消掉，只有最后一次改动真正发出去。 */
+    private var shellSyncJob: Job? = null
+
+    init {
+        // 设置页打开时不纠偏地补发一次：进程被系统回收过、或者上次广播没送达时，只要开关
+        // 还开着就把监听重新拉起来。`AsrShellHost.sync` 幂等，端口与绑定地址没变就是空操作。
+        if (voiceShellEnabled) syncVoiceShellService(immediate = true)
+    }
+
     private companion object {
         const val SHIZUKU_PACKAGE_NAME = ShizukuShell.SHIZUKU_PACKAGE_NAME
+
+        /** 防抖窗口。够短到「改完就生效」，够长到覆盖连续按键。 */
+        const val SHELL_SYNC_DEBOUNCE_MS = 400L
     }
 
     var showCrossDeviceClipboard by mutableStateOf(snapshot.showCrossDeviceClipboard)
@@ -688,6 +766,10 @@ internal class WeTypeSettingsState(
             voiceSilencePeak = voiceSilencePeak,
             voiceEosQuietMs = voiceEosQuietMs,
             voiceEosMaxWaitMs = voiceEosMaxWaitMs,
+            voiceShellEnabled = voiceShellEnabled,
+            voiceSystemServiceEnabled = voiceSystemServiceEnabled,
+            voiceShellPort = voiceShellPort,
+            voiceShellAllowLan = voiceShellAllowLan,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -787,6 +869,10 @@ internal class WeTypeSettingsState(
         voiceEosQuietMs = WeTypeSettings.DEFAULT_VOICE_EOS_QUIET_MS
         voiceEosMaxWaitMs = WeTypeSettings.DEFAULT_VOICE_EOS_MAX_WAIT_MS
         voiceAiPolishEnabled = WeTypeSettings.DEFAULT_VOICE_AI_POLISH
+        voiceShellEnabled = WeTypeSettings.DEFAULT_VOICE_SHELL_ENABLED
+        voiceSystemServiceEnabled = WeTypeSettings.DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED
+        voiceShellPort = WeTypeSettings.DEFAULT_VOICE_SHELL_PORT
+        voiceShellAllowLan = WeTypeSettings.DEFAULT_VOICE_SHELL_ALLOW_LAN
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
         removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT
@@ -830,6 +916,9 @@ internal class WeTypeSettingsState(
             appearanceGroupColors[index] = group.defaultColor
         }
         syncEditorFromState()
+        // 恢复默认会把壳的开关打回「关」，得同步把模块 App 里那个监听停掉，
+        // 否则会出现「设置里显示关着、端口却还在监听」。
+        syncVoiceShellService(immediate = true)
         saveSettings(
             successMessage = R.string.settings_reset_toast,
             glassOverridesToSave = GlassMaterialOverrides()

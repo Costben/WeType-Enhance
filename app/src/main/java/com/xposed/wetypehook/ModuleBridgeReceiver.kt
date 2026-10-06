@@ -27,6 +27,22 @@ object ModuleBridgeContract {
     const val MESSAGE_SAVE_SETTINGS = 1
     const val MESSAGE_RECORD_ACTIVATION = 2
     const val MESSAGE_APPLY_VOICE_SERVICE = 3
+
+    const val EXTRA_ASR_SHELL_ENABLED = "asr_shell_enabled"
+    const val EXTRA_ASR_SHELL_PORT = "asr_shell_port"
+    const val EXTRA_ASR_SHELL_ALLOW_LAN = "asr_shell_allow_lan"
+
+    /**
+     * 起停壳监听（**设置页 → 微信输入法进程**的方向）。
+     *
+     * 监听跑在微信输入法输入法进程里，设置页每改一次参数就发一条，由那边的动态接收器
+     * 按新配置起停。`EXTRA_ASR_SHELL_*` 三个 extra 与这条 action 配套。
+     */
+    const val ACTION_SHELL_SYNC = "com.xposed.wetypehook.action.SHELL_SYNC"
+
+    /** Eta 的包名，与 `MainHook` 里的 `ETA_PACKAGE` 保持一致。 */
+    const val ETA_PACKAGE_NAME = "io.github.mangi.eta"
+
     const val EXTRA_MESSAGE_TYPE = "message_type"
     const val EXTRA_SETTINGS = "settings"
     const val EXTRA_REVISION = "revision"
@@ -73,6 +89,13 @@ object ModuleBridgeContract {
     fun voiceServiceRequestIntent(enable: Boolean): Intent = explicitBridgeIntent()
         .putExtra(EXTRA_MESSAGE_TYPE, MESSAGE_APPLY_VOICE_SERVICE)
         .putExtra(EXTRA_VOICE_SERVICE_ENABLE, enable)
+
+    /** 请微信输入法进程按这份配置起停壳监听。接收器是输入法进程里注册的动态广播。 */
+    fun shellSyncIntent(enabled: Boolean, port: Int, allowLan: Boolean): Intent =
+        Intent(ACTION_SHELL_SYNC).setPackage(HOST_PACKAGE_NAME)
+            .putExtra(EXTRA_ASR_SHELL_ENABLED, enabled)
+            .putExtra(EXTRA_ASR_SHELL_PORT, port)
+            .putExtra(EXTRA_ASR_SHELL_ALLOW_LAN, allowLan)
 
     /** 模块 App 回宿主的结果意图。 */
     fun voiceServiceResultIntent(channel: String): Intent =
@@ -146,11 +169,14 @@ class ModuleBridgeReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ModuleBridgeContract.ACTION_BRIDGE) return
-        when (intent.getIntExtra(ModuleBridgeContract.EXTRA_MESSAGE_TYPE, 0)) {
-            ModuleBridgeContract.MESSAGE_SAVE_SETTINGS -> importSettings(context, intent)
-            ModuleBridgeContract.MESSAGE_RECORD_ACTIVATION -> recordActivation(context, intent)
-            ModuleBridgeContract.MESSAGE_APPLY_VOICE_SERVICE -> applyVoiceSystemService(context, intent)
+        when (intent.action) {
+            ModuleBridgeContract.ACTION_BRIDGE ->
+                when (intent.getIntExtra(ModuleBridgeContract.EXTRA_MESSAGE_TYPE, 0)) {
+                    ModuleBridgeContract.MESSAGE_SAVE_SETTINGS -> importSettings(context, intent)
+                    ModuleBridgeContract.MESSAGE_RECORD_ACTIVATION -> recordActivation(context, intent)
+                    ModuleBridgeContract.MESSAGE_APPLY_VOICE_SERVICE ->
+                        applyVoiceSystemService(context, intent)
+                }
         }
     }
 

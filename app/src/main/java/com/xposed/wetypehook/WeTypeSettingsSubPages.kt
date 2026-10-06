@@ -267,9 +267,17 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                     onEosMaxWaitChange = { voiceEosMaxWaitMs = it },
                     systemServiceEnabled = voiceSystemServiceApplied,
                     systemServiceBusy = voiceSystemServiceBusy,
+                    systemServiceMasterEnabled = voiceSystemServiceEnabled,
+                    onSystemServiceMasterChange = ::updateVoiceSystemServiceEnabled,
                     onSystemServiceChange = ::setVoiceSystemService,
                     shizukuInstalled = shizukuInstalled,
-                    onRequestShizukuAuthorization = ::requestShizukuAuthorization
+                    onRequestShizukuAuthorization = ::requestShizukuAuthorization,
+                    shellEnabled = voiceShellEnabled,
+                    onShellEnabledChange = ::updateVoiceShellEnabled,
+                    shellPort = voiceShellPort,
+                    onShellPortChange = ::updateVoiceShellPort,
+                    shellAllowLan = voiceShellAllowLan,
+                    onShellAllowLanChange = ::updateVoiceShellAllowLan
                 )
 
                 SettingsSubPage.KEYBOARD_LOGO -> KeyboardLogoSubPageContent(

@@ -56,6 +56,10 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "voiceSilencePeak" to voiceSilencePeak,
     "voiceEosQuietMs" to voiceEosQuietMs,
     "voiceEosMaxWaitMs" to voiceEosMaxWaitMs,
+    "voiceShellEnabled" to voiceShellEnabled,
+    "voiceSystemServiceEnabled" to voiceSystemServiceEnabled,
+    "voiceShellPort" to voiceShellPort,
+    "voiceShellAllowLan" to voiceShellAllowLan,
     "showCrossDeviceClipboard" to showCrossDeviceClipboard,
     "removeClipboardRetentionLimit" to removeClipboardRetentionLimit,
     "removeClipboardTextLimit" to removeClipboardTextLimit,
@@ -188,6 +192,10 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
     voiceSilencePeak = saved["voiceSilencePeak"] as? Int ?: voiceSilencePeak
     voiceEosQuietMs = saved["voiceEosQuietMs"] as? Int ?: voiceEosQuietMs
     voiceEosMaxWaitMs = saved["voiceEosMaxWaitMs"] as? Int ?: voiceEosMaxWaitMs
+    voiceShellEnabled = saved["voiceShellEnabled"] as? Boolean ?: voiceShellEnabled
+    voiceSystemServiceEnabled = saved["voiceSystemServiceEnabled"] as? Boolean ?: voiceSystemServiceEnabled
+    voiceShellPort = saved["voiceShellPort"] as? Int ?: voiceShellPort
+    voiceShellAllowLan = saved["voiceShellAllowLan"] as? Boolean ?: voiceShellAllowLan
     showCrossDeviceClipboard = saved["showCrossDeviceClipboard"] as? Boolean ?: showCrossDeviceClipboard
     removeClipboardRetentionLimit = saved["removeClipboardRetentionLimit"] as? Boolean
         ?: removeClipboardRetentionLimit

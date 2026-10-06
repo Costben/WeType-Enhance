@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
+        「千问 / 豆包 壳」的监听跑在微信输入法输入法进程（`:hld`）里，由 Xposed hook 托管，
+        模块 App 不需要常驻服务、也不需要前台通知 —— 详见 AsrShellHost 的类注释。
+        壳只跑明文 HTTP，不涉及证书。
+    -->
+
+    <!--
         本模块自带 RecognitionService，自己开麦克风采音再转给微信输入法识别引擎。
         AOSP 的 RecognitionService 只检查**调用方**（Eta）的 RECORD_AUDIO；我们自己
         采音还得另有一份自己的，缺了会在 AudioRecord 构造/start 时失败。
@@ -51,6 +57,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!--
+            设置镜像与「系统识别服务」写入的入口，一律走 `ACTION_BRIDGE` + 显式组件，不需要过滤器。
+            发送方是宿主设置页或模块 App 自己（另一个 uid），所以仍然 exported；
+            处理时按发送方包名核对，未受信任的来源直接丢弃。
+        -->
         <receiver
             android:name=".ModuleBridgeReceiver"
             android:enabled="true"

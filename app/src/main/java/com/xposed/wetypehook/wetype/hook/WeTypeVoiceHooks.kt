@@ -1,12 +1,19 @@
 package com.xposed.wetypehook.wetype.hook
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioRecord
+import android.os.Build
+import androidx.core.content.ContextCompat
+import com.xposed.wetypehook.ModuleBridgeContract
 import com.xposed.wetypehook.wetype.host.HostContractId
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.voice.FakeAudioRecord
 import com.xposed.wetypehook.wetype.voice.WeTypeVoiceBridge
+import com.xposed.wetypehook.wetype.voice.shell.AsrShellHost
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.hookAfter
@@ -15,6 +22,7 @@ import java.lang.ref.WeakReference
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 把微信输入法的语音识别借给外部用：**换掉宿主的麦克风，音频从外部喂进来，转录从外部读走。**
@@ -42,9 +50,6 @@ import java.lang.reflect.Modifier
 internal object WeTypeVoiceHooks {
 
     private const val TAG = "WeTypeVoice"
-
-    /** 输入法服务。只用来问系统「输入法跑在哪个进程」，不 hook 它。 */
-    private const val IME_SERVICE_CLASS = "com.tencent.wetype.plugin.hld.WxHldService"
 
     @Volatile
     private var hostClassLoader: ClassLoader? = null
@@ -98,12 +103,20 @@ internal object WeTypeVoiceHooks {
 
     private const val START_THROTTLE_MS = 1500L
 
+    /** 壳同步广播的接收器是否已注册。每个输入法进程注册一次。 */
+    private val shellSyncReceiverRegistered = AtomicBoolean(false)
+
     // ------------------------------------------------------------------
     // 安装
     // ------------------------------------------------------------------
 
     fun install(classLoader: ClassLoader) {
         hostClassLoader = classLoader
+        // Application.attach 排在最前面：它拉起的是本模块自己的本地服务（18515 回环桥与
+        // 18516 壳监听），与宿主语音契约无关。契约解析失败（宿主更新、短名漂移）只该让
+        // 「借识别」失效，不该把壳一起拖哑。
+        hookApplicationContext()
+
         val singleton = WeTypeHostContracts.classOf(HostContractId.VOICE_SINGLETON)
         if (singleton == null) {
             Log.i("$TAG: voice singleton unresolved; voice bridge disabled")
@@ -126,7 +139,6 @@ internal object WeTypeVoiceHooks {
         WeTypeVoiceBridge.onClientConnected = { startVoiceSession() }
         WeTypeVoiceBridge.onStreamEnd = { stopVoiceSession() }
 
-        hookApplicationContext()
         Log.i("$TAG: installed. singleton=${singleton.name} recorder=${pcmRecorder.name} swapReady=$swapReady")
     }
 
@@ -305,40 +317,18 @@ internal object WeTypeVoiceHooks {
     }
 
     /**
-     * 本进程是不是**输入法进程**。
-     *
-     * 微信输入法有两个进程（主进程与 `:hld`），两个都在作用域里、都会装这套 hook，于是
-     * 两个都会去 bind 18515 —— 先起的赢，后起的只打一行 `EADDRINUSE`。谁赢纯看启动顺序，
-     * 而只有**跑着输入法**的那个进程才有活的录音器：如果主进程抢到端口，客户端连上后
-     * `startVoiceSession()` 会在主进程里调，那边没有会话、`mic replaced` 永远不出现，
-     * 表现为「协议全对、一个转录都没有」。
-     *
-     * 判据不写死 `:hld`：直接问 PackageManager 输入法服务的 `processName`，由系统替我们
-     * 解析出进程名。查不到就按「是」处理 —— 宁可回到原来的抢端口行为，也不要因为一次
-     * 查询失败把功能关死。
-     */
-    private fun isImeProcess(context: Context): Boolean {
-        val info = runCatching {
-            context.packageManager.getServiceInfo(
-                android.content.ComponentName(context.packageName, IME_SERVICE_CLASS), 0
-            )
-        }.getOrNull() ?: return true
-        val current = runCatching { Application.getProcessName() }.getOrNull() ?: return true
-        return info.processName == current
-    }
-
-    /**
-     * 按设置拉起回环桥（18515）。
+     * 按设置拉起本模块在输入法进程里的两个本地服务：回环桥（18515）与壳监听（18516）。
      *
      * 放在 `Application.attach` 之后是**唯一**能早于宿主自身初始化的位置：设置页改动
      * 只影响下次进程启动，运行中不热重启服务 —— 客户端本来就要求重连，热切换只会把
      * 「正在跑的一轮识别」打断。
      *
-     * 这条桥服务的是「系统识别服务」那一路：模块进程里的 `WeTypeRecognitionService`
-     * 收下系统请求，把 PCM 推到本端口，由这里喂给宿主识别引擎。
+     * 回环桥服务的是「系统识别服务」那一路：模块进程里的 `WeTypeRecognitionService`
+     * 收下系统请求，把 PCM 推到本端口，由这里喂给宿主识别引擎。壳监听则把同一个引擎按
+     * 千问 / 豆包协议转给 Eta —— 两者互相独立，开关也各管各的。
      */
     private fun startLocalServices(context: Context) {
-        if (!isImeProcess(context)) {
+        if (!WeTypeProcessIdentity.isImeProcess(context)) {
             Log.i("$TAG: not the IME process; local voice services left to the IME process")
             return
         }
@@ -347,11 +337,90 @@ internal object WeTypeVoiceHooks {
             Log.i("$TAG: settings snapshot unavailable; local voice services not started")
             return
         }
+        ensureShellSyncReceiver(context)
+        // 壳的开关与桥的开关独立，不能挂在下面那个 `if (!voiceBridgeEnabled) return` 之后。
+        AsrShellHost.sync(
+            context,
+            settings.voiceShellEnabled,
+            settings.voiceShellPort,
+            settings.voiceShellAllowLan
+        )
         if (!settings.voiceBridgeEnabled) {
             Log.i("$TAG: voice bridge disabled by settings; no local port opened")
             return
         }
         WeTypeVoiceBridge.startServer()
+    }
+
+    /**
+     * 注册壳这条链上的广播接收器（每个输入法进程一次），只收 [ModuleBridgeContract.ACTION_SHELL_SYNC]。
+     *
+     * 发送方是别的 App（另一个 uid），所以必须 `RECEIVER_EXPORTED`；身份在 `onReceive`
+     * 里按包名核对。注册一次就够，输入法进程活多久它活多久。
+     */
+    private fun ensureShellSyncReceiver(context: Context) {
+        if (!shellSyncReceiverRegistered.compareAndSet(false, true)) return
+        val appContext = context.applicationContext ?: context
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context, intent: Intent) {
+                when (intent.action) {
+                    ModuleBridgeContract.ACTION_SHELL_SYNC ->
+                        onShellSync(appContext, receiverContext, sentFromUid, intent)
+                }
+            }
+        }
+        val filter = IntentFilter(ModuleBridgeContract.ACTION_SHELL_SYNC)
+        runCatching {
+            ContextCompat.registerReceiver(
+                appContext,
+                receiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+        }.onFailure {
+            Log.e("$TAG: failed to register the shell sync receiver")
+            Log.e(it)
+            shellSyncReceiverRegistered.set(false)
+        }
+    }
+
+    /** 设置页同步：按新配置起停监听。发送方要么是宿主自己（设置页在宿主进程里渲染），要么是模块 App。 */
+    private fun onShellSync(
+        appContext: Context,
+        receiverContext: Context,
+        senderUid: Int,
+        intent: Intent
+    ) {
+        if (!isTrustedShellSender(receiverContext, senderUid)) {
+            Log.i("$TAG: ignored a shell sync from an untrusted sender")
+            return
+        }
+        val enabled = intent.getBooleanExtra(
+            ModuleBridgeContract.EXTRA_ASR_SHELL_ENABLED, false
+        )
+        val port = intent.getIntExtra(
+            ModuleBridgeContract.EXTRA_ASR_SHELL_PORT,
+            WeTypeSettings.DEFAULT_VOICE_SHELL_PORT
+        )
+        val allowLan = intent.getBooleanExtra(
+            ModuleBridgeContract.EXTRA_ASR_SHELL_ALLOW_LAN, false
+        )
+        AsrShellHost.sync(appContext, enabled, port, allowLan)
+    }
+
+    /**
+     * 发送方包名里含宿主或模块 App 才放行。
+     *
+     * `sentFromUid` 是 API 34 才有的，低于 34 拿不到，直接放行（与
+     * `ModuleBridgeReceiver.isTrustedSender` 同一取舍）。
+     */
+    private fun isTrustedShellSender(receiverContext: Context, senderUid: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
+        val senderPackages = receiverContext.packageManager.getPackagesForUid(senderUid)
+        return senderPackages?.any {
+            it == ModuleBridgeContract.HOST_PACKAGE_NAME ||
+                it == ModuleBridgeContract.MODULE_PACKAGE_NAME
+        } == true
     }
 
     /**
