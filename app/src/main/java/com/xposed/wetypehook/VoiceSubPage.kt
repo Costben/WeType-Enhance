@@ -3,6 +3,7 @@ package com.xposed.wetypehook
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -161,6 +162,9 @@ internal fun LazyListScope.VoiceSubPageContent(
                         onCheckedChange = onShellAllowLanChange
                     )
                     ShellAddressCopyRow(port = shellPort, allowLan = shellAllowLan)
+                }
+                if (Build.VERSION.SDK_INT >= LOCAL_NETWORK_PROTECTION_MIN_SDK) {
+                    LocalNetworkPermissionHint()
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -365,6 +369,35 @@ private fun ShellAddressCopyRow(port: Int, allowLan: Boolean) {
         onClick = { copyToClipboard(context, "asr_shell_address", address) }
     )
 }
+
+/**
+ * Android 16 起，访问局域网地址需要 `ACCESS_LOCAL_NETWORK` 运行时权限；缺这条权限时系统
+ * 会**静默丢弃**该 uid 发往局域网的全部报文 —— 表现是连接超时与域名解析失败，且没有任何
+ * 报错可查。Eta 从 3.2.0 起把 targetSdk 提到 37，升级后这条权限默认拒绝，于是它连不上
+ * 自建的局域网网关，模型请求会全线超时。
+ *
+ * 运行时权限只能由系统或 shell 授予，模块没有代授的通道，所以这里只给一条可复制的命令。
+ */
+@Composable
+private fun LocalNetworkPermissionHint() {
+    val context = LocalContext.current
+    BasicComponent(
+        title = "Eta 的本地网络访问权限",
+        summary = "Android 16 起未授权时 Eta 连不上局域网地址；点按复制授权命令",
+        onClick = {
+            copyToClipboard(
+                context,
+                "eta_local_network",
+                "adb shell pm grant ${ModuleBridgeContract.ETA_PACKAGE_NAME} $ACCESS_LOCAL_NETWORK_PERMISSION"
+            )
+        }
+    )
+}
+
+/** 本地网络保护（Local Network Protection）从 Android 16（API 36）开始生效。 */
+private const val LOCAL_NETWORK_PROTECTION_MIN_SDK = 36
+
+private const val ACCESS_LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
 
 /**
  * 壳对外的根地址。
