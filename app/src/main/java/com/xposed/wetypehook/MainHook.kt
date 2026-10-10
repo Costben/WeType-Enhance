@@ -287,7 +287,7 @@ class MainHook : XposedModule() {
         val isWeType = packageName == WETYPE_PACKAGE
 
         if (isWeType) {
-            installWeTypeHooks(packageName, sourceDir, classLoader)
+            installWeTypeHooksWhenReady(packageName, sourceDir, classLoader)
         }
 
         if (!isMiuiImeSupport) return
@@ -313,6 +313,42 @@ class MainHook : XposedModule() {
         }
 
         Log.i("Hook MIUI IME Done!")
+    }
+
+    private fun installWeTypeHooksWhenReady(
+        sourcePackage: String,
+        sourceDir: String?,
+        classLoader: ClassLoader
+    ) {
+        fun install(context: Context) {
+            if (context.packageName != sourcePackage) return
+            if (!installedHookTokens.add("wetype.application-ready")) return
+            // Tinker 在 attachBaseContext 期间会换掉 Context/LoadedApk 的类加载器，onPackageReady
+            // 拿到的那个仍会解析到原始 APK 里的重复类。
+            HookEnvironment.updateClassLoader(context.classLoader)
+            WeTypeSettings.ensureHostSnapshot(context)
+            installWeTypeHooks(sourcePackage, sourceDir, context.classLoader)
+            Log.i("Success: Hook WeType with attached application class loader")
+        }
+        val application = runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getDeclaredMethod("currentApplication")
+                .apply { isAccessible = true }
+                .invoke(null) as? Context
+        }.getOrNull()
+        if (application != null) {
+            // 热重载不会重放 Application.attach。
+            install(application)
+            return
+        }
+        HookEnvironment.withHookScope("wetype.application-ready") {
+            findMethod("android.app.Application") {
+                name == "attach" && parameterTypes.sameAs(Context::class.java)
+            }.hookAfter { param ->
+                val context = param.thisObject as? Context ?: return@hookAfter
+                install(context)
+            }
+        }
     }
 
     private fun installWeTypeHooks(sourcePackage: String, sourceDir: String?, classLoader: ClassLoader) {
