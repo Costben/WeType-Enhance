@@ -327,7 +327,7 @@ class MainHook : XposedModule() {
             // 拿到的那个仍会解析到原始 APK 里的重复类。
             HookEnvironment.updateClassLoader(context.classLoader)
             WeTypeSettings.ensureHostSnapshot(context)
-            installWeTypeHooks(sourcePackage, sourceDir, context.classLoader)
+            installWeTypeHooks(sourcePackage, sourceDir, context.classLoader, context)
             Log.i("Success: Hook WeType with attached application class loader")
         }
         val application = runCatching {
@@ -351,7 +351,12 @@ class MainHook : XposedModule() {
         }
     }
 
-    private fun installWeTypeHooks(sourcePackage: String, sourceDir: String?, classLoader: ClassLoader) {
+    private fun installWeTypeHooks(
+        sourcePackage: String,
+        sourceDir: String?,
+        classLoader: ClassLoader,
+        application: Context
+    ) {
         WeTypeSettings.setXposedSnapshotChangeListener {
             requestWeTypeSettingsReconcile()
         }
@@ -416,7 +421,7 @@ class MainHook : XposedModule() {
             WeTypeSettingsToolbarHooks.install(classLoader)
         }
         HookEnvironment.withHookScope("wetype.voice") {
-            WeTypeVoiceHooks.install(classLoader)
+            WeTypeVoiceHooks.install(classLoader, application)
         }
     }
 

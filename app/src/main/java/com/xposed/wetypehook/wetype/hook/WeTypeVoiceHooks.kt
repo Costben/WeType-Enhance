@@ -110,12 +110,15 @@ internal object WeTypeVoiceHooks {
     // 安装
     // ------------------------------------------------------------------
 
-    fun install(classLoader: ClassLoader) {
+    fun install(classLoader: ClassLoader, application: Context? = null) {
         hostClassLoader = classLoader
-        // Application.attach 排在最前面：它拉起的是本模块自己的本地服务（18515 回环桥与
-        // 18516 壳监听），与宿主语音契约无关。契约解析失败（宿主更新、短名漂移）只该让
-        // 「借识别」失效，不该把壳一起拖哑。
-        hookApplicationContext()
+        // 本地服务（18515 回环桥 / 18516 壳监听）排在最前面：它拉起的是本模块自己的服务，
+        // 与宿主语音契约无关。契约解析失败（宿主更新、短名漂移）只该让「借识别」失效，
+        // 不该把壳一起拖哑。
+        //
+        // `application` 由 MainHook 在 `Application.attach` 回调里带下来 —— 那一刻
+        // `ActivityThread.currentApplication()` 还没赋值，光看它只会漏掉本进程。
+        hookApplicationContext(application)
 
         val singleton = WeTypeHostContracts.classOf(HostContractId.VOICE_SINGLETON)
         if (singleton == null) {
@@ -304,16 +307,33 @@ internal object WeTypeVoiceHooks {
     // 会话生命周期
     // ------------------------------------------------------------------
 
-    private fun hookApplicationContext() {
+    private fun hookApplicationContext(application: Context?) {
+        // MainHook 现在按「Application 就绪」延后安装整套 hook；从它自己的 `Application.attach`
+        // 回调里进来时 `ActivityThread.currentApplication()` 还没赋值，再挂一次 attach 也来不及，
+        // 本地服务（18515 回环桥 / 18516 壳监听）就永远不会起来。
+        // 取用顺序：调用方带下来的 Application → `currentApplication()` → 挂 attach 回调。
+        val known = application ?: runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getDeclaredMethod("currentApplication")
+                .apply { isAccessible = true }
+                .invoke(null) as? Context
+        }.getOrNull()
+        if (known != null) {
+            startLocalServicesFrom(known)
+            return
+        }
         Application::class.java.declaredMethods.firstOrNull {
             it.name == "attach" && it.parameterCount == 1 &&
                 it.parameterTypes[0] == Context::class.java
         }?.apply { isAccessible = true }?.hookAfter { param ->
-            val context = param.args[0] as? Context ?: return@hookAfter
-            val appContext = context.applicationContext ?: context
-            appContextRef = WeakReference(appContext)
-            startLocalServices(appContext)
+            (param.args[0] as? Context)?.let(::startLocalServicesFrom)
         }
+    }
+
+    private fun startLocalServicesFrom(context: Context) {
+        val appContext = context.applicationContext ?: context
+        appContextRef = WeakReference(appContext)
+        startLocalServices(appContext)
     }
 
     /**
