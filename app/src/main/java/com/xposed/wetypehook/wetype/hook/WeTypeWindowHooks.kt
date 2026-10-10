@@ -23,6 +23,7 @@ import androidx.core.graphics.drawable.toDrawable
 import com.xposed.wetypehook.WeTypeKeyboardMetrics
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.HookEnvironment
+import com.xposed.wetypehook.xposed.findMethodInHierarchy
 import com.xposed.wetypehook.xposed.getObjectAs
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.invokeMethodAs
@@ -37,6 +38,7 @@ import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import java.lang.ref.WeakReference
+import java.lang.reflect.Method
 import java.util.WeakHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -117,6 +119,8 @@ internal object WeTypeWindowHooks {
         var backgroundViewRoot: Any? = null,
         var transparentWindowBackground: Drawable? = null,
         val locationBuffer: IntArray = IntArray(2),
+        var inputViewMethodResolved: Boolean = false,
+        var inputViewMethod: Method? = null,
         var computedVisibleImeHeightPx: Int? = null,
         var bottomLeftHardwareCornerRadius: Float? = null,
         var bottomRightHardwareCornerRadius: Float? = null,
@@ -464,10 +468,21 @@ internal object WeTypeWindowHooks {
         location: IntArray,
         state: WeTypeWindowState
     ): WeTypeBackgroundBounds? {
+        if (!state.inputViewMethodResolved) {
+            // 宿主只暴露框架层的 input/candidate frame。可选访问器缺失时也要缓存结果，
+            // 否则每次布局都会重新反射查找并抛一次异常。
+            state.inputViewMethod = runCatching {
+                inputMethodService.javaClass.findMethodInHierarchy {
+                    name == "getInputView" && parameterCount == 0 &&
+                        View::class.java.isAssignableFrom(returnType)
+                }
+            }.getOrNull()
+            state.inputViewMethodResolved = true
+        }
         val contentViews = listOfNotNull(
             readViewField(inputMethodService, "mCandidatesFrame"),
             readViewField(inputMethodService, "mInputFrame"),
-            runCatching { inputMethodService.invokeMethodAs<View>("getInputView") }.getOrNull()
+            runCatching { state.inputViewMethod?.invoke(inputMethodService) as? View }.getOrNull()
         )
         val geometry = resolveWeTypeBackgroundBounds(
             decorView.toBackgroundLayout(location),
@@ -791,8 +806,13 @@ internal object WeTypeWindowHooks {
         restoreNavigationBarAppearance(state)
         val carrier = state.backgroundCarrier ?: return
         carrier.visibility = View.INVISIBLE
-        state.hyperMaterial?.clear()
-        state.backgroundStyle = null
+        if (state.backgroundStyle?.systemMaterialActive == true) {
+            state.hyperMaterial?.clear()
+            state.backgroundStyle = null
+        }
+        // 普通模糊与边缘光路径跨收起、再拉起复用；重建前重新核对 ViewRoot，
+        // 因为它的模糊 drawable 属于那一次窗口挂载。
+        state.backgroundStyleDirty = true
     }
 
     private fun removeBackgroundCarrier(state: WeTypeWindowState) {

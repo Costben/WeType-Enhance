@@ -1300,10 +1300,9 @@ internal object WeTypeResourceHooks {
 
     private fun applyCandidatePinyinLeftMargin(view: View) {
         synchronized(candidatePinyinOriginalPaddings) {
-            candidatePinyinOriginalPaddings.putIfAbsent(
-                view,
+            candidatePinyinOriginalPaddings.getOrPut(view) {
                 ViewPadding(view.paddingStart, view.paddingTop, view.paddingEnd, view.paddingBottom)
-            )
+            }
         }
         val startPadding = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP,
@@ -1434,6 +1433,10 @@ internal object WeTypeResourceHooks {
     private fun hookThemeStyledAttributes(
         resolvedThemeAttrs: Map<Int, WeTypeAppearanceColorGroup>
     ) {
+        // TypedArray 实例会回 Resources 池复用，仅靠弱键挡不住旧映射漏给下一个借用者。
+        TypedArray::class.java.getMethod("recycle").hookBefore { param ->
+            typedArrayAttributeCache.remove(param.thisObject)
+        }
         runCatching {
             Resources.Theme::class.java.getMethod("obtainStyledAttributes", IntArray::class.java)
                 .hookAfter { param ->

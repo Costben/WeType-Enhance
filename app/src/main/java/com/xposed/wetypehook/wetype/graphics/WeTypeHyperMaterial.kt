@@ -41,7 +41,7 @@ internal class WeTypeHyperMaterial(
             view.addView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0))
         }
     } else null
-    private val materialViews get() = listOf(glassSurface ?: view)
+    private val materialView = glassSurface ?: view
     private var glassGeometry: Triple<Int, Int, WeTypeCornerRadii>? = null
     private var appliedStyle: MaterialStyle? = null
     private var pendingWindowType: Runnable? = null
@@ -62,7 +62,7 @@ internal class WeTypeHyperMaterial(
         clear()
         return runCatching {
             val api = checkNotNull(api)
-            materialViews.forEach { materialView ->
+            run {
                 materialView.setBackgroundColor(if (supportsOffScreenFill) Color.TRANSPARENT else fallbackColor(isDark))
                 api.setPassWindowBlurEnabled(materialView, sampleBehindWindow)
                 if (supportsOffScreenFill) api.call(materialView, "setMiBlurWinType", 65536)
@@ -94,14 +94,14 @@ internal class WeTypeHyperMaterial(
             if (!supportsOffScreenFill) {
                 pendingTintClear = Runnable {
                     pendingTintClear = null
-                    if (appliedStyle != null) materialViews.forEach { it.setBackgroundColor(Color.TRANSPARENT) }
+                    if (appliedStyle != null) materialView.setBackgroundColor(Color.TRANSPARENT)
                 }.also { view.postDelayed(it, 20L) }
             }
             if (supportsOffScreenFill) {
                 pendingWindowType = Runnable {
                     pendingWindowType = null
                     if (appliedStyle != null && view.isAttachedToWindow) {
-                        runCatching { materialViews.forEach { api.call(it, "setMiBlurWinType", 1) } }
+                        runCatching { api.call(materialView, "setMiBlurWinType", 1) }
                             .onFailure {
                                 clear()
                                 view.setBackgroundColor(fallbackColor(isDark))
@@ -120,6 +120,7 @@ internal class WeTypeHyperMaterial(
     }
 
     fun updateGeometry(cornerRadii: WeTypeCornerRadii) {
+        if (Build.VERSION.SDK_INT < 33) return
         val style = appliedStyle ?: return
         val parent = view.parent as? ViewGroup ?: return
         if (view.width <= 0 || view.height <= 0) return
@@ -137,9 +138,12 @@ internal class WeTypeHyperMaterial(
             val outset = (60f * density + 0.5f).toInt()
             val width = view.width + outset * 2
             val height = view.height + outset * 2
-            effectView.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
-            effectView.layout(view.left - outset, view.top - outset, view.right + outset, view.bottom + outset)
+            if (effectView.isLayoutRequested || effectView.width != width || effectView.height != height ||
+                effectView.left != view.left - outset || effectView.top != view.top - outset) {
+                effectView.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
+                effectView.layout(view.left - outset, view.top - outset, view.right + outset, view.bottom + outset)
+            }
             val geometry = Triple(view.width, view.height, cornerRadii)
             if (shadowGeometry != geometry || shadowStyle != style) {
                 val shader = shader ?: RuntimeShader(HYPER_MATERIAL_SHADOW_SHADER).also { shader = it }
@@ -225,7 +229,7 @@ internal class WeTypeHyperMaterial(
         if (appliedStyle == null && !force) return
         appliedStyle = null
         val api = api ?: return
-        materialViews.forEach { materialView ->
+        run {
             listOf(
                 "setMiBackgroundBlurMode" to 0,
                 "setMiViewBlurMode" to 0,
