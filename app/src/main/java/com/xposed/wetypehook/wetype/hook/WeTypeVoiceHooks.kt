@@ -9,6 +9,7 @@ import android.media.AudioRecord
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import androidx.core.content.ContextCompat
 import com.xposed.wetypehook.ModuleBridgeContract
 import com.xposed.wetypehook.wetype.host.HostContractId
@@ -390,8 +391,15 @@ internal object WeTypeVoiceHooks {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(receiverContext: Context, intent: Intent) {
                 when (intent.action) {
-                    ModuleBridgeContract.ACTION_SHELL_SYNC ->
-                        onShellSync(appContext, receiverContext, sentFromUid, intent)
+                    ModuleBridgeContract.ACTION_SHELL_SYNC -> {
+                        // `getSentFromUid` 是 API 34 才有的方法，低版本上直接调会抛 NoSuchMethodError。
+                        val senderUid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            sentFromUid
+                        } else {
+                            Process.INVALID_UID
+                        }
+                        onShellSync(appContext, receiverContext, senderUid, intent)
+                    }
                 }
             }
         }
