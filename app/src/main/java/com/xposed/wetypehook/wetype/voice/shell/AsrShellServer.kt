@@ -13,6 +13,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.locks.ReentrantLock
@@ -50,9 +51,16 @@ import java.util.concurrent.locks.ReentrantLock
  * `X-Api-Access-Key`），任一处与设置一致即放行，否则回 401 并关连接，不占单会话锁。
  * `/healthz` 不带任何数据，不校验。
  *
+ * ## 读超时
+ *
+ * 握手阶段 [HANDSHAKE_TIMEOUT_MS]、会话阶段 [SESSION_IDLE_TIMEOUT_MS] 收不到任何数据就断开。
+ * 没有它，一个握完手就不说话的客户端（本机任意 App，或被 Hans 冻结的 Eta）会一直占着
+ * 单会话锁，之后每一路都只能拿到「忙」。收尾时等桥出完最后一段是在连接线程上阻塞，
+ * 不读套接字，所以不受会话超时影响。
+ *
  * ## 容错
  *
- * 端口被占、客户端半路断开、发非法帧，全部只记日志并干净关掉**那一条连接**，
+ * 端口被占、客户端半路断开、发非法帧、读超时，全部只记日志并干净关掉**那一条连接**，
  * 不影响监听套接字，也不影响其它连接。
  */
 internal class AsrShellServer(
@@ -60,7 +68,9 @@ internal class AsrShellServer(
     private val allowLan: Boolean,
     private val tuning: () -> VoiceTuning,
     private val bridgePort: Int = WeTypeVoiceProtocol.DEFAULT_PORT,
-    private val requiredApiKey: () -> String? = { null }
+    private val requiredApiKey: () -> String? = { null },
+    private val handshakeTimeoutMs: Int = HANDSHAKE_TIMEOUT_MS,
+    private val sessionIdleTimeoutMs: Int = SESSION_IDLE_TIMEOUT_MS
 ) {
 
     companion object {
@@ -74,6 +84,15 @@ internal class AsrShellServer(
         private const val MAX_LINE_BYTES = 4 * 1024
 
         private const val BEARER_PREFIX = "Bearer "
+
+        /** 连上后多久必须发完请求头。Eta 的握手是连上即发，10 秒只拦挂着不说话的连接。 */
+        const val HANDSHAKE_TIMEOUT_MS = 10_000
+
+        /**
+         * 会话中两帧之间最长的静默。客户端推流时每几十毫秒就有一帧，30 秒没有数据只可能是
+         * 对端挂住或被冻结。
+         */
+        const val SESSION_IDLE_TIMEOUT_MS = 30_000
     }
 
     private val sessionLock = ReentrantLock()
@@ -154,6 +173,7 @@ internal class AsrShellServer(
     private fun handleConnection(socket: Socket) {
         try {
             runCatching { socket.tcpNoDelay = true }
+            socket.soTimeout = handshakeTimeoutMs
             val connection = Connection(socket)
             try {
                 serve(connection)
@@ -205,6 +225,7 @@ internal class AsrShellServer(
             return
         }
         if (!performHandshake(connection, request)) return
+        connection.socket.soTimeout = sessionIdleTimeoutMs
 
         val sendText: (ByteArray) -> Boolean =
             { connection.write(WebSocketFrames.encode(WsOpcode.TEXT, it)) }
@@ -298,6 +319,9 @@ internal class AsrShellServer(
         } catch (t: WebSocketProtocolException) {
             Log.w(ASR_SHELL_TAG, "protocol error: ${t.message}")
             return WsOpcode.CLOSE_PROTOCOL_ERROR
+        } catch (t: SocketTimeoutException) {
+            Log.w(ASR_SHELL_TAG, "session idle for ${sessionIdleTimeoutMs}ms, closing")
+            return WsOpcode.CLOSE_GOING_AWAY
         } catch (t: Throwable) {
             // 对端半路断开 / 帧被截断：只影响这一条连接。
             Log.w(ASR_SHELL_TAG, "session aborted: ${t.javaClass.simpleName}: ${t.message}")

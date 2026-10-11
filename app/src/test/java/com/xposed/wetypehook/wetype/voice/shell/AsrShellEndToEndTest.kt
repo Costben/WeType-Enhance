@@ -32,6 +32,7 @@ import org.junit.Test
  * - 豆包：握手回非最终 msgType 9；中间结果 `definite=false`；最后一包回
  *   `flags=0x2` + `definite=true`。
  * - 单会话锁：第二路拿到协议错误 + `CLOSE(1013)`，第一路不受影响。
+ * - 读超时：握手前不发数据的连接被关；握完手就不说话的会话收到 `CLOSE(1001)` 并释放锁。
  * - API Key：设了就在握手前校验（千问 `Authorization: Bearer`、豆包 `X-Api-Key`，含非 ASCII），
  *   不对或没带回 401；没设就不校验。
  */
@@ -298,6 +299,71 @@ class AsrShellEndToEndTest {
         } finally {
             server.stop()
             runCatching { bridge.close() }
+        }
+    }
+
+    @Test
+    fun idleSessionIsClosedAndReleasesTheLock() {
+        val shellPort = freePort()
+        val server = AsrShellServer(
+            port = shellPort,
+            allowLan = false,
+            tuning = { VoiceTuning(1000, 5000, 500, 200, 3000) },
+            bridgePort = freePort(),
+            sessionIdleTimeoutMs = 300
+        )
+        assertTrue(server.start())
+        try {
+            plainSocket(shellPort).use { idle ->
+                val idleIn = BufferedInputStream(idle.getInputStream())
+                handshake(BufferedOutputStream(idle.getOutputStream()), idleIn, AsrShellServer.PATH_QWEN)
+                // 握完手一个字都不发：会话超时后应收到 CLOSE(1001)。
+                val close = readServerFrame(idleIn)
+                assertEquals(WsOpcode.CLOSE, close.first)
+                val code = ((close.second[0].toInt() and 0xFF) shl 8) or
+                    (close.second[1].toInt() and 0xFF)
+                assertEquals(WsOpcode.CLOSE_GOING_AWAY, code)
+            }
+            // 锁已释放：下一路能正常进会话，而不是拿到「忙」。
+            plainSocket(shellPort).use { next ->
+                val nextOut = BufferedOutputStream(next.getOutputStream())
+                val nextIn = BufferedInputStream(next.getInputStream())
+                handshake(nextOut, nextIn, AsrShellServer.PATH_QWEN)
+                nextOut.write(
+                    WebSocketFrames.encode(
+                        WsOpcode.TEXT,
+                        """{"type":"session.finish"}""".toByteArray(),
+                        mask = true
+                    )
+                )
+                nextOut.flush()
+                val event = JSONObject(String(readServerFrame(nextIn).second, Charsets.UTF_8))
+                assertFalse(event.getString("type") == "error")
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun handshakeTimesOutWhenTheClientSendsNothing() {
+        val shellPort = freePort()
+        val server = AsrShellServer(
+            port = shellPort,
+            allowLan = false,
+            tuning = { VoiceTuning(1000, 5000, 500, 200, 3000) },
+            bridgePort = freePort(),
+            handshakeTimeoutMs = 300
+        )
+        assertTrue(server.start())
+        try {
+            plainSocket(shellPort).use { silent ->
+                silent.soTimeout = 5000
+                // 服务端读超时后关连接，这里读到流尾而不是一直阻塞。
+                assertEquals(-1, silent.getInputStream().read())
+            }
+        } finally {
+            server.stop()
         }
     }
 

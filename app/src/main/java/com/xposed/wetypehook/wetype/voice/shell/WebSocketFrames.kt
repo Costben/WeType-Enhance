@@ -31,6 +31,7 @@ internal object WsOpcode {
 
     /** 常见的关闭码。 */
     const val CLOSE_NORMAL = 1000
+    const val CLOSE_GOING_AWAY = 1001
     const val CLOSE_PROTOCOL_ERROR = 1002
     const val CLOSE_TOO_BIG = 1009
     const val CLOSE_TRY_AGAIN_LATER = 1013
