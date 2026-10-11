@@ -430,7 +430,7 @@ class WeTypeRecognitionService : RecognitionService() {
             lastTranscriptAt = System.currentTimeMillis()
             partialCount++
             if (partialCount <= 2 || partialCount % PARTIAL_LOG_EVERY == 0) {
-                Log.i(TAG, "partial#$partialCount len=${text.length} text=${text.take(30)}")
+                Log.i(TAG, "partial#$partialCount len=${text.length}")
             }
             val bundle = Bundle().apply {
                 putStringArrayList(
@@ -476,7 +476,7 @@ class WeTypeRecognitionService : RecognitionService() {
             val bundle = Bundle().apply {
                 putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(text))
             }
-            Log.i(TAG, "turn done len=${text.length} text=${text.take(40)}")
+            Log.i(TAG, "turn done len=${text.length}")
             runCatching { callback.results(bundle) }
         }
 

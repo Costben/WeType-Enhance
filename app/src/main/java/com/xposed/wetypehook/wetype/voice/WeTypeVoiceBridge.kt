@@ -56,6 +56,12 @@ import java.util.concurrent.atomic.AtomicLong
  * 客户端发 EOS（或断开）→ 延迟 [EOS_GRACE_MS] 让宿主吃完剩余音频，再收尾。
  * 推的是存量音频还是实时麦克风，模块不关心 —— 限速见 [pace]。
  *
+ * ## 会话归属
+ *
+ * 端口对本机所有 App 开放，所以转录**只回给拉起这一轮的客户端**：录音器被换成假货的那一刻，
+ * 当时的客户端成为 [sessionOwner]，转录只写给它。宿主自己发起的语音输入（真麦克风）不归
+ * 任何客户端，转录一个字都不外传；后连上来的客户端也接不走别人那一轮的转录。
+ *
  * ## 两条硬约束
  *
  * 1. **`read()` 永不返回 0**（除非请求长度本身 ≤ 0）。宿主把 `read() == 0` 当作
@@ -136,8 +142,26 @@ internal object WeTypeVoiceBridge {
     /** Eta 推进来的 PCM，按到达顺序排队。 */
     private val pcmQueue = LinkedBlockingQueue<ByteArray>()
 
-    /** 待回传给 Eta 的转录，由 [writerLoop] 消费。text to endFlag。 */
-    private val transcriptQueue = LinkedBlockingQueue<Pair<String, Boolean>>(TRANSCRIPT_QUEUE_CAPACITY)
+    /** 待回传给 Eta 的转录，由 [writerLoop] 消费。 */
+    private val transcriptQueue = LinkedBlockingQueue<Transcript>(TRANSCRIPT_QUEUE_CAPACITY)
+
+    /** 一条转录连同它该回给的客户端。写出前再核对一次，客户端换了就丢。 */
+    private class Transcript(val owner: Socket, val text: String, val endFlag: Boolean)
+
+    /**
+     * 当前宿主会话归属的客户端：换录音器时那一刻的 [client]。宿主自己用真麦克风录音时为 null。
+     *
+     * 宿主收尾（还回真录音器）之后**不清**：最后一段转录往往在收尾之后才回调，清早了会被丢掉。
+     * 下一次宿主录音开始时由 [onHostOwnRecording] 或 [onRecorderSwapped] 改写。
+     */
+    @Volatile
+    private var sessionOwner: Socket? = null
+
+    /** 当前客户端是否已经拥有过一轮宿主会话。一个连接只认领一轮，收尾后不再抢宿主录音。 */
+    @Volatile
+    private var sessionClaimed = false
+
+    private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
     /** 本轮是否已收到 EOS。收到后不再等数据，只补静音直到宿主收尾。 */
     @Volatile
@@ -222,6 +246,30 @@ internal object WeTypeVoiceBridge {
 
     val isClientConnected: Boolean get() = client?.isConnected == true
 
+    /**
+     * 下一次宿主录音该不该换成假货：当前客户端已经推够音频请求过会话，且还没认领过一轮。
+     * 只连上不推音频的客户端不算 —— 否则谁连着谁就能让用户自己的语音输入变哑。
+     */
+    val wantsHostSession: Boolean
+        get() = client != null && sessionStartRequested && !sessionClaimed
+
+    /** 宿主此刻这一轮是否属于当前客户端。 */
+    val isSessionLive: Boolean
+        get() = client.let { it != null && it === sessionOwner }
+
+    /** 录音器已换成假货：这一轮归当前客户端。 */
+    @Synchronized
+    fun onRecorderSwapped() {
+        sessionOwner = client
+        sessionClaimed = true
+    }
+
+    /** 宿主开始了一轮自己的录音（真麦克风）：不归任何客户端。 */
+    @Synchronized
+    fun onHostOwnRecording() {
+        sessionOwner = null
+    }
+
     private fun acceptLoop(ss: ServerSocket) {
         while (running) {
             val socket = runCatching { ss.accept() }.getOrNull() ?: break
@@ -233,11 +281,19 @@ internal object WeTypeVoiceBridge {
     @Synchronized
     private fun attachClient(socket: Socket) {
         // 单客户端模型：新连接顶掉旧的。Eta 重连时不必先等旧连接超时。
-        runCatching { client?.close() }
+        val previous = client
+        runCatching { previous?.close() }
         runCatching { socket.tcpNoDelay = true }
         client = socket
         clientOut = runCatching { DataOutputStream(socket.getOutputStream()) }.getOrNull()
+        transcriptQueue.clear()
         resetStream()
+        // 被顶掉的那一路若正占着宿主会话，立刻收掉：转录是累积整句，留着它跑，
+        // 新客户端的音频会续在旧一轮后面，连带把上一路说过的话一起转给新客户端。
+        if (previous != null && previous === sessionOwner) {
+            sessionOwner = null
+            endHostSessionNow()
+        }
         Log.i("$TAG: client connected from ${socket.inetAddress?.hostAddress}")
         Thread({ readLoop(socket) }, "wetype-voice-client").apply {
             isDaemon = true
@@ -261,9 +317,11 @@ internal object WeTypeVoiceBridge {
      * [STARTUP_POLL_MS] 短周期轮询，把「等客户端第一帧」的静音量压到可忽略。
      */
     private fun maybeStartSession() {
-        if (sessionStartRequested) return
+        if (sessionClaimed) return
         if (framesIn.get() < START_AFTER_FRAMES) return
         sessionStartRequested = true
+        // 宿主正忙（用户自己在语音输入，或上一路还没收尾）时启动会被宿主挡掉，录音器不会被换。
+        // 所以没认领到会话之前每来一帧都再请求一次，节流交给回调方。
         runCatching { onClientConnected?.invoke(0) }
     }
 
@@ -289,7 +347,7 @@ internal object WeTypeVoiceBridge {
                     FRAME_EOS -> {
                         eos = true
                         Log.i("$TAG: EOS received (frames=${framesIn.get()} bytes=${bytesIn.get()})")
-                        scheduleStreamEnd()
+                        scheduleStreamEnd(socket)
                     }
                     else -> {
                         Log.i("$TAG: unknown frame type $type, dropping connection")
@@ -302,12 +360,15 @@ internal object WeTypeVoiceBridge {
         } catch (t: Throwable) {
             if (running) Log.i("$TAG: client read failed: ${t.javaClass.simpleName}: ${t.message}")
         } finally {
-            synchronized(this) {
+            val abandoned = synchronized(this) {
                 if (client === socket) {
                     client = null
                     clientOut = null
                 }
+                // 没发 EOS 就断开：它那一轮没人收尾，宿主会一直喂静音跑下去。
+                (sessionOwner === socket && !eos).also { if (it) sessionOwner = null }
             }
+            if (abandoned) endHostSessionNow()
             runCatching { socket.close() }
         }
     }
@@ -316,17 +377,22 @@ internal object WeTypeVoiceBridge {
     // 转录回传
     // ------------------------------------------------------------------
 
-    /** 宿主识别引擎出字时调这里。没有客户端时静默丢弃。 */
+    /**
+     * 宿主识别引擎出字时调这里。只有这一轮归当前客户端（见 [sessionOwner]）才回传，
+     * 其余一律丢弃 —— 包括用户自己用真麦克风的语音输入。日志里只记长度，不记内容。
+     */
     fun emitTranscript(text: String, endFlag: Boolean) {
+        val owner = sessionOwner ?: return
+        if (owner !== client) return
         val n = transcriptsOut.incrementAndGet()
         if (n <= 3 || n % 20 == 0) {
-            Log.i("$TAG: transcript#$n end=$endFlag len=${text.length} text=${text.take(40)}")
+            Log.i("$TAG: transcript#$n end=$endFlag len=${text.length}")
         }
         if (text.isEmpty() && !endFlag) return
         // 只入队，绝不在这里写 socket：转录回调跑在**主线程**上，主线程做网络 I/O
         // 会直接抛 NetworkOnMainThreadException（实测就是这样，一个字都没发出去）。
         // 真正的写由 [writerLoop] 在独立线程上做。
-        if (!transcriptQueue.offer(text to endFlag)) {
+        if (!transcriptQueue.offer(Transcript(owner, text, endFlag))) {
             Log.i("$TAG: transcript queue full, dropping")
         }
     }
@@ -342,13 +408,14 @@ internal object WeTypeVoiceBridge {
             val item = runCatching {
                 transcriptQueue.poll(STARVE_POLL_MS, TimeUnit.MILLISECONDS)
             }.getOrNull() ?: continue
-            val (text, endFlag) = item
-            val out = clientOut ?: continue
             runCatching {
-                val bytes = text.toByteArray(Charsets.UTF_8)
+                val bytes = item.text.toByteArray(Charsets.UTF_8)
                 synchronized(this) {
+                    // 入队之后客户端可能已经换人：只写给这一轮的主人。
+                    if (client !== item.owner) return@synchronized
+                    val out = clientOut ?: return@synchronized
                     out.writeByte(FRAME_TRANSCRIPT)
-                    out.writeByte(if (endFlag) 1 else 0)
+                    out.writeByte(if (item.endFlag) 1 else 0)
                     out.writeInt(bytes.size)
                     out.write(bytes)
                     out.flush()
@@ -372,6 +439,7 @@ internal object WeTypeVoiceBridge {
         pendingOffset = 0
         silenceFrames.set(0)
         sessionStartRequested = false
+        sessionClaimed = false
         synchronized(paceGate) {
             paceStartAt = System.currentTimeMillis()
             paceBytes = 0
@@ -460,14 +528,25 @@ internal object WeTypeVoiceBridge {
     /**
      * EOS 之后留给宿主收尾。延迟 [EOS_GRACE_MS] 再回调 [onStreamEnd]，
      * 让读线程把队列里剩下的音频吃完、出完最后一段转录。
+     *
+     * 只收 [socket] 自己那一轮：它没认领到会话、或者宿主已经换成别的录音（比如用户自己
+     * 开始了语音输入），就什么都不做，免得一个 EOS 把别人的语音输入掐断。
      */
-    private fun scheduleStreamEnd() {
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        handler.postDelayed({
-            if (!running) return@postDelayed
+    private fun scheduleStreamEnd(socket: Socket) {
+        mainHandler.postDelayed({
+            if (!running || sessionOwner !== socket) return@postDelayed
             Log.i("$TAG: EOS grace elapsed, ${stats()}")
             runCatching { onStreamEnd?.invoke() }
         }, EOS_GRACE_MS)
+    }
+
+    /** 立刻收掉宿主当前这一轮（调用方已确认它属于一个已经离开的客户端）。 */
+    private fun endHostSessionNow() {
+        mainHandler.post {
+            if (!running) return@post
+            Log.i("$TAG: owner left without EOS, ending host session, ${stats()}")
+            runCatching { onStreamEnd?.invoke() }
+        }
     }
 
     /** 本轮是否已请求拉起宿主会话。 */

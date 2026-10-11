@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioRecord
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import com.xposed.wetypehook.ModuleBridgeContract
 import com.xposed.wetypehook.wetype.host.HostContractId
@@ -87,15 +89,6 @@ internal object WeTypeVoiceHooks {
     /** 换录音器是否已就绪（字段都定位到了）。 */
     @Volatile
     private var swapReady = false
-
-    /**
-     * 最近一个见过 `AudioRecord` 的录音器实例。
-     *
-     * 给「客户端在宿主会话**已经跑起来之后**才连上」兜底：那种情况下宿主不会重建录音器，
-     * init 的 after 不会再跑，只能拿着这个引用补换一次。
-     */
-    @Volatile
-    private var lastRecorderOwner: WeakReference<Any>? = null
 
     /** 上一次拉起会话的时间，用来给「连上就启动」做节流，避免重连风暴里反复调宿主。 */
     @Volatile
@@ -214,8 +207,9 @@ internal object WeTypeVoiceHooks {
      * - 读线程自己那份：读线程在**构造时**就把 `AudioRecord` 拷进自己的字段，之后改 `w`
      *   影响不到它。它的实例就在读线程字段上，同一时刻一起换。
      *
-     * **只在外部客户端连着的会话里换。** 宿主自己发起的语音输入要放行真麦克风，否则
-     * 桥接队列空着、读线程只能补静音，宿主识别引擎永远拿不到语音。
+     * **只换桥自己拉起的那一轮**（[WeTypeVoiceBridge.wantsHostSession]）。宿主自己发起的
+     * 语音输入一律放行真麦克风，并告诉桥这一轮不归任何客户端 —— 否则随便一个连着 18515 的
+     * App 都能让用户的语音输入变哑，或者读走它的转录。
      */
     private fun hookRecordSwap() {
         val init = WeTypeHostContracts.methodOf(HostContractId.VOICE_RECORDER_INIT)
@@ -225,12 +219,20 @@ internal object WeTypeVoiceHooks {
         }
         init.hookAfter { param ->
             val owner = param.thisObject ?: return@hookAfter
-            lastRecorderOwner = WeakReference(owner)
             // **只换外部会话的麦克风。** 宿主自己发起的语音输入（长按空格、键盘上的麦克风）
             // 必须放行真麦克风：桥接队列里此刻没有任何外部音频，换成假货后宿主读到的是
             // 纯静音，识别引擎一帧有效音频都拿不到，表现为「怎么说话都没反应」。
-            if (!WeTypeVoiceBridge.isClientConnected) return@hookAfter
-            swapRecorder(owner)
+            if (!WeTypeVoiceBridge.wantsHostSession) {
+                WeTypeVoiceBridge.onHostOwnRecording()
+                return@hookAfter
+            }
+            if (swapRecorder(owner)) {
+                WeTypeVoiceBridge.onRecorderSwapped()
+            } else {
+                // 这一轮是桥拉起的，换不掉就别让它拿着真麦克风空跑。
+                Log.i("$TAG: swap failed; ending the session the bridge started")
+                Handler(Looper.getMainLooper()).post { stopVoiceSession() }
+            }
         }
 
         // 收尾：录音器清 `AudioRecord` 那个方法（353 的 `z()`、4.0.0 的 `L()`）的 before
@@ -249,19 +251,18 @@ internal object WeTypeVoiceHooks {
 
     /**
      * 把 [owner] 上那个真 `AudioRecord` 换成 [FakeAudioRecord]，连同读线程自己那份。
-     *
-     * 字段里已经是假货就直接返回 —— 补换路径与 init 路径会同时走到这里，靠这一步去重。
+     * 返回宿主手里的录音器此刻是不是假货；字段里已经是假货就直接返回 true。
      */
-    private fun swapRecorder(owner: Any) {
+    private fun swapRecorder(owner: Any): Boolean {
         val real = runCatching { pcmRecorderRecordField?.get(owner) }.getOrNull() as? AudioRecord
-            ?: return
-        if (real is FakeAudioRecord) return
+            ?: return false
+        if (real is FakeAudioRecord) return true
         val fake = FakeAudioRecord.from(real) ?: run {
             Log.i("$TAG: fake record creation failed")
-            return
+            return false
         }
+        if (runCatching { pcmRecorderRecordField?.set(owner, fake) }.isFailure) return false
         realRecord = real
-        runCatching { pcmRecorderRecordField?.set(owner, fake) }
 
         val mode = runCatching { readModeField?.get(owner) }.getOrNull()
         val threadField = readThreadRecordField ?: mode?.javaClass?.let { mc ->
@@ -279,6 +280,7 @@ internal object WeTypeVoiceHooks {
                 "readThread=${mode?.javaClass?.simpleName} threadSwapped=$swappedThread)"
         )
         if (!swappedThread) Log.i("$TAG: WARNING read-thread record not swapped; stream will be silent")
+        return true
     }
 
     /**
@@ -298,7 +300,7 @@ internal object WeTypeVoiceHooks {
             return
         }
         method.hookBefore { param ->
-            if (WeTypeVoiceBridge.isClientConnected) param.result = true
+            if (WeTypeVoiceBridge.isSessionLive) param.result = true
         }
         Log.i("$TAG: window-hidden gate hooked (${method.declaringClass.simpleName}#${method.name})")
     }
@@ -477,10 +479,9 @@ internal object WeTypeVoiceHooks {
             .onFailure { Log.i("$TAG: start threw: ${it.javaClass.simpleName}: ${it.message}") }
             .getOrDefault(false)
         Log.i("$TAG: voice session start invoked=$invoked")
-        // 客户端可能是在宿主**已经跑着一轮**的时候连上的：那种情况宿主内部的「已在会话中
-        // 就返回」会让它不重建录音器，init 的 after 便不再触发。这里拿最近见过的录音器补换一次，
-        // 换过了会在 [swapRecorder] 里直接返回。
-        if (invoked) lastRecorderOwner?.get()?.let { swapRecorder(it) }
+        // 宿主**已经跑着一轮**（多半是用户自己在语音输入）时它会直接返回，录音器不重建，
+        // 也就不换。这里刻意不去补换那一轮的录音器：那是用户的真麦克风，换掉等于把用户
+        // 正在说的话接给外部客户端。桥会在下一帧到来时再请求一次，等宿主空下来再起。
     }
 
     /**
