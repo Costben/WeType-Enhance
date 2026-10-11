@@ -32,11 +32,14 @@ object ModuleBridgeContract {
     const val EXTRA_ASR_SHELL_PORT = "asr_shell_port"
     const val EXTRA_ASR_SHELL_ALLOW_LAN = "asr_shell_allow_lan"
 
+    /** 壳要校验的 API Key；不带这个 extra 表示不校验。 */
+    const val EXTRA_ASR_SHELL_API_KEY = "asr_shell_api_key"
+
     /**
      * 起停壳监听（**设置页 → 微信输入法进程**的方向）。
      *
      * 监听跑在微信输入法输入法进程里，设置页每改一次参数就发一条，由那边的动态接收器
-     * 按新配置起停。`EXTRA_ASR_SHELL_*` 三个 extra 与这条 action 配套。
+     * 按新配置起停。`EXTRA_ASR_SHELL_*` 几个 extra 与这条 action 配套。
      */
     const val ACTION_SHELL_SYNC = "com.xposed.wetypehook.action.SHELL_SYNC"
 
@@ -91,11 +94,12 @@ object ModuleBridgeContract {
         .putExtra(EXTRA_VOICE_SERVICE_ENABLE, enable)
 
     /** 请微信输入法进程按这份配置起停壳监听。接收器是输入法进程里注册的动态广播。 */
-    fun shellSyncIntent(enabled: Boolean, port: Int, allowLan: Boolean): Intent =
+    fun shellSyncIntent(enabled: Boolean, port: Int, allowLan: Boolean, apiKey: String?): Intent =
         Intent(ACTION_SHELL_SYNC).setPackage(HOST_PACKAGE_NAME)
             .putExtra(EXTRA_ASR_SHELL_ENABLED, enabled)
             .putExtra(EXTRA_ASR_SHELL_PORT, port)
             .putExtra(EXTRA_ASR_SHELL_ALLOW_LAN, allowLan)
+            .apply { if (apiKey != null) putExtra(EXTRA_ASR_SHELL_API_KEY, apiKey) }
 
     /** 模块 App 回宿主的结果意图。 */
     fun voiceServiceResultIntent(channel: String): Intent =

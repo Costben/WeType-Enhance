@@ -38,13 +38,22 @@ internal object AsrShellHost {
 
     private var listeningOnLan = false
 
-    /** 按给定配置起停监听，幂等。只允许在输入法进程里调。 */
+    /** 要校验的 API Key；null 表示不校验。每次握手现读，改 Key 不必重启监听。 */
+    @Volatile
+    private var requiredApiKey: String? = null
+
+    /**
+     * 按给定配置起停监听，幂等。只允许在输入法进程里调。
+     *
+     * [apiKey] 是已经按开关折算过的结果（见 `WeTypeSettings.voiceShellRequiredApiKey`）。
+     */
     @Synchronized
-    fun sync(context: Context, enabled: Boolean, port: Int, allowLan: Boolean) {
+    fun sync(context: Context, enabled: Boolean, port: Int, allowLan: Boolean, apiKey: String?) {
         if (!WeTypeProcessIdentity.isImeProcess(context)) {
             Log.i(TAG, "not the IME process; shell listener stays with the IME process")
             return
         }
+        requiredApiKey = apiKey
         if (!enabled) {
             stop()
             return
@@ -74,13 +83,14 @@ internal object AsrShellHost {
             port = port,
             allowLan = allowLan,
             tuning = { WeTypeSettings.voiceTuning(context) },
-            bridgePort = WeTypeVoiceProtocol.DEFAULT_PORT
+            bridgePort = WeTypeVoiceProtocol.DEFAULT_PORT,
+            requiredApiKey = { requiredApiKey }
         )
         if (created.start()) {
             server = created
             listeningPort = port
             listeningOnLan = allowLan
-            Log.i(TAG, "shell listening on port $port (lan=$allowLan)")
+            Log.i(TAG, "shell listening on port $port (lan=$allowLan apiKey=${requiredApiKey != null})")
         } else {
             // 端口被占：不改设置，只记日志。下一次 sync（用户再动一次开关/端口）会重试。
             Log.w(TAG, "shell could not listen on port $port; port may be in use")

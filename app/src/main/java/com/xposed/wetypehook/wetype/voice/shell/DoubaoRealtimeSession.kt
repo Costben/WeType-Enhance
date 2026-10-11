@@ -18,7 +18,7 @@ import org.json.JSONObject
  *    `flags & 0x2` + `definite = true` 的 msgType 9 收场。
  *
  * 握手头（`X-Api-Key` / `X-Api-Resource-Id` / `X-Api-Request-Id` / `X-Api-Connect-Id`）
- * **不校验**：壳不是火山，不需要也不应该要用户的 key。
+ * 在这里不看：要不要校验 Key 由设置决定，校验在 [AsrShellServer] 握手之前就做完了。
  */
 internal class DoubaoRealtimeSession(
     sendText: (ByteArray) -> Boolean,

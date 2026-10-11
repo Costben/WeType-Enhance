@@ -67,7 +67,11 @@ internal fun LazyListScope.VoiceSubPageContent(
     shellPort: Int,
     onShellPortChange: (Int) -> Unit,
     shellAllowLan: Boolean,
-    onShellAllowLanChange: (Boolean) -> Unit
+    onShellAllowLanChange: (Boolean) -> Unit,
+    shellApiKeyEnabled: Boolean,
+    onShellApiKeyEnabledChange: (Boolean) -> Unit,
+    shellApiKey: String,
+    onShellApiKeyChange: (String) -> Unit
 ) {
     item {
         SmallTitle(text = "识别能力")
@@ -162,6 +166,19 @@ internal fun LazyListScope.VoiceSubPageContent(
                         onCheckedChange = onShellAllowLanChange
                     )
                     ShellAddressCopyRow(port = shellPort, allowLan = shellAllowLan)
+                    SwitchPreference(
+                        title = "校验 API Key",
+                        summary = when {
+                            !shellApiKeyEnabled -> "关闭时不校验，任何客户端都能连上"
+                            shellApiKey.isBlank() -> "尚未填写 Key，暂不校验"
+                            else -> "Eta 里填的 API Key 须与这里一致"
+                        },
+                        checked = shellApiKeyEnabled,
+                        onCheckedChange = onShellApiKeyEnabledChange
+                    )
+                    SettingExpandGroup(visible = shellApiKeyEnabled) {
+                        ShellApiKeyField(apiKey = shellApiKey, onApiKeyChange = onShellApiKeyChange)
+                    }
                 }
                 if (Build.VERSION.SDK_INT >= LOCAL_NETWORK_PROTECTION_MIN_SDK) {
                     LocalNetworkPermissionHint()
@@ -350,6 +367,22 @@ private fun ShellPortField(port: Int, onPortChange: (Int) -> Unit) {
                 style = MiuixTheme.textStyles.body2
             )
         }
+    }
+}
+
+/**
+ * 壳的 API Key 输入框。Key 由用户自己定，模块不生成也不改写；首尾空白在校验时忽略。
+ */
+@Composable
+private fun ShellApiKeyField(apiKey: String, onApiKeyChange: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        TextField(
+            value = apiKey,
+            onValueChange = onApiKeyChange,
+            label = "API Key",
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

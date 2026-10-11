@@ -60,6 +60,8 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "voiceSystemServiceEnabled" to voiceSystemServiceEnabled,
     "voiceShellPort" to voiceShellPort,
     "voiceShellAllowLan" to voiceShellAllowLan,
+    "voiceShellApiKeyEnabled" to voiceShellApiKeyEnabled,
+    "voiceShellApiKey" to voiceShellApiKey,
     "showCrossDeviceClipboard" to showCrossDeviceClipboard,
     "removeClipboardRetentionLimit" to removeClipboardRetentionLimit,
     "removeClipboardTextLimit" to removeClipboardTextLimit,
@@ -196,6 +198,8 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
     voiceSystemServiceEnabled = saved["voiceSystemServiceEnabled"] as? Boolean ?: voiceSystemServiceEnabled
     voiceShellPort = saved["voiceShellPort"] as? Int ?: voiceShellPort
     voiceShellAllowLan = saved["voiceShellAllowLan"] as? Boolean ?: voiceShellAllowLan
+    voiceShellApiKeyEnabled = saved["voiceShellApiKeyEnabled"] as? Boolean ?: voiceShellApiKeyEnabled
+    voiceShellApiKey = saved["voiceShellApiKey"] as? String ?: voiceShellApiKey
     showCrossDeviceClipboard = saved["showCrossDeviceClipboard"] as? Boolean ?: showCrossDeviceClipboard
     removeClipboardRetentionLimit = saved["removeClipboardRetentionLimit"] as? Boolean
         ?: removeClipboardRetentionLimit

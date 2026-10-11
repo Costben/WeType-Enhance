@@ -126,10 +126,12 @@ internal class WeTypeSettingsState(
     var voiceEosQuietMs by mutableIntStateOf(snapshot.voiceEosQuietMs)
     var voiceEosMaxWaitMs by mutableIntStateOf(snapshot.voiceEosMaxWaitMs)
 
-    /** 「千问 / 豆包 壳」的三项配置。落盘，改完由 [syncVoiceShellService] 推给模块 App。 */
+    /** 「千问 / 豆包 壳」的配置。落盘，改完由 [syncVoiceShellService] 推给输入法进程。 */
     var voiceShellEnabled by mutableStateOf(snapshot.voiceShellEnabled)
     var voiceShellPort by mutableIntStateOf(snapshot.voiceShellPort)
     var voiceShellAllowLan by mutableStateOf(snapshot.voiceShellAllowLan)
+    var voiceShellApiKeyEnabled by mutableStateOf(snapshot.voiceShellApiKeyEnabled)
+    var voiceShellApiKey by mutableStateOf(snapshot.voiceShellApiKey)
 
     /** 「系统识别服务」的总控，纯本机偏好，不依赖 Shizuku 或 root。 */
     var voiceSystemServiceEnabled by mutableStateOf(snapshot.voiceSystemServiceEnabled)
@@ -258,6 +260,18 @@ internal class WeTypeSettingsState(
         syncVoiceShellService()
     }
 
+    /** 是否校验 API Key。开关立刻生效，不等防抖。 */
+    fun updateVoiceShellApiKeyEnabled(enabled: Boolean) {
+        voiceShellApiKeyEnabled = enabled
+        syncVoiceShellService(immediate = true)
+    }
+
+    /** Key 是逐字输入的，走防抖。 */
+    fun updateVoiceShellApiKey(apiKey: String) {
+        voiceShellApiKey = apiKey
+        syncVoiceShellService()
+    }
+
     /**
      * 把壳的启停与监听参数推出去。
      *
@@ -270,12 +284,13 @@ internal class WeTypeSettingsState(
         val enabled = voiceShellEnabled
         val port = voiceShellPort
         val allowLan = voiceShellAllowLan
+        val apiKey = WeTypeSettings.voiceShellRequiredApiKey(voiceShellApiKeyEnabled, voiceShellApiKey)
         shellSyncJob?.cancel()
         shellSyncJob = coroutineScope.launch {
             if (!immediate) delay(SHELL_SYNC_DEBOUNCE_MS)
             val hostDispatched = ModuleBridgeContract.sendWithIdentity(
                 preferencesContext,
-                ModuleBridgeContract.shellSyncIntent(enabled, port, allowLan)
+                ModuleBridgeContract.shellSyncIntent(enabled, port, allowLan, apiKey)
             )
             if (enabled && !hostDispatched) {
                 Toast.makeText(
@@ -770,6 +785,8 @@ internal class WeTypeSettingsState(
             voiceSystemServiceEnabled = voiceSystemServiceEnabled,
             voiceShellPort = voiceShellPort,
             voiceShellAllowLan = voiceShellAllowLan,
+            voiceShellApiKeyEnabled = voiceShellApiKeyEnabled,
+            voiceShellApiKey = voiceShellApiKey,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -873,6 +890,8 @@ internal class WeTypeSettingsState(
         voiceSystemServiceEnabled = WeTypeSettings.DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED
         voiceShellPort = WeTypeSettings.DEFAULT_VOICE_SHELL_PORT
         voiceShellAllowLan = WeTypeSettings.DEFAULT_VOICE_SHELL_ALLOW_LAN
+        voiceShellApiKeyEnabled = WeTypeSettings.DEFAULT_VOICE_SHELL_API_KEY_ENABLED
+        voiceShellApiKey = WeTypeSettings.DEFAULT_VOICE_SHELL_API_KEY
         showCrossDeviceClipboard = WeTypeSettings.DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD
         removeClipboardRetentionLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT
         removeClipboardTextLimit = WeTypeSettings.DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT

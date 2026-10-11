@@ -32,6 +32,8 @@ import org.junit.Test
  * - 豆包：握手回非最终 msgType 9；中间结果 `definite=false`；最后一包回
  *   `flags=0x2` + `definite=true`。
  * - 单会话锁：第二路拿到协议错误 + `CLOSE(1013)`，第一路不受影响。
+ * - API Key：设了就在握手前校验（千问 `Authorization: Bearer`、豆包 `X-Api-Key`，含非 ASCII），
+ *   不对或没带回 401；没设就不校验。
  */
 class AsrShellEndToEndTest {
 
@@ -298,6 +300,93 @@ class AsrShellEndToEndTest {
             runCatching { bridge.close() }
         }
     }
+
+    @Test
+    fun apiKeyIsCheckedBeforeTheHandshakeWhenConfigured() {
+        val key = "我的-key-123"
+        val shellPort = freePort()
+        val server = AsrShellServer(
+            port = shellPort,
+            allowLan = false,
+            tuning = { VoiceTuning(1000, 5000, 500, 200, 3000) },
+            bridgePort = freePort(),
+            requiredApiKey = { key }
+        )
+        assertTrue(server.start())
+        try {
+            fun statusOf(path: String, vararg headers: String): String =
+                rawUpgrade(shellPort, path, *headers).lineSequence().first()
+
+            assertTrue(statusOf(AsrShellServer.PATH_QWEN).startsWith("HTTP/1.1 401"))
+            assertTrue(
+                statusOf(AsrShellServer.PATH_QWEN, "Authorization: Bearer wrong")
+                    .startsWith("HTTP/1.1 401")
+            )
+            assertTrue(
+                statusOf(AsrShellServer.PATH_DOUBAO, "X-Api-Key: ${key}x")
+                    .startsWith("HTTP/1.1 401")
+            )
+            assertTrue(
+                statusOf(AsrShellServer.PATH_QWEN, "Authorization: Bearer $key")
+                    .startsWith("HTTP/1.1 101")
+            )
+            assertTrue(
+                statusOf(AsrShellServer.PATH_DOUBAO, "X-Api-Key: $key")
+                    .startsWith("HTTP/1.1 101")
+            )
+            // 健康检查不带数据，不校验。
+            plainSocket(shellPort).use { socket ->
+                val out = BufferedOutputStream(socket.getOutputStream())
+                out.write("GET ${AsrShellServer.PATH_HEALTHZ} HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+                out.flush()
+                val head = readHttpHead(BufferedInputStream(socket.getInputStream()))
+                assertTrue(head, head.startsWith("HTTP/1.1 200"))
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun anyKeyIsAcceptedWhenNoneIsConfigured() {
+        val shellPort = freePort()
+        val server = AsrShellServer(
+            port = shellPort,
+            allowLan = false,
+            tuning = { VoiceTuning(1000, 5000, 500, 200, 3000) },
+            bridgePort = freePort()
+        )
+        assertTrue(server.start())
+        try {
+            assertTrue(rawUpgrade(shellPort, AsrShellServer.PATH_QWEN).startsWith("HTTP/1.1 101"))
+            assertTrue(
+                rawUpgrade(shellPort, AsrShellServer.PATH_DOUBAO, "X-Api-Key: 随便")
+                    .startsWith("HTTP/1.1 101")
+            )
+        } finally {
+            server.stop()
+        }
+    }
+
+    /** 发一次 WebSocket 升级请求（头部按 UTF-8 写，与 okhttp 一致），返回响应头。 */
+    private fun rawUpgrade(port: Int, path: String, vararg extraHeaders: String): String =
+        plainSocket(port).use { socket ->
+            val out = BufferedOutputStream(socket.getOutputStream())
+            val key = Base64.getEncoder().encodeToString(ByteArray(16) { it.toByte() })
+            val request = buildString {
+                append("GET $path HTTP/1.1\r\n")
+                append("Host: 127.0.0.1\r\n")
+                append("Upgrade: websocket\r\n")
+                append("Connection: Upgrade\r\n")
+                append("Sec-WebSocket-Key: $key\r\n")
+                append("Sec-WebSocket-Version: 13\r\n")
+                extraHeaders.forEach { append(it).append("\r\n") }
+                append("\r\n")
+            }
+            out.write(request.toByteArray(Charsets.UTF_8))
+            out.flush()
+            readHttpHead(BufferedInputStream(socket.getInputStream()))
+        }
 
     private fun handshake(out: BufferedOutputStream, input: BufferedInputStream, path: String) {
         val key = Base64.getEncoder().encodeToString(ByteArray(16) { it.toByte() })

@@ -13,6 +13,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.locks.ReentrantLock
 
@@ -42,6 +43,13 @@ import java.util.concurrent.locks.ReentrantLock
  * 新连接会把旧连接顶掉。所以这里同一时刻只放行一路识别会话，第二路直接回一条「忙」的
  * 协议错误并关连接，而不是让两路互相把对方的音频抽走。
  *
+ * ## API Key
+ *
+ * 校验与否由用户在设置页决定（[requiredApiKey] 返回 null 就不校验）。要校验时在握手**之前**
+ * 核对：千问走 `Authorization: Bearer <key>`，豆包走 `X-Api-Key`（旧版火山控制台是
+ * `X-Api-Access-Key`），任一处与设置一致即放行，否则回 401 并关连接，不占单会话锁。
+ * `/healthz` 不带任何数据，不校验。
+ *
  * ## 容错
  *
  * 端口被占、客户端半路断开、发非法帧，全部只记日志并干净关掉**那一条连接**，
@@ -51,7 +59,8 @@ internal class AsrShellServer(
     private val port: Int,
     private val allowLan: Boolean,
     private val tuning: () -> VoiceTuning,
-    private val bridgePort: Int = WeTypeVoiceProtocol.DEFAULT_PORT
+    private val bridgePort: Int = WeTypeVoiceProtocol.DEFAULT_PORT,
+    private val requiredApiKey: () -> String? = { null }
 ) {
 
     companion object {
@@ -63,6 +72,8 @@ internal class AsrShellServer(
         private const val MAX_HEADER_BYTES = 16 * 1024
         private const val MAX_HEADER_LINES = 64
         private const val MAX_LINE_BYTES = 4 * 1024
+
+        private const val BEARER_PREFIX = "Bearer "
     }
 
     private val sessionLock = ReentrantLock()
@@ -183,6 +194,16 @@ internal class AsrShellServer(
     }
 
     private fun serveSession(connection: Connection, request: HttpRequest, qwen: Boolean) {
+        if (!isAuthorized(request)) {
+            Log.w(ASR_SHELL_TAG, "rejected ${request.path}: API key missing or wrong")
+            connection.write(
+                httpResponse(
+                    401, "Unauthorized", "text/plain; charset=utf-8",
+                    "invalid api key".toByteArray()
+                )
+            )
+            return
+        }
         if (!performHandshake(connection, request)) return
 
         val sendText: (ByteArray) -> Boolean =
@@ -316,6 +337,15 @@ internal class AsrShellServer(
     // HTTP
     // ------------------------------------------------------------------
 
+    private fun isAuthorized(request: HttpRequest): Boolean {
+        val expected = requiredApiKey()?.toByteArray(Charsets.UTF_8) ?: return true
+        val bearer = request.header("authorization")?.trim()?.let {
+            if (it.startsWith(BEARER_PREFIX, ignoreCase = true)) it.substring(BEARER_PREFIX.length) else it
+        }
+        return listOfNotNull(bearer, request.header("x-api-key"), request.header("x-api-access-key"))
+            .any { MessageDigest.isEqual(it.trim().toByteArray(Charsets.UTF_8), expected) }
+    }
+
     private fun performHandshake(connection: Connection, request: HttpRequest): Boolean {
         val key = request.header("sec-websocket-key")?.trim().orEmpty()
         if (key.isEmpty()) {
@@ -358,7 +388,12 @@ internal class AsrShellServer(
         return HttpRequest(parts[0].uppercase(), parts[1], parts[2], headers)
     }
 
-    /** 读一行（LF 结尾，CRLF 也认）。返回 null 表示读到流尾且一个字节都没有。 */
+    /**
+     * 读一行（LF 结尾，CRLF 也认）。返回 null 表示读到流尾且一个字节都没有。
+     *
+     * 按 UTF-8 解码：okhttp 写头部用的是 `writeUtf8`，Eta 又放行了非 ASCII 的 Key，
+     * 按 ISO-8859-1 解会把中文 Key 解成乱码，校验永远对不上。
+     */
     private fun readHttpLine(input: InputStream): String? {
         val buffer = ByteArrayOutputStream()
         while (true) {
@@ -377,7 +412,7 @@ internal class AsrShellServer(
         } else {
             bytes.size
         }
-        return String(bytes, 0, length, Charsets.ISO_8859_1)
+        return String(bytes, 0, length, Charsets.UTF_8)
     }
 
     private fun httpResponse(

@@ -78,6 +78,8 @@ object WeTypeSettings {
     private const val KEY_VOICE_SHELL_ENABLED = "voice_shell_enabled"
     private const val KEY_VOICE_SHELL_PORT = "voice_shell_port"
     private const val KEY_VOICE_SHELL_ALLOW_LAN = "voice_shell_allow_lan"
+    private const val KEY_VOICE_SHELL_API_KEY_ENABLED = "voice_shell_api_key_enabled"
+    private const val KEY_VOICE_SHELL_API_KEY = "voice_shell_api_key"
     private const val KEY_VOICE_SYSTEM_SERVICE_ENABLED = "voice_system_service_enabled"
     private const val KEY_TOOLBAR_ICON_BG_OPACITY = "toolbar_icon_bg_opacity"
     private const val KEY_EDGE_LIGHT_ANGLE = "edge_light_angle"
@@ -340,6 +342,19 @@ object WeTypeSettings {
     /** 默认只绑回环。允许局域网访问是显式选项 —— 打开它等于把识别能力放到同网段上。 */
     const val DEFAULT_VOICE_SHELL_ALLOW_LAN = false
 
+    /**
+     * 壳是否校验 API Key。默认不校验：不少用户就是不想填。
+     *
+     * 打开后 Key 由用户自己填写，模块从不自动生成；开着却没填等同于不校验，见 [voiceShellRequiredApiKey]。
+     */
+    const val DEFAULT_VOICE_SHELL_API_KEY_ENABLED = false
+
+    const val DEFAULT_VOICE_SHELL_API_KEY = ""
+
+    /** 壳实际要校验的 Key；返回 null 表示不校验。 */
+    fun voiceShellRequiredApiKey(enabled: Boolean, apiKey: String): String? =
+        apiKey.trim().takeIf { enabled && it.isNotEmpty() }
+
     const val VOICE_SHELL_PORT_MIN = 1024
     const val VOICE_SHELL_PORT_MAX = 65535
 
@@ -468,6 +483,8 @@ object WeTypeSettings {
         val voiceSystemServiceEnabled: Boolean = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
         val voiceShellPort: Int = DEFAULT_VOICE_SHELL_PORT,
         val voiceShellAllowLan: Boolean = DEFAULT_VOICE_SHELL_ALLOW_LAN,
+        val voiceShellApiKeyEnabled: Boolean = DEFAULT_VOICE_SHELL_API_KEY_ENABLED,
+        val voiceShellApiKey: String = DEFAULT_VOICE_SHELL_API_KEY,
         val showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         val removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         val removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1158,6 +1175,8 @@ object WeTypeSettings {
         voiceSystemServiceEnabled: Boolean = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
         voiceShellPort: Int = DEFAULT_VOICE_SHELL_PORT,
         voiceShellAllowLan: Boolean = DEFAULT_VOICE_SHELL_ALLOW_LAN,
+        voiceShellApiKeyEnabled: Boolean = DEFAULT_VOICE_SHELL_API_KEY_ENABLED,
+        voiceShellApiKey: String = DEFAULT_VOICE_SHELL_API_KEY,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1236,6 +1255,8 @@ object WeTypeSettings {
             voiceSystemServiceEnabled = voiceSystemServiceEnabled,
             voiceShellPort = sanitizeVoiceShellPort(voiceShellPort),
             voiceShellAllowLan = voiceShellAllowLan,
+            voiceShellApiKeyEnabled = voiceShellApiKeyEnabled,
+            voiceShellApiKey = voiceShellApiKey,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1330,6 +1351,8 @@ object WeTypeSettings {
             voiceSystemServiceEnabled = current.voiceSystemServiceEnabled,
             voiceShellPort = current.voiceShellPort,
             voiceShellAllowLan = current.voiceShellAllowLan,
+            voiceShellApiKeyEnabled = current.voiceShellApiKeyEnabled,
+            voiceShellApiKey = current.voiceShellApiKey,
             showCrossDeviceClipboard = current.showCrossDeviceClipboard,
             removeClipboardRetentionLimit = current.removeClipboardRetentionLimit,
             removeClipboardTextLimit = current.removeClipboardTextLimit,
@@ -1588,6 +1611,8 @@ object WeTypeSettings {
         voiceSystemServiceEnabled: Boolean = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
         voiceShellPort: Int = DEFAULT_VOICE_SHELL_PORT,
         voiceShellAllowLan: Boolean = DEFAULT_VOICE_SHELL_ALLOW_LAN,
+        voiceShellApiKeyEnabled: Boolean = DEFAULT_VOICE_SHELL_API_KEY_ENABLED,
+        voiceShellApiKey: String = DEFAULT_VOICE_SHELL_API_KEY,
         showCrossDeviceClipboard: Boolean = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit: Boolean = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -1669,6 +1694,8 @@ object WeTypeSettings {
             voiceSystemServiceEnabled = voiceSystemServiceEnabled,
             voiceShellPort = sanitizeVoiceShellPort(voiceShellPort),
             voiceShellAllowLan = voiceShellAllowLan,
+            voiceShellApiKeyEnabled = voiceShellApiKeyEnabled,
+            voiceShellApiKey = voiceShellApiKey,
             showCrossDeviceClipboard = showCrossDeviceClipboard,
             removeClipboardRetentionLimit = removeClipboardRetentionLimit,
             removeClipboardTextLimit = removeClipboardTextLimit,
@@ -1825,6 +1852,8 @@ object WeTypeSettings {
             .putBoolean(KEY_VOICE_SYSTEM_SERVICE_ENABLED, snapshot.voiceSystemServiceEnabled)
             .putInt(KEY_VOICE_SHELL_PORT, snapshot.voiceShellPort)
             .putBoolean(KEY_VOICE_SHELL_ALLOW_LAN, snapshot.voiceShellAllowLan)
+            .putBoolean(KEY_VOICE_SHELL_API_KEY_ENABLED, snapshot.voiceShellApiKeyEnabled)
+            .putString(KEY_VOICE_SHELL_API_KEY, snapshot.voiceShellApiKey)
             .putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, snapshot.showCrossDeviceClipboard)
             .putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, snapshot.removeClipboardRetentionLimit)
             .putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, snapshot.removeClipboardTextLimit)
@@ -2015,6 +2044,8 @@ object WeTypeSettings {
         putBoolean(KEY_VOICE_SYSTEM_SERVICE_ENABLED, voiceSystemServiceEnabled)
         putInt(KEY_VOICE_SHELL_PORT, voiceShellPort)
         putBoolean(KEY_VOICE_SHELL_ALLOW_LAN, voiceShellAllowLan)
+        putBoolean(KEY_VOICE_SHELL_API_KEY_ENABLED, voiceShellApiKeyEnabled)
+        putString(KEY_VOICE_SHELL_API_KEY, voiceShellApiKey)
         putBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, showCrossDeviceClipboard)
         putBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, removeClipboardRetentionLimit)
         putBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, removeClipboardTextLimit)
@@ -2162,6 +2193,8 @@ object WeTypeSettings {
                 getInt(KEY_VOICE_SHELL_PORT, defaults.voiceShellPort)
             ),
             voiceShellAllowLan = getBoolean(KEY_VOICE_SHELL_ALLOW_LAN, defaults.voiceShellAllowLan),
+            voiceShellApiKeyEnabled = getBoolean(KEY_VOICE_SHELL_API_KEY_ENABLED, defaults.voiceShellApiKeyEnabled),
+            voiceShellApiKey = getString(KEY_VOICE_SHELL_API_KEY, defaults.voiceShellApiKey),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, defaults.showCrossDeviceClipboard),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, defaults.removeClipboardRetentionLimit),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, defaults.removeClipboardTextLimit),
@@ -2443,6 +2476,8 @@ object WeTypeSettings {
                 getInt(KEY_VOICE_SHELL_PORT, DEFAULT_VOICE_SHELL_PORT)
             ),
             voiceShellAllowLan = getBoolean(KEY_VOICE_SHELL_ALLOW_LAN, DEFAULT_VOICE_SHELL_ALLOW_LAN),
+            voiceShellApiKeyEnabled = getBoolean(KEY_VOICE_SHELL_API_KEY_ENABLED, DEFAULT_VOICE_SHELL_API_KEY_ENABLED),
+            voiceShellApiKey = getString(KEY_VOICE_SHELL_API_KEY, DEFAULT_VOICE_SHELL_API_KEY).orEmpty(),
             showCrossDeviceClipboard = getBoolean(KEY_SHOW_CROSS_DEVICE_CLIPBOARD, DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD),
             removeClipboardRetentionLimit = getBoolean(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT, DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT),
             removeClipboardTextLimit = getBoolean(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT, DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT),
@@ -2564,6 +2599,8 @@ object WeTypeSettings {
         voiceSystemServiceEnabled = DEFAULT_VOICE_SYSTEM_SERVICE_ENABLED,
         voiceShellPort = DEFAULT_VOICE_SHELL_PORT,
         voiceShellAllowLan = DEFAULT_VOICE_SHELL_ALLOW_LAN,
+        voiceShellApiKeyEnabled = DEFAULT_VOICE_SHELL_API_KEY_ENABLED,
+        voiceShellApiKey = DEFAULT_VOICE_SHELL_API_KEY,
         showCrossDeviceClipboard = DEFAULT_SHOW_CROSS_DEVICE_CLIPBOARD,
         removeClipboardRetentionLimit = DEFAULT_REMOVE_CLIPBOARD_RETENTION_LIMIT,
         removeClipboardTextLimit = DEFAULT_REMOVE_CLIPBOARD_TEXT_LIMIT,
@@ -2642,6 +2679,8 @@ object WeTypeSettings {
             contains(KEY_VOICE_SYSTEM_SERVICE_ENABLED) ||
             contains(KEY_VOICE_SHELL_PORT) ||
             contains(KEY_VOICE_SHELL_ALLOW_LAN) ||
+            contains(KEY_VOICE_SHELL_API_KEY_ENABLED) ||
+            contains(KEY_VOICE_SHELL_API_KEY) ||
             contains(KEY_SHOW_CROSS_DEVICE_CLIPBOARD) ||
             contains(KEY_REMOVE_CLIPBOARD_RETENTION_LIMIT) ||
             contains(KEY_REMOVE_CLIPBOARD_TEXT_LIMIT) ||

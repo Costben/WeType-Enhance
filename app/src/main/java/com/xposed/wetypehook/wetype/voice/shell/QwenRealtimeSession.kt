@@ -16,8 +16,8 @@ import org.json.JSONObject
  * 2. `input_audio_buffer.append`（`audio` 是 base64 的 16k/单声道/s16le）→ 解码后喂桥。
  * 3. `session.finish` → 发 EOS、等桥出完最后一段、回 `completed` + `session.finished`。
  *
- * 请求头（`Authorization: Bearer …`）**不校验**：壳不认识也不关心任何 key，Eta 侧随便
- * 填一个非空串即可。
+ * 请求头（`Authorization: Bearer …`）在这里不看：要不要校验 Key 由设置决定，
+ * 校验在 [AsrShellServer] 握手之前就做完了。
  */
 internal class QwenRealtimeSession(
     sendText: (ByteArray) -> Boolean,

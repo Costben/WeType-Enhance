@@ -365,7 +365,11 @@ internal object WeTypeVoiceHooks {
             context,
             settings.voiceShellEnabled,
             settings.voiceShellPort,
-            settings.voiceShellAllowLan
+            settings.voiceShellAllowLan,
+            WeTypeSettings.voiceShellRequiredApiKey(
+                settings.voiceShellApiKeyEnabled,
+                settings.voiceShellApiKey
+            )
         )
         if (!settings.voiceBridgeEnabled) {
             Log.i("$TAG: voice bridge disabled by settings; no local port opened")
@@ -427,7 +431,8 @@ internal object WeTypeVoiceHooks {
         val allowLan = intent.getBooleanExtra(
             ModuleBridgeContract.EXTRA_ASR_SHELL_ALLOW_LAN, false
         )
-        AsrShellHost.sync(appContext, enabled, port, allowLan)
+        val apiKey = intent.getStringExtra(ModuleBridgeContract.EXTRA_ASR_SHELL_API_KEY)
+        AsrShellHost.sync(appContext, enabled, port, allowLan, apiKey)
     }
 
     /**

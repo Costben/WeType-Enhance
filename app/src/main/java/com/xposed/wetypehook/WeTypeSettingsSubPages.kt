@@ -277,7 +277,11 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                     shellPort = voiceShellPort,
                     onShellPortChange = ::updateVoiceShellPort,
                     shellAllowLan = voiceShellAllowLan,
-                    onShellAllowLanChange = ::updateVoiceShellAllowLan
+                    onShellAllowLanChange = ::updateVoiceShellAllowLan,
+                    shellApiKeyEnabled = voiceShellApiKeyEnabled,
+                    onShellApiKeyEnabledChange = ::updateVoiceShellApiKeyEnabled,
+                    shellApiKey = voiceShellApiKey,
+                    onShellApiKeyChange = ::updateVoiceShellApiKey
                 )
 
                 SettingsSubPage.KEYBOARD_LOGO -> KeyboardLogoSubPageContent(
