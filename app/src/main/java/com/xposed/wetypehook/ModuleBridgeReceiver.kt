@@ -193,7 +193,10 @@ class ModuleBridgeReceiver : BroadcastReceiver() {
      * 走 `goAsync()`：`exec` 会阻塞到远程进程退出，占着主线程会撞上广播的 10 秒上限。
      */
     private fun applyVoiceSystemService(context: Context, intent: Intent) {
-        if (!isTrustedSender(context, ModuleBridgeContract.HOST_PACKAGE_NAME)) {
+        val trusted = ModuleBridgeSecret.isTrusted(context, intent) {
+            isTrustedSender(context, ModuleBridgeContract.HOST_PACKAGE_NAME)
+        }
+        if (!trusted) {
             Log.w(TAG, "Rejected voice service request from an untrusted sender")
             return
         }

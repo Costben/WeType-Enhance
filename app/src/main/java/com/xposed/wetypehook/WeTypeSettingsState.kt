@@ -290,7 +290,10 @@ internal class WeTypeSettingsState(
             if (!immediate) delay(SHELL_SYNC_DEBOUNCE_MS)
             val hostDispatched = ModuleBridgeContract.sendWithIdentity(
                 preferencesContext,
-                ModuleBridgeContract.shellSyncIntent(enabled, port, allowLan, apiKey)
+                ModuleBridgeSecret.attach(
+                    preferencesContext,
+                    ModuleBridgeContract.shellSyncIntent(enabled, port, allowLan, apiKey)
+                )
             )
             if (enabled && !hostDispatched) {
                 Toast.makeText(

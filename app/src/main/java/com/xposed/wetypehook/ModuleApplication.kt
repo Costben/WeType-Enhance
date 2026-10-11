@@ -67,6 +67,10 @@ class ModuleApplication : Application(), XposedServiceHelper.OnServiceListener {
                     service.getRemotePreferences(WeTypeSettings.PREF_GROUP)
                 )
                 WeTypeSettings.synchronizeRemotePreferences(this)
+                ModuleBridgeSecret.publish(
+                    this,
+                    service.getRemotePreferences(ModuleBridgeSecret.REMOTE_GROUP)
+                )
             }
 
             val targets = service.runningTargets

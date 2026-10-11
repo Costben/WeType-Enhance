@@ -56,7 +56,7 @@ internal object VoiceServiceBridge {
         synchronized(lock) { pendingChannel = null }
         val sent = ModuleBridgeContract.sendWithIdentity(
             context,
-            ModuleBridgeContract.voiceServiceRequestIntent(enable)
+            ModuleBridgeSecret.attach(context, ModuleBridgeContract.voiceServiceRequestIntent(enable))
         )
         if (!sent) {
             Log.w(TAG, "failed to dispatch the voice service request")

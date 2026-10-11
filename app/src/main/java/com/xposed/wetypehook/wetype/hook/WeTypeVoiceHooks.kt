@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.Process
 import androidx.core.content.ContextCompat
 import com.xposed.wetypehook.ModuleBridgeContract
+import com.xposed.wetypehook.ModuleBridgeSecret
 import com.xposed.wetypehook.wetype.host.HostContractId
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.voice.FakeAudioRecord
@@ -425,7 +426,10 @@ internal object WeTypeVoiceHooks {
         senderUid: Int,
         intent: Intent
     ) {
-        if (!isTrustedShellSender(receiverContext, senderUid)) {
+        val trusted = ModuleBridgeSecret.isTrusted(receiverContext, intent) {
+            isTrustedShellSender(receiverContext, senderUid)
+        }
+        if (!trusted) {
             Log.i("$TAG: ignored a shell sync from an untrusted sender")
             return
         }
@@ -444,13 +448,10 @@ internal object WeTypeVoiceHooks {
     }
 
     /**
-     * 发送方包名里含宿主或模块 App 才放行。
-     *
-     * `sentFromUid` 是 API 34 才有的，低于 34 拿不到，直接放行（与
-     * `ModuleBridgeReceiver.isTrustedSender` 同一取舍）。
+     * API 34+ 按 uid 核对：发送方包名里含宿主或模块 App 才放行。低于 34 拿不到
+     * `sentFromUid`，由 [ModuleBridgeSecret] 的令牌兜底。
      */
     private fun isTrustedShellSender(receiverContext: Context, senderUid: Int): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
         val senderPackages = receiverContext.packageManager.getPackagesForUid(senderUid)
         return senderPackages?.any {
             it == ModuleBridgeContract.HOST_PACKAGE_NAME ||

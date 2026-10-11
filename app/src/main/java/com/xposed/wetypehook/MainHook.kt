@@ -366,6 +366,9 @@ class MainHook : XposedModule() {
             WeTypeSettings.bindRemotePreferencesProvider {
                 runCatching { getRemotePreferences(WeTypeSettings.PREF_GROUP) }.getOrNull()
             }
+            ModuleBridgeSecret.bindRemoteProvider {
+                runCatching { getRemotePreferences(ModuleBridgeSecret.REMOTE_GROUP) }.getOrNull()
+            }
             val bound = runCatching {
                 WeTypeSettings.bindRemotePreferences(
                     getRemotePreferences(WeTypeSettings.PREF_GROUP)
