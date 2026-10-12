@@ -57,6 +57,12 @@ internal object WeTypeResourceHooks {
     private const val WETYPE_ID_R_CLASS = "com.tencent.wetype.plugin.hld.s"
     private const val KEY_DATA_CLASS =
         "com.tencent.wetype.plugin.hld.keyboard.selfdraw.bean.KeyData"
+    // KeyData 上键面文字与图标的四个色值访问器（各含常态与按下态）。两组字段各自独立，
+    // 覆盖时四路都要盖，否则按下时会闪回主题色。
+    private val LABEL_COLOR_GETTERS = listOf(
+        "getMainTextColor", "getMainTextColorPressed",
+        "getIconColor", "getIconPressedColor"
+    )
     // KeyData.bgCorner renders ~10dp smaller than its numeric value; offset the stored dp radius.
     private const val KEY_CORNER_BGCORNER_OFFSET = 10
 
@@ -617,11 +623,15 @@ internal object WeTypeResourceHooks {
      * 底色被换掉就自己反色，这几路一起按新底色重算（见 [perKeyLabelColor]），否则深色键帽上
      * 原有字色会直接看不见。
      *
-     * 但 shift 键绕开了 KeyData：宿主在大小写状态切换（`o.X2`）时直接把主题属性解析出来的颜色
-     * 塞进按键 drawable 的底色字段，切一次大小写就会把用户设定的 Shift 颜色冲回全局按键色。
-     * 这里再按**调用关系**定位那个 `(int)void` 底色 setter 并钩住，两条路径归同一次覆盖。
-     * 该 setter 是混淆名，所以只按「紧跟 `getBgColor` 之后、声明在 selfdraw 下、且所在类持有
-     * KeyData」三个形状条件反查，不赌具体类名/方法名。
+     * 但功能键还有第二条路：宿主刷新按键状态时（shift 的 `o.X2`、回车的 `o.q0`、空格的
+     * `o$t0.a` 等）**完全不读 KeyData**，直接把主题属性解析出来的颜色写进绘制上下文
+     * （`…selfdraw.j`）的对应字段 —— 底色与键面字色各一路。这条刷新会把 `o.e1` 刚按 KeyData
+     * 摆好的值原地覆盖，于是只钩 bean 访问器时的表现是「底色改了、字色没改」（实测：换行键
+     * 吃到底色覆盖，字芯仍是主题给的近黑色）。所以同一条链上还要按**调用关系**把绘制上下文
+     * 的 `(int)void` setter 一起钩住：底色那一路本来就在钩（见下），字色与图标那另外四路在这里补上。
+     * 这些 setter 都是混淆名，只按形状反查、不赌具体类名：在「KeyData getter 的调用方」里取
+     * 紧跟其后的第一个 `(int)void`，且声明在已解出的底色 setter 那个绘制上下文类里 ——
+     * 那个类自己就带十几个 `(I)V`，光看包名会认错。
      */
     fun hookSelfDrawPerKeyColors(sourceDir: String?, classLoader: ClassLoader) {
         hookKeyDataPerKeyColors()
@@ -642,10 +652,20 @@ internal object WeTypeResourceHooks {
                         ?: return@hookBefore
                     param.args[0] = resolved.color
                 }
-                Log.i("Success: Hook WeType per-key colors (button background setter)")
+                access.labelSetters.forEach { setter ->
+                    setter.hookBefore { param ->
+                        val resolved = perKeyColorResolver.resolve(access.readKeyId(param.thisObject))
+                            ?: return@hookBefore
+                        param.args[0] = perKeyLabelColor(resolved.color, resolved.invert)
+                    }
+                }
+                Log.i(
+                    "Success: Hook WeType per-key colors (draw context setters: " +
+                        "bg + ${access.labelSetters.size} label)"
+                )
             }
         }.onFailure {
-            Log.i("Failed: Hook WeType per-key colors (button background setter)")
+            Log.i("Failed: Hook WeType per-key colors (draw context setters)")
             Log.i(it)
         }
     }
@@ -670,10 +690,7 @@ internal object WeTypeResourceHooks {
             // 字色组：宿主只按自己的主题属性给键面文字/图标上色，底色被改掉后不会跟着反色，
             // 深底配原字色整颗就看不见了。按同一个解析结果现算一次可读字色 —— 键面文字与图标
             // 是两组独立字段（各含常态与按下态），四路都要盖，否则按下时会闪回原色。
-            listOf(
-                "getMainTextColor", "getMainTextColorPressed",
-                "getIconColor", "getIconPressedColor"
-            ).forEach { getterName ->
+            LABEL_COLOR_GETTERS.forEach { getterName ->
                 keyDataClass.getMethod(getterName).hookAfter { param ->
                     val keyId = runCatching { idGetter.invoke(param.thisObject) as? String }
                         .getOrNull()
@@ -732,8 +749,12 @@ internal object WeTypeResourceHooks {
     private fun parseHexArgb(value: String): Int? =
         value.removePrefix("#").takeIf { it.length == 8 }?.toLongOrNull(16)?.toInt()
 
-    /** 宿主按键 drawable：底色 setter 与读回该键 KeyData 的访问器。 */
-    private class ButtonColorAccess(val setter: Method, val keyDataGetter: Method?) {
+    /** 宿主按键绘制上下文：底色/字色 setter，以及读回该键 KeyData 的访问器。 */
+    private class ButtonColorAccess(
+        val setter: Method,
+        val labelSetters: List<Method>,
+        val keyDataGetter: Method?
+    ) {
         fun readKeyId(button: Any?): String? = runCatching {
             val keyData = keyDataGetter?.invoke(button) ?: return null
             keyData.javaClass.getMethod("getId").invoke(keyData) as? String
@@ -782,7 +803,38 @@ internal object WeTypeResourceHooks {
         }?.getMethodInstance(classLoader)
         val setterMethod = setter.getMethodInstance(classLoader)
         Log.i("[$TAG] Resolved host key background setter $buttonClass.${setter.name}")
-        ButtonColorAccess(setterMethod, keyDataGetter)
+
+        // 键面字色/图标色的 setter 与底色同形，只是各自锚在一个 KeyData getter 上。这里把
+        // 声明类钉死到已经解出来的底色 setter 所在类：那是逐个键的绘制上下文，主题刷新
+        // （shift / 回车 / 空格 / 数字与表情键盘）走的就是它，`o.e1` 也走它。
+        val labelSetters = LABEL_COLOR_GETTERS.mapNotNull { getterName ->
+            runCatching {
+                bridge.findMethod {
+                    searchPackages(WETYPE_KEYBOARD_PACKAGE)
+                    matcher {
+                        name = getterName
+                        returnType = "java.lang.String"
+                    }
+                }.flatMap { it.callers }.asSequence()
+                    .mapNotNull { caller ->
+                        val invokes = caller.invokes
+                        val anchor = invokes.indexOfFirst {
+                            it.name == getterName && it.returnTypeName == "java.lang.String"
+                        }
+                        if (anchor < 0) return@mapNotNull null
+                        invokes.drop(anchor + 1).firstOrNull { invoke ->
+                            invoke.paramTypeNames.size == 1 &&
+                                invoke.paramTypeNames[0] == "int" &&
+                                invoke.returnTypeName == "void" &&
+                                invoke.declaredClassName == buttonClass
+                        }
+                    }
+                    .firstOrNull()
+                    ?.getMethodInstance(classLoader)
+            }.getOrNull()
+        }
+        Log.i("[$TAG] Resolved host key label setters " + labelSetters.joinToString { it.name })
+        ButtonColorAccess(setterMethod, labelSetters, keyDataGetter)
     }.getOrElse { error ->
         Log.i("[$TAG] Failed to resolve host key background setter: ${error.message}")
         null
