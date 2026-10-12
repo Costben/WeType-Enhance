@@ -638,9 +638,9 @@ internal object WeTypeResourceHooks {
                     return@use
                 }
                 access.setter.hookBefore { param ->
-                    val color = perKeyColorResolver.resolve(access.readKeyId(param.thisObject))
+                    val resolved = perKeyColorResolver.resolve(access.readKeyId(param.thisObject))
                         ?: return@hookBefore
-                    param.args[0] = color
+                    param.args[0] = resolved.color
                 }
                 Log.i("Success: Hook WeType per-key colors (button background setter)")
             }
@@ -663,8 +663,8 @@ internal object WeTypeResourceHooks {
                 keyDataClass.getMethod(getterName).hookAfter { param ->
                     val keyId = runCatching { idGetter.invoke(param.thisObject) as? String }
                         .getOrNull()
-                    val color = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
-                    param.result = String.format(java.util.Locale.US, "#%08X", color)
+                    val resolved = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
+                    param.result = String.format(java.util.Locale.US, "#%08X", resolved.color)
                 }
             }
             // 字色组：宿主只按自己的主题属性给键面文字/图标上色，底色被改掉后不会跟着反色，
@@ -677,9 +677,10 @@ internal object WeTypeResourceHooks {
                 keyDataClass.getMethod(getterName).hookAfter { param ->
                     val keyId = runCatching { idGetter.invoke(param.thisObject) as? String }
                         .getOrNull()
-                    val background = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
+                    val resolved = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
                     param.result = String.format(
-                        java.util.Locale.US, "#%06X", perKeyLabelColor(background) and 0xFFFFFF
+                        java.util.Locale.US, "#%06X",
+                        perKeyLabelColor(resolved.color, resolved.invert) and 0xFFFFFF
                     )
                 }
             }
@@ -689,6 +690,9 @@ internal object WeTypeResourceHooks {
             Log.i(it)
         }
     }
+
+    /** 逐键解析结果：最终底色，以及这颗键的键面字色是否被用户强制反色。 */
+    private class ResolvedKeyColor(val color: Int, val invert: Boolean)
 
     /**
      * 逐键颜色的解析器。
@@ -704,7 +708,7 @@ internal object WeTypeResourceHooks {
         @Volatile
         private var overrides = WeTypeKeyColorOverrides.decode(null)
 
-        fun resolve(rawKeyId: String?): Int? {
+        fun resolve(rawKeyId: String?): ResolvedKeyColor? {
             if (rawKeyId.isNullOrEmpty()) return null
             val json = WeTypeSettings.getPerKeyColorsJsonXposed()
             if (json != cachedJson) {
@@ -713,12 +717,13 @@ internal object WeTypeResourceHooks {
             }
             if (!overrides.enabled) return null
             val token = WeTypeKeyColorOverrides.tokenOf(rawKeyId) ?: return null
-            return when (val value = overrides.colors[token]) {
-                null -> null
+            val color = when (val value = overrides.colors[token]) {
+                null -> return null
                 WeTypeKeyColorOverrides.BRAND ->
                     WeTypeSettings.getAppearanceColorXposed(THEME_COLOR_GROUP_ID)
-                else -> parseHexArgb(value)
+                else -> parseHexArgb(value) ?: return null
             }
+            return ResolvedKeyColor(color, token in overrides.invert)
         }
     }
 

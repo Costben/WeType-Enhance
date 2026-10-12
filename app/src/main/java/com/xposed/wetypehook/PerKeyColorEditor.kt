@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.xposed.wetypehook.wetype.settings.WeTypeKeyColorOverrides
 import com.xposed.wetypehook.wetype.settings.PerKeyColorOverrides
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
@@ -174,6 +175,7 @@ internal fun PerKeyColorEditor(
                         PerKeyColorButton(
                             key = key,
                             value = overrides.colors[key.token],
+                            invert = key.token in overrides.invert,
                             brandColor = brandColor,
                             onClick = { editingToken = key.token }
                         )
@@ -220,6 +222,7 @@ internal fun PerKeyColorEditor(
         SetPerKeyColorDialog(
             keyLabel = TOKEN_LABELS[token] ?: token,
             currentValue = overrides.colors[token],
+            currentInvert = token in overrides.invert,
             brandColor = brandColor,
             onDismiss = { editingToken = null },
             onApply = { value ->
@@ -228,6 +231,9 @@ internal fun PerKeyColorEditor(
             },
             onApplyLive = { value ->
                 onOverridesChange(WeTypeKeyColorOverrides.encode(overrides.withColor(token, value)))
+            },
+            onInvertChange = { invert ->
+                onOverridesChange(WeTypeKeyColorOverrides.encode(overrides.withInvert(token, invert)))
             }
         )
     }
@@ -236,12 +242,14 @@ internal fun PerKeyColorEditor(
 /**
  * 单颗键帽。未设定时用与其它设置项一致的面板色，设定了就按色值铺满 —— 编辑时看到的就是
  * 键盘上会出现的底色，不需要额外图例。键面字色走 [perKeyLabelColor]，与真机上那条自动
- * 反色是同一个函数，所以这里看到的就是按下去之后键盘上的样子。
+ * 反色是同一个函数（连「字符反色」的覆盖一起带过来），所以这里看到的就是按下去之后键盘
+ * 上的样子。
  */
 @Composable
 private fun PerKeyColorButton(
     key: EditorKey,
     value: String?,
+    invert: Boolean,
     brandColor: Int,
     onClick: () -> Unit
 ) {
@@ -262,7 +270,7 @@ private fun PerKeyColorButton(
             style = MiuixTheme.textStyles.body2,
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
-            color = resolved?.let { ComposeColor(perKeyLabelColor(it)) }
+            color = resolved?.let { ComposeColor(perKeyLabelColor(it, invert)) }
                 ?: MiuixTheme.colorScheme.onSurface,
             maxLines = 1
         )
@@ -276,20 +284,50 @@ private fun resolveOverrideColor(value: String?, brandColor: Int): Int? = when {
     else -> parseHexColor(value)
 }
 
+/** 两个候选字色的用户可见叫法 —— 就是宿主自己那两档：黑字与深色档实测的 235 灰。 */
+private fun perKeyLabelName(color: Int): String =
+    if (color == REPLICA_KEY_LABEL_LIGHT_ARGB) "黑字" else "浅色字"
+
+/** 对比度差不到这个数就算没分出胜负，summary 里直说「接近」，别让用户以为自动一定对。 */
+private const val LABEL_CONTRAST_TIE = 0.5f
+
+private fun contrastText(contrast: Float): String =
+    String.format(java.util.Locale.US, "%.1f:1", contrast)
+
 @Composable
 private fun SetPerKeyColorDialog(
     keyLabel: String,
     currentValue: String?,
+    currentInvert: Boolean,
     brandColor: Int,
     onDismiss: () -> Unit,
     onApply: (String?) -> Unit,
-    onApplyLive: (String?) -> Unit
+    onApplyLive: (String?) -> Unit,
+    onInvertChange: (Boolean) -> Unit
 ) {
     var customInput by rememberSaveable(keyLabel) {
         mutableStateOf(
             currentValue?.takeIf { it.startsWith("#") }?.let { formatArgb(parseHexColor(it) ?: brandColor) }
                 ?: formatArgb(brandColor)
         )
+    }
+
+    // 两个候选按对比度排好，auto 是自动会选的、forced 是「字符反色」会换成的那个。
+    val choices = resolveOverrideColor(currentValue, brandColor)?.let(::perKeyLabelChoices)
+    val auto = choices?.get(0)
+    val forced = choices?.get(1)
+    val invertSummary = if (auto == null || forced == null) {
+        "这颗键跟随默认按键色，没有可反色的字色"
+    } else if (auto.contrast - forced.contrast < LABEL_CONTRAST_TIE) {
+        "两种字色对比度接近（${perKeyLabelName(auto.color)} ${contrastText(auto.contrast)} / " +
+            "${perKeyLabelName(forced.color)} ${contrastText(forced.contrast)}），" +
+            "当前用${perKeyLabelName(if (currentInvert) forced.color else auto.color)}，打开可强制反色"
+    } else if (currentInvert) {
+        "已强制用${perKeyLabelName(forced.color)}（对比度 ${contrastText(forced.contrast)}）；" +
+            "自动本会选${perKeyLabelName(auto.color)}（${contrastText(auto.contrast)}）"
+    } else {
+        "自动选${perKeyLabelName(auto.color)}（对比度 ${contrastText(auto.contrast)}）；" +
+            "打开改用${perKeyLabelName(forced.color)}（${contrastText(forced.contrast)}）"
     }
 
     OverlayDialog(
@@ -299,6 +337,13 @@ private fun SetPerKeyColorDialog(
         onDismissRequest = onDismiss
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
+            DialogSwitchRow(
+                text = "字符反色",
+                summary = invertSummary,
+                checked = currentInvert,
+                enabled = auto != null,
+                onCheckedChange = onInvertChange
+            )
             DialogOptionRow(
                 text = "跟随默认",
                 summary = "使用键盘默认按键色",
@@ -356,6 +401,44 @@ private fun SetPerKeyColorDialog(
                 TextButton(text = "完成", onClick = onDismiss)
             }
         }
+    }
+}
+
+/** 与 [DialogOptionRow] 同排版的一行开关；[enabled] 为假时置灰（这颗键没有覆盖色可反）。 */
+@Composable
+private fun DialogSwitchRow(
+    text: String,
+    summary: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = text,
+                style = MiuixTheme.textStyles.main,
+                color = if (enabled) MiuixTheme.colorScheme.onSurface
+                else MiuixTheme.colorScheme.onSurfaceVariantSummary
+            )
+            Text(
+                text = summary,
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
+        )
     }
 }
 
