@@ -115,6 +115,8 @@ internal class WeTypeSettingsState(
     var candidateBackgroundCorner by mutableIntStateOf(snapshot.candidateBackgroundCorner.roundToInt())
     var candidateBackgroundLeftMarginDp by mutableIntStateOf(snapshot.candidateBackgroundLeftMarginDp)
     var candidatePinyinLeftMarginDp by mutableIntStateOf(snapshot.candidatePinyinLeftMarginDp)
+    var candidateTextColor by mutableIntStateOf(snapshot.candidateTextColor)
+    var perKeyColorsJson by mutableStateOf(snapshot.perKeyColorsJson)
     var toolbarIconBgOpacity by mutableIntStateOf(snapshot.toolbarIconBgOpacity)
     var disableHotUpdate by mutableStateOf(snapshot.disableHotUpdate)
     var colorosAiWriterEnabled by mutableStateOf(snapshot.colorosAiWriterEnabled)
@@ -773,6 +775,8 @@ internal class WeTypeSettingsState(
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
+            candidateTextColor = candidateTextColor,
+            perKeyColorsJson = perKeyColorsJson,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
             appearanceColors = currentAppearanceColors(),
             disableHotUpdate = disableHotUpdate,
@@ -879,6 +883,8 @@ internal class WeTypeSettingsState(
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
         candidateBackgroundLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
+        candidateTextColor = WeTypeSettings.DEFAULT_CANDIDATE_TEXT_COLOR
+        perKeyColorsJson = WeTypeSettings.DEFAULT_PER_KEY_COLORS_JSON
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
         colorosAiWriterEnabled = WeTypeSettings.DEFAULT_COLOROS_AI_WRITER_ENABLED

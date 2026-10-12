@@ -103,6 +103,7 @@ internal fun KeyboardReplica(
     hyperMaterialEnabled: Boolean,
     showCornerGuide: Boolean,
     accentColor: Int,
+    candidateTextColor: Int,
     toolbarLogo: Bitmap?,
     nativeLogo: Bitmap?,
     logoMode: ReplicaLogoMode,
@@ -148,9 +149,16 @@ internal fun KeyboardReplica(
     var demoClickCount by remember { mutableIntStateOf(0) }
     val candidateLabels = replicaCandidateLabels(demoClickCount)
     val candidateLabelSize = with(density) { geometry.candidateLabelPx.roundToInt().toSp() }
-    // 选中态：底用键帽色（实测 240，与键帽 242 同源），字直接用品牌强调色本身
-    // —— 真机实测那条「吃」就是 (47,128,237)，不是按底算出来的可读色。
-    val candidateHighlightTextColor = ComposeColor(accentColor)
+    // 选中态：底用键帽色（实测 240，与键帽 242 同源），字用「候选词颜色」设置本身
+    // —— 真机实测那条「吃」就是 (47,128,237)，不是按底算出来的可读色；没设自定义色时
+    // 该设置取哨兵值，回落到品牌强调色，也就是这个功能出现之前的表现。
+    val candidateHighlightTextColor = ComposeColor(
+        if (candidateTextColor == WeTypeSettings.CANDIDATE_TEXT_COLOR_BRAND) {
+            accentColor
+        } else {
+            candidateTextColor
+        }
+    )
     val candidateIdleTextColor = previewTextColor(displayColor)
     Box(
         modifier = Modifier

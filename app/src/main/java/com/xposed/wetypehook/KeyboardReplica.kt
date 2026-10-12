@@ -427,6 +427,9 @@ internal fun replicaCandidateFillAlpha(alphaSetting: Int): Float =
  */
 internal const val REPLICA_KEY_LABEL_DARK_ARGB = 0xFFEBEBEB.toInt()
 
+/** 真机浅色键盘的键面字色：纯黑。 */
+internal const val REPLICA_KEY_LABEL_LIGHT_ARGB = 0xFF000000.toInt()
+
 /**
  * 把半透明色按 source-over 合成到背板上，返回不透明结果。
  *

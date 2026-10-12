@@ -31,6 +31,7 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 
@@ -48,7 +49,12 @@ internal fun LazyListScope.ColorsSubPageContent(
     groupIndex: (String) -> Int,
     currentKeyGroup: WeTypeAppearanceColorGroup,
     currentKeyGroupIndex: Int,
-    onKeyColorChange: (Int) -> Unit
+    onKeyColorChange: (Int) -> Unit,
+    perKeyColorsEnabled: Boolean,
+    onPerKeyColorsEnabledChange: (Boolean) -> Unit,
+    perKeyColorsJson: String,
+    onPerKeyColorsChange: (String) -> Unit,
+    brandColor: Int
 ) {
     item {
         SmallTitle(text = stringResource(R.string.settings_section_mode))
@@ -146,20 +152,36 @@ internal fun LazyListScope.ColorsSubPageContent(
             modifier = Modifier.padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp)
         ) {
-            KeyColorEditor(
-                title = if (currentModeIsDark) {
-                    stringResource(R.string.settings_dark_key_color_title)
-                } else {
-                    stringResource(R.string.settings_light_key_color_title)
-                },
-                summary = stringResource(
-                    R.string.settings_key_color_group_summary,
-                    Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
-                    currentKeyGroup.entryCount
-                ),
-                color = appearanceGroupColors[currentKeyGroupIndex],
-                onColorChange = onKeyColorChange
-            )
+            Column {
+                KeyColorEditor(
+                    title = if (currentModeIsDark) {
+                        stringResource(R.string.settings_dark_key_color_title)
+                    } else {
+                        stringResource(R.string.settings_light_key_color_title)
+                    },
+                    summary = stringResource(
+                        R.string.settings_key_color_group_summary,
+                        Color.alpha(appearanceGroupColors[currentKeyGroupIndex]),
+                        currentKeyGroup.entryCount
+                    ),
+                    color = appearanceGroupColors[currentKeyGroupIndex],
+                    onColorChange = onKeyColorChange
+                )
+                SwitchPreference(
+                    title = "更多样的按键颜色",
+                    summary = "开启后可以逐颗键帽单独指定底色，关闭只是停止生效，已调好的颜色保留",
+                    checked = perKeyColorsEnabled,
+                    onCheckedChange = onPerKeyColorsEnabledChange
+                )
+                SettingExpandGroup(visible = perKeyColorsEnabled) {
+                    HorizontalDivider()
+                    PerKeyColorEditor(
+                        overridesJson = perKeyColorsJson,
+                        brandColor = brandColor,
+                        onOverridesChange = onPerKeyColorsChange
+                    )
+                }
+            }
         }
     }
 

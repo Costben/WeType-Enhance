@@ -17,6 +17,7 @@ import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import com.xposed.wetypehook.perKeyLabelColor
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.findMethod
 import com.xposed.wetypehook.xposed.findMethodInHierarchy
@@ -33,9 +34,11 @@ import com.xposed.wetypehook.wetype.logo.LogoImageRenderer
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroup
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorMode
 import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
+import com.xposed.wetypehook.wetype.settings.WeTypeKeyColorOverrides
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.DARK_KEY_COLOR_GROUP_ID
+import org.luckypray.dexkit.DexKitBridge
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.util.Collections
@@ -43,7 +46,12 @@ import java.util.WeakHashMap
 import kotlin.math.roundToInt
 
 internal object WeTypeResourceHooks {
+    private const val TAG = "WeTypeResource"
     private const val WETYPE_RESOURCE_PACKAGE = "com.tencent.wetype"
+    private const val WETYPE_KEYBOARD_PACKAGE = "com.tencent.wetype.plugin.hld.keyboard"
+    private const val DRAW_CONTEXT_PACKAGE = "com.tencent.wetype.plugin.hld.keyboard.selfdraw."
+    // 品牌强调色在 WeTypeAppearanceColorGroups 里的分组 id（见「品牌强调色」组）。
+    private const val THEME_COLOR_GROUP_ID = "theme_color"
     private const val WETYPE_DRAWABLE_R_CLASS = "com.tencent.wetype.plugin.hld.r"
     private const val WETYPE_ATTR_R_CLASS = "com.tencent.wetype.plugin.hld.o"
     private const val WETYPE_ID_R_CLASS = "com.tencent.wetype.plugin.hld.s"
@@ -577,13 +585,202 @@ internal object WeTypeResourceHooks {
     fun hookCandidateSpecialTextColor() {
         runCatching {
             resolveCandidateSpecialTextColorMethod().hookAfter { param ->
-                param.result = WeTypeSettings.getAppearanceColorXposed("theme_color")
+                param.result = resolveCandidateTextColor()
             }
             Log.i("Success: Hook candidate special text color")
         }.onFailure {
             Log.i("Failed: Hook candidate special text color")
             Log.i(it)
         }
+    }
+
+    /** 候选词文字色：用户选了自定义色就用它，否则跟随品牌强调色（旧行为）。 */
+    private fun resolveCandidateTextColor(): Int {
+        val custom = WeTypeSettings.getCandidateTextColorXposed()
+        return if (custom == WeTypeSettings.CANDIDATE_TEXT_COLOR_BRAND) {
+            WeTypeSettings.getAppearanceColorXposed(THEME_COLOR_GROUP_ID)
+        } else {
+            custom
+        }
+    }
+
+    /**
+     * 「更多样的按键颜色」：按用户逐键设定的颜色覆盖键帽底色。
+     *
+     * 主路径钩 [KEY_DATA_CLASS] 的 `getBgColor` / `getInitialColor` 两个**未混淆的** bean 访问器。
+     * 宿主 `o.e1` 每键初始化时把这两个字符串经 `m1.Y`（`#RRGGBB` 或 `#AARRGGBB`，见
+     * `m1.n`）解析成 ARGB 再下发到底色/回弹色，所以返回一个 `#AARRGGBB` 字符串即可改色 ——
+     * 布局 JSON 里 `initialColor` 与 `bgColor` 同源（都是 `@attr/ime_color_btn_*_bg`），
+     * 两个一起换，按键抬起后回的也是同一个色。
+     *
+     * 同一批字段里还有键面文字与图标的两组色（`mainTextColor*` / `iconColor*`）—— 宿主不会因为
+     * 底色被换掉就自己反色，这几路一起按新底色重算（见 [perKeyLabelColor]），否则深色键帽上
+     * 原有字色会直接看不见。
+     *
+     * 但 shift 键绕开了 KeyData：宿主在大小写状态切换（`o.X2`）时直接把主题属性解析出来的颜色
+     * 塞进按键 drawable 的底色字段，切一次大小写就会把用户设定的 Shift 颜色冲回全局按键色。
+     * 这里再按**调用关系**定位那个 `(int)void` 底色 setter 并钩住，两条路径归同一次覆盖。
+     * 该 setter 是混淆名，所以只按「紧跟 `getBgColor` 之后、声明在 selfdraw 下、且所在类持有
+     * KeyData」三个形状条件反查，不赌具体类名/方法名。
+     */
+    fun hookSelfDrawPerKeyColors(sourceDir: String?, classLoader: ClassLoader) {
+        hookKeyDataPerKeyColors()
+        if (sourceDir.isNullOrEmpty()) {
+            Log.e("Failed: Cannot resolve host button color setter without sourceDir")
+            return
+        }
+        runCatching {
+            System.loadLibrary("dexkit")
+            DexKitBridge.create(sourceDir).use { bridge ->
+                val access = resolveButtonColorAccess(bridge, classLoader)
+                if (access == null) {
+                    Log.e("Failed: Cannot resolve host button background setter")
+                    return@use
+                }
+                access.setter.hookBefore { param ->
+                    val color = perKeyColorResolver.resolve(access.readKeyId(param.thisObject))
+                        ?: return@hookBefore
+                    param.args[0] = color
+                }
+                Log.i("Success: Hook WeType per-key colors (button background setter)")
+            }
+        }.onFailure {
+            Log.i("Failed: Hook WeType per-key colors (button background setter)")
+            Log.i(it)
+        }
+    }
+
+    private fun hookKeyDataPerKeyColors() {
+        runCatching {
+            val keyDataClass = loadClassOrNull(KEY_DATA_CLASS)
+                ?: error("Failed to load KeyData")
+            val idGetter = keyDataClass.getMethod("getId")
+            // 底色组：原样返回用户设的色值。固定发满 8 位。宿主 `m1.Y` 对 6 位（补 FF 当不透明）
+            // 与 8 位（原样当 ARGB）都收：实测存自定义色 `#FFFF2F80` 时键帽渲染成品红 `#FF2F80`，
+            // 即整串按 ARGB 解析成功 —— 若宿主按前 6 位取色，同一串会渲染成黄色 `#FFFF2F`。
+            // 所以 8 位可保留用户设的半透明键帽色，不要改成 6 位。
+            listOf("getBgColor", "getInitialColor").forEach { getterName ->
+                keyDataClass.getMethod(getterName).hookAfter { param ->
+                    val keyId = runCatching { idGetter.invoke(param.thisObject) as? String }
+                        .getOrNull()
+                    val color = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
+                    param.result = String.format(java.util.Locale.US, "#%08X", color)
+                }
+            }
+            // 字色组：宿主只按自己的主题属性给键面文字/图标上色，底色被改掉后不会跟着反色，
+            // 深底配原字色整颗就看不见了。按同一个解析结果现算一次可读字色 —— 键面文字与图标
+            // 是两组独立字段（各含常态与按下态），四路都要盖，否则按下时会闪回原色。
+            listOf(
+                "getMainTextColor", "getMainTextColorPressed",
+                "getIconColor", "getIconPressedColor"
+            ).forEach { getterName ->
+                keyDataClass.getMethod(getterName).hookAfter { param ->
+                    val keyId = runCatching { idGetter.invoke(param.thisObject) as? String }
+                        .getOrNull()
+                    val background = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
+                    param.result = String.format(
+                        java.util.Locale.US, "#%06X", perKeyLabelColor(background) and 0xFFFFFF
+                    )
+                }
+            }
+            Log.i("Success: Hook WeType per-key colors")
+        }.onFailure {
+            Log.i("Failed: Hook WeType per-key colors")
+            Log.i(it)
+        }
+    }
+
+    /**
+     * 逐键颜色的解析器。
+     *
+     * 解析结果按设置串缓存：宿主每帧为每颗键都会问一次，JSON 解析不能落在绘制路径上。
+     * 关掉开关时只做一次字符串比较就返回 `null`，未配置的键也立刻返回 —— 关闭状态下
+     * 这条 hook 的成本约等于一次 `if`。
+     */
+    private class PerKeyColorResolver {
+        @Volatile
+        private var cachedJson: String? = null
+
+        @Volatile
+        private var overrides = WeTypeKeyColorOverrides.decode(null)
+
+        fun resolve(rawKeyId: String?): Int? {
+            if (rawKeyId.isNullOrEmpty()) return null
+            val json = WeTypeSettings.getPerKeyColorsJsonXposed()
+            if (json != cachedJson) {
+                cachedJson = json
+                overrides = WeTypeKeyColorOverrides.decode(json)
+            }
+            if (!overrides.enabled) return null
+            val token = WeTypeKeyColorOverrides.tokenOf(rawKeyId) ?: return null
+            return when (val value = overrides.colors[token]) {
+                null -> null
+                WeTypeKeyColorOverrides.BRAND ->
+                    WeTypeSettings.getAppearanceColorXposed(THEME_COLOR_GROUP_ID)
+                else -> parseHexArgb(value)
+            }
+        }
+    }
+
+    private val perKeyColorResolver = PerKeyColorResolver()
+
+    private fun parseHexArgb(value: String): Int? =
+        value.removePrefix("#").takeIf { it.length == 8 }?.toLongOrNull(16)?.toInt()
+
+    /** 宿主按键 drawable：底色 setter 与读回该键 KeyData 的访问器。 */
+    private class ButtonColorAccess(val setter: Method, val keyDataGetter: Method?) {
+        fun readKeyId(button: Any?): String? = runCatching {
+            val keyData = keyDataGetter?.invoke(button) ?: return null
+            keyData.javaClass.getMethod("getId").invoke(keyData) as? String
+        }.getOrNull()
+    }
+
+    private fun resolveButtonColorAccess(
+        bridge: DexKitBridge,
+        classLoader: ClassLoader
+    ): ButtonColorAccess? = runCatching {
+        val callers = bridge.findMethod {
+            searchPackages(WETYPE_KEYBOARD_PACKAGE)
+            matcher {
+                name = "getBgColor"
+                returnType = "java.lang.String"
+            }
+        }.flatMap { it.callers }
+        if (callers.isEmpty()) return null
+
+        // 宿主 `o.e1` 的顺序是 `getBgColor` → `j.R()`(取 fallback 串) → `m1.Y(...)`(解 ARGB)
+        // → `j.<setter>(int)`。取锚点之后第一个满足 `(int)void` 且声明在 selfdraw 下的方法，
+        // 再用「所在类持有 KeyData」筛掉同名同签名的兄弟 setter（j 上有十来个 `(I)V`）。
+        val setter = callers.asSequence()
+            .mapNotNull { caller ->
+                val invokes = caller.invokes
+                val anchor = invokes.indexOfFirst {
+                    it.name == "getBgColor" && it.returnTypeName == "java.lang.String"
+                }
+                if (anchor < 0) return@mapNotNull null
+                invokes.drop(anchor + 1).firstOrNull { invoke ->
+                    invoke.paramTypeNames.size == 1 &&
+                        invoke.paramTypeNames[0] == "int" &&
+                        invoke.returnTypeName == "void" &&
+                        invoke.declaredClassName.startsWith(DRAW_CONTEXT_PACKAGE)
+                }
+            }
+            .firstOrNull { candidate ->
+                bridge.getClassData(candidate.declaredClassName)?.methods?.any { method ->
+                    method.paramTypeNames.isEmpty() && method.returnTypeName == KEY_DATA_CLASS
+                } == true
+            } ?: return null
+
+        val buttonClass = setter.declaredClassName
+        val keyDataGetter = bridge.getClassData(buttonClass)?.methods?.firstOrNull { method ->
+            method.paramTypeNames.isEmpty() && method.returnTypeName == KEY_DATA_CLASS
+        }?.getMethodInstance(classLoader)
+        val setterMethod = setter.getMethodInstance(classLoader)
+        Log.i("[$TAG] Resolved host key background setter $buttonClass.${setter.name}")
+        ButtonColorAccess(setterMethod, keyDataGetter)
+    }.getOrElse { error ->
+        Log.i("[$TAG] Failed to resolve host key background setter: ${error.message}")
+        null
     }
 
     fun hookCandidateBackgroundCorner() {

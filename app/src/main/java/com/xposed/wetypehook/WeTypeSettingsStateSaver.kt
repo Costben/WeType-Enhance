@@ -46,6 +46,8 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "candidateBackgroundCorner" to candidateBackgroundCorner,
     "candidateBackgroundLeftMarginDp" to candidateBackgroundLeftMarginDp,
     "candidatePinyinLeftMarginDp" to candidatePinyinLeftMarginDp,
+    "candidateTextColor" to candidateTextColor,
+    "perKeyColorsJson" to perKeyColorsJson,
     "toolbarIconBgOpacity" to toolbarIconBgOpacity,
     "disableHotUpdate" to disableHotUpdate,
     "colorosAiWriterEnabled" to colorosAiWriterEnabled,
@@ -184,6 +186,8 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
         ?: candidateBackgroundLeftMarginDp
     candidatePinyinLeftMarginDp = saved["candidatePinyinLeftMarginDp"] as? Int
         ?: candidatePinyinLeftMarginDp
+    candidateTextColor = saved["candidateTextColor"] as? Int ?: candidateTextColor
+    perKeyColorsJson = saved["perKeyColorsJson"] as? String ?: perKeyColorsJson
     toolbarIconBgOpacity = saved["toolbarIconBgOpacity"] as? Int ?: toolbarIconBgOpacity
     disableHotUpdate = saved["disableHotUpdate"] as? Boolean ?: disableHotUpdate
     colorosAiWriterEnabled = saved["colorosAiWriterEnabled"] as? Boolean ?: colorosAiWriterEnabled

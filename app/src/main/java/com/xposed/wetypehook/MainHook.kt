@@ -399,6 +399,9 @@ class MainHook : XposedModule() {
         HookEnvironment.withHookScope("wetype.colors") { hookWeTypeTransparentColors() }
         HookEnvironment.withHookScope("wetype.overlay-underlay") { WeTypeWindowHooks.hookTransparentOverlayUnderlay() }
         HookEnvironment.withHookScope("wetype.self-draw-colors") { hookWeTypeSelfDrawKeyColors() }
+        HookEnvironment.withHookScope("wetype.per-key-colors") {
+            WeTypeResourceHooks.hookSelfDrawPerKeyColors(sourceDir, classLoader)
+        }
         HookEnvironment.withHookScope("wetype.key-corner") { hookWeTypeKeyboardKeyCorner() }
         HookEnvironment.withHookScope("wetype.candidate-text") { hookWeTypeCandidateSpecialTextColor() }
         HookEnvironment.withHookScope("wetype.candidate-alpha") { hookWeTypeCandidateBackgroundAlpha() }

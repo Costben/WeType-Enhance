@@ -418,6 +418,9 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                             showCornerGuide = subPage == SettingsSubPage.CORNER_BLUR,
                             accentColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
                                 ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR,
+                            // 候选条上那颗强调色的候选词用的是「候选词颜色」设置，不是品牌色
+                            // —— 两处各改各的，预览要跟着同一个设置走。
+                            candidateTextColor = candidateTextColor,
                             toolbarLogo = toolbarLogo,
                             nativeLogo = nativeLogo,
                             logoMode = logoMode,

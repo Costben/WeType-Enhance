@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.dp
 import com.xposed.wetypehook.wetype.settings.GlassMaterialOverrides
 import com.xposed.wetypehook.wetype.settings.GlassOverrideField
 import com.xposed.wetypehook.wetype.settings.MaterialPresetCatalog
+import com.xposed.wetypehook.wetype.settings.WeTypeAppearanceColorGroups
+import com.xposed.wetypehook.wetype.settings.WeTypeKeyColorOverrides
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 
     /**
@@ -150,7 +152,17 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                     currentKeyGroupIndex = groupIndex(keyColorGroup(currentModeIsDark).id),
                     onKeyColorChange = {
                         appearanceGroupColors[groupIndex(keyColorGroup(currentModeIsDark).id)] = it
-                    }
+                    },
+                    perKeyColorsEnabled = WeTypeKeyColorOverrides.decode(perKeyColorsJson).enabled,
+                    onPerKeyColorsEnabledChange = { enabled ->
+                        val current = WeTypeKeyColorOverrides.decode(perKeyColorsJson)
+                        perKeyColorsJson = WeTypeKeyColorOverrides.encode(current.copy(enabled = enabled))
+                    },
+                    perKeyColorsJson = perKeyColorsJson,
+                    onPerKeyColorsChange = { perKeyColorsJson = it },
+                    brandColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
+                        ?: WeTypeAppearanceColorGroups.findById("theme_color")?.defaultColor
+                        ?: 0xFF23C891.toInt()
                 )
 
                 SettingsSubPage.CORNER_BLUR -> CornerBlurSubPageContent(
@@ -174,6 +186,11 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                     onCandidateBackgroundLeftMarginDpChange = { candidateBackgroundLeftMarginDp = it },
                     candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
                     onCandidatePinyinLeftMarginDpChange = { candidatePinyinLeftMarginDp = it },
+                    candidateTextColor = candidateTextColor,
+                    onCandidateTextColorChange = { candidateTextColor = it },
+                    brandColor = appearanceGroupColors.getOrNull(groupIndex("theme_color"))
+                        ?: WeTypeAppearanceColorGroups.findById("theme_color")?.defaultColor
+                        ?: 0xFF23C891.toInt(),
                     toolbarIconBgOpacity = toolbarIconBgOpacity,
                     onToolbarIconBgOpacityChange = { toolbarIconBgOpacity = it }
                 )

@@ -65,6 +65,10 @@ object WeTypeSettings {
     private const val KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP =
         "candidate_background_left_margin_dp"
     private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
+    // 候选词文字色：0 = 跟随品牌强调色，其余为自定义 ARGB。
+    private const val KEY_CANDIDATE_TEXT_COLOR = "candidate_text_color"
+    // 「更多样的按键颜色」：{enabled, keys} 的 JSON，见 WeTypeKeyColorOverrides。
+    private const val KEY_PER_KEY_COLORS_JSON = "per_key_colors_json"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
     private const val KEY_COLOROS_AI_WRITER_ENABLED = "coloros_aiwriter_enabled"
@@ -283,6 +287,11 @@ object WeTypeSettings {
     const val MAX_CANDIDATE_BACKGROUND_CORNER = 60
     const val DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP = 6
     const val DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP = 16
+    // 候选词文字色取 0 表示「跟随品牌强调色」。自定义色在写入前一律把 alpha 拉满，
+    // 所以 0 这个取值只会来自「跟随品牌」，不会与一个合法的自定义色撞车。
+    const val CANDIDATE_TEXT_COLOR_BRAND = 0
+    const val DEFAULT_CANDIDATE_TEXT_COLOR = CANDIDATE_TEXT_COLOR_BRAND
+    const val DEFAULT_PER_KEY_COLORS_JSON = ""
     const val MIN_CANDIDATE_MARGIN_DP = 0
     const val MAX_CANDIDATE_MARGIN_DP = 64
     const val DEFAULT_TOOLBAR_ICON_BG_OPACITY = 150
@@ -467,6 +476,8 @@ object WeTypeSettings {
         val candidateBackgroundCorner: Float,
         val candidateBackgroundLeftMarginDp: Int,
         val candidatePinyinLeftMarginDp: Int,
+        val candidateTextColor: Int = DEFAULT_CANDIDATE_TEXT_COLOR,
+        val perKeyColorsJson: String = DEFAULT_PER_KEY_COLORS_JSON,
         val appearanceColors: Map<String, Int>,
         val toolbarIconBgOpacity: Int,
         val edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
@@ -773,6 +784,12 @@ object WeTypeSettings {
 
     fun getCandidatePinyinLeftMarginDp(context: Context): Int =
         readSnapshot(context).candidatePinyinLeftMarginDp
+
+    fun getCandidateTextColor(context: Context): Int =
+        readSnapshot(context).candidateTextColor
+
+    fun getPerKeyColorsJson(context: Context): String =
+        readSnapshot(context).perKeyColorsJson
 
     fun getAppearanceColors(context: Context): Map<String, Int> = readSnapshot(context).appearanceColors
 
@@ -1159,6 +1176,8 @@ object WeTypeSettings {
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
+        candidateTextColor: Int = DEFAULT_CANDIDATE_TEXT_COLOR,
+        perKeyColorsJson: String = DEFAULT_PER_KEY_COLORS_JSON,
         toolbarIconBgOpacity: Int,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors: Map<String, Int>,
@@ -1239,6 +1258,8 @@ object WeTypeSettings {
             candidateBackgroundCorner = candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
+            candidateTextColor = candidateTextColor,
+            perKeyColorsJson = perKeyColorsJson,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
             edgeLightAngle = edgeLightAngle,
             appearanceColors = sanitizedAppearanceColors,
@@ -1335,6 +1356,8 @@ object WeTypeSettings {
             candidateBackgroundCorner = current.candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
+            candidateTextColor = current.candidateTextColor,
+            perKeyColorsJson = current.perKeyColorsJson,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
             edgeLightAngle = current.edgeLightAngle,
             appearanceColors = current.appearanceColors,
@@ -1456,6 +1479,10 @@ object WeTypeSettings {
 
     fun getCandidatePinyinLeftMarginDpXposed(): Int =
         readSnapshotXposed().candidatePinyinLeftMarginDp
+
+    fun getCandidateTextColorXposed(): Int = readSnapshotXposed().candidateTextColor
+
+    fun getPerKeyColorsJsonXposed(): String = readSnapshotXposed().perKeyColorsJson
 
     fun isDisableHotUpdateXposed(): Boolean = readSnapshotXposed().disableHotUpdate
 
@@ -1595,6 +1622,8 @@ object WeTypeSettings {
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
+        candidateTextColor: Int = DEFAULT_CANDIDATE_TEXT_COLOR,
+        perKeyColorsJson: String = DEFAULT_PER_KEY_COLORS_JSON,
         toolbarIconBgOpacity: Int,
         edgeLightAngle: Int = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors: Map<String, Int>,
@@ -1676,6 +1705,8 @@ object WeTypeSettings {
                 .coerceIn(MIN_CANDIDATE_MARGIN_DP, MAX_CANDIDATE_MARGIN_DP),
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp
                 .coerceIn(MIN_CANDIDATE_MARGIN_DP, MAX_CANDIDATE_MARGIN_DP),
+            candidateTextColor = candidateTextColor,
+            perKeyColorsJson = perKeyColorsJson,
             toolbarIconBgOpacity = toolbarIconBgOpacity.coerceIn(0, 255),
             edgeLightAngle = edgeLightAngle.coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
@@ -1835,6 +1866,8 @@ object WeTypeSettings {
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 snapshot.candidatePinyinLeftMarginDp
             )
+            .putInt(KEY_CANDIDATE_TEXT_COLOR, snapshot.candidateTextColor)
+            .putString(KEY_PER_KEY_COLORS_JSON, snapshot.perKeyColorsJson)
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, snapshot.toolbarIconBgOpacity)
             .putInt(KEY_EDGE_LIGHT_ANGLE, snapshot.edgeLightAngle)
             .putBoolean(KEY_SYSTEM_MATERIAL_ENABLED, snapshot.systemMaterialEnabled)
@@ -2029,6 +2062,8 @@ object WeTypeSettings {
         putFloat(KEY_CANDIDATE_BACKGROUND_CORNER, candidateBackgroundCorner)
         putInt(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP, candidateBackgroundLeftMarginDp)
         putInt(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP, candidatePinyinLeftMarginDp)
+        putInt(KEY_CANDIDATE_TEXT_COLOR, candidateTextColor)
+        putString(KEY_PER_KEY_COLORS_JSON, perKeyColorsJson)
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
         putInt(KEY_EDGE_LIGHT_ANGLE, edgeLightAngle)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
@@ -2150,6 +2185,8 @@ object WeTypeSettings {
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 defaults.candidatePinyinLeftMarginDp
             ).coerceIn(0, 64),
+            candidateTextColor = getInt(KEY_CANDIDATE_TEXT_COLOR, defaults.candidateTextColor),
+            perKeyColorsJson = getString(KEY_PER_KEY_COLORS_JSON, defaults.perKeyColorsJson).orEmpty(),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 val bundled = if (appearanceBundle?.containsKey(group.id) == true) {
                     appearanceBundle.getInt(group.id, group.defaultColor)
@@ -2436,6 +2473,8 @@ object WeTypeSettings {
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
             ).coerceIn(0, 64),
+            candidateTextColor = getInt(KEY_CANDIDATE_TEXT_COLOR, DEFAULT_CANDIDATE_TEXT_COLOR),
+            perKeyColorsJson = getString(KEY_PER_KEY_COLORS_JSON, DEFAULT_PER_KEY_COLORS_JSON).orEmpty(),
             toolbarIconBgOpacity = getInt(KEY_TOOLBAR_ICON_BG_OPACITY, DEFAULT_TOOLBAR_ICON_BG_OPACITY).coerceIn(0, 255),
             edgeLightAngle = getInt(KEY_EDGE_LIGHT_ANGLE, DEFAULT_EDGE_LIGHT_ANGLE)
                 .coerceIn(MIN_EDGE_LIGHT_ANGLE, MAX_EDGE_LIGHT_ANGLE),
@@ -2583,6 +2622,8 @@ object WeTypeSettings {
         candidateBackgroundCorner = DEFAULT_CANDIDATE_BACKGROUND_CORNER,
         candidateBackgroundLeftMarginDp = DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
         candidatePinyinLeftMarginDp = DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
+        candidateTextColor = DEFAULT_CANDIDATE_TEXT_COLOR,
+        perKeyColorsJson = DEFAULT_PER_KEY_COLORS_JSON,
         toolbarIconBgOpacity = DEFAULT_TOOLBAR_ICON_BG_OPACITY,
         edgeLightAngle = DEFAULT_EDGE_LIGHT_ANGLE,
         appearanceColors = WeTypeAppearanceColorGroups.defaultColors(),
@@ -2664,6 +2705,8 @@ object WeTypeSettings {
             contains(KEY_CANDIDATE_BACKGROUND_CORNER) ||
             contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) ||
             contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) ||
+            contains(KEY_CANDIDATE_TEXT_COLOR) ||
+            contains(KEY_PER_KEY_COLORS_JSON) ||
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
             contains(KEY_EDGE_LIGHT_ANGLE) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||

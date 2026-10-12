@@ -17,10 +17,20 @@ internal fun previewTextColor(color: Int): ComposeColor =
  */
 internal fun replicaKeyLabelColor(keyColor: Int, panelColor: Int): ComposeColor =
     if (isLightColor(replicaCompositeOver(keyColor, panelColor))) {
-        ComposeColor.Black
+        ComposeColor(REPLICA_KEY_LABEL_LIGHT_ARGB)
     } else {
         ComposeColor(REPLICA_KEY_LABEL_DARK_ARGB)
     }
+
+/**
+ * 逐键覆盖后的键面字色。
+ *
+ * 宿主只按自己的主题属性给键面文字/图标上色，键帽底色被逐键改掉之后**不会**跟着反色，
+ * 深底配原字色就整颗看不见了。这里按新底色现算一次：浅底配黑字、深底配真机实测的 235 灰
+ * （与 [replicaKeyLabelColor] 同一口径，所以模拟键盘和真机是同一个颜色）。
+ */
+internal fun perKeyLabelColor(background: Int): Int =
+    if (isLightColor(background)) REPLICA_KEY_LABEL_LIGHT_ARGB else REPLICA_KEY_LABEL_DARK_ARGB
 
 internal fun parseLogoCustomColor(input: String): Int {
     return parseRgbColor(input) ?: WeTypeSettings.DEFAULT_LOGO_CUSTOM_COLOR
