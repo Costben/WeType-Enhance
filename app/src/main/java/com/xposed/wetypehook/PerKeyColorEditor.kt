@@ -225,15 +225,16 @@ internal fun PerKeyColorEditor(
             currentInvert = token in overrides.invert,
             brandColor = brandColor,
             onDismiss = { editingToken = null },
-            onApply = { value ->
-                onOverridesChange(WeTypeKeyColorOverrides.encode(overrides.withColor(token, value)))
+            onSave = { value, invert ->
+                // 先落色再落反色：withColor(null) 本身就会清掉该键的反色记录，
+                // 只有真的选了颜色才写 invert，免得留下一条读不回来的孤条目。
+                val next = overrides.withColor(token, value)
+                onOverridesChange(
+                    WeTypeKeyColorOverrides.encode(
+                        if (value == null) next else next.withInvert(token, invert)
+                    )
+                )
                 editingToken = null
-            },
-            onApplyLive = { value ->
-                onOverridesChange(WeTypeKeyColorOverrides.encode(overrides.withColor(token, value)))
-            },
-            onInvertChange = { invert ->
-                onOverridesChange(WeTypeKeyColorOverrides.encode(overrides.withInvert(token, invert)))
             }
         )
     }
@@ -294,6 +295,13 @@ private const val LABEL_CONTRAST_TIE = 0.5f
 private fun contrastText(contrast: Float): String =
     String.format(java.util.Locale.US, "%.1f:1", contrast)
 
+/**
+ * 键帽对话框。**选哪个底色、反不反色、填什么色都只是暂存**，只有点「保存」才落盘，
+ * 直接关掉对话框就等于放弃。
+ *
+ * 以前点一下选项就当场保存并退出，用户既没机会接着开「字符反色」，也没机会改主意 ——
+ * 所以这里所有交互都只改暂存值，`onSave` 是唯一的写入口。
+ */
 @Composable
 private fun SetPerKeyColorDialog(
     keyLabel: String,
@@ -301,10 +309,11 @@ private fun SetPerKeyColorDialog(
     currentInvert: Boolean,
     brandColor: Int,
     onDismiss: () -> Unit,
-    onApply: (String?) -> Unit,
-    onApplyLive: (String?) -> Unit,
-    onInvertChange: (Boolean) -> Unit
+    onSave: (String?, Boolean) -> Unit
 ) {
+    // stagedValue 与 currentValue 同构：null = 跟随默认，`brand` 字面量 = 品牌色，#AARRGGBB = 自定义。
+    var stagedValue by rememberSaveable(keyLabel) { mutableStateOf(currentValue) }
+    var stagedInvert by rememberSaveable(keyLabel) { mutableStateOf(currentInvert) }
     var customInput by rememberSaveable(keyLabel) {
         mutableStateOf(
             currentValue?.takeIf { it.startsWith("#") }?.let { formatArgb(parseHexColor(it) ?: brandColor) }
@@ -313,7 +322,8 @@ private fun SetPerKeyColorDialog(
     }
 
     // 两个候选按对比度排好，auto 是自动会选的、forced 是「字符反色」会换成的那个。
-    val choices = resolveOverrideColor(currentValue, brandColor)?.let(::perKeyLabelChoices)
+    // 算的是**暂存**色值，所以说明文字描述的正是按「保存」之后会发生的事。
+    val choices = resolveOverrideColor(stagedValue, brandColor)?.let(::perKeyLabelChoices)
     val auto = choices?.get(0)
     val forced = choices?.get(1)
     val invertSummary = if (auto == null || forced == null) {
@@ -321,8 +331,8 @@ private fun SetPerKeyColorDialog(
     } else if (auto.contrast - forced.contrast < LABEL_CONTRAST_TIE) {
         "两种字色对比度接近（${perKeyLabelName(auto.color)} ${contrastText(auto.contrast)} / " +
             "${perKeyLabelName(forced.color)} ${contrastText(forced.contrast)}），" +
-            "当前用${perKeyLabelName(if (currentInvert) forced.color else auto.color)}，打开可强制反色"
-    } else if (currentInvert) {
+            "当前用${perKeyLabelName(if (stagedInvert) forced.color else auto.color)}，打开可强制反色"
+    } else if (stagedInvert) {
         "已强制用${perKeyLabelName(forced.color)}（对比度 ${contrastText(forced.contrast)}）；" +
             "自动本会选${perKeyLabelName(auto.color)}（${contrastText(auto.contrast)}）"
     } else {
@@ -333,34 +343,34 @@ private fun SetPerKeyColorDialog(
     OverlayDialog(
         show = true,
         title = "设置按键 [$keyLabel] 颜色",
-        summary = "点键帽只改这一颗；未设定的键继续用键盘默认按键色",
+        summary = "只改这一颗；点「保存」才生效",
         onDismissRequest = onDismiss
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             DialogSwitchRow(
                 text = "字符反色",
                 summary = invertSummary,
-                checked = currentInvert,
+                checked = stagedInvert,
                 enabled = auto != null,
-                onCheckedChange = onInvertChange
+                onCheckedChange = { stagedInvert = it }
             )
             DialogOptionRow(
                 text = "跟随默认",
                 summary = "使用键盘默认按键色",
-                selected = currentValue == null,
-                onClick = { onApply(null) }
+                selected = stagedValue == null,
+                onClick = { stagedValue = null }
             )
             DialogOptionRow(
                 text = "品牌色",
                 summary = "跟随「品牌强调色」，改品牌色时这颗键跟着变",
-                selected = currentValue == WeTypeKeyColorOverrides.BRAND,
-                onClick = { onApply(WeTypeKeyColorOverrides.BRAND) }
+                selected = stagedValue == WeTypeKeyColorOverrides.BRAND,
+                onClick = { stagedValue = WeTypeKeyColorOverrides.BRAND }
             )
             DialogOptionRow(
                 text = "自定义颜色",
                 summary = "在下面输入 #RRGGBB 或 #AARRGGBB",
-                selected = currentValue?.startsWith("#") == true,
-                onClick = { }
+                selected = stagedValue?.startsWith("#") == true,
+                onClick = { stagedValue = parseHexColor(customInput)?.let(::formatArgb) }
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -384,9 +394,8 @@ private fun SetPerKeyColorDialog(
                     onValueChange = { raw ->
                         val sanitized = sanitizeHexColorInput(raw) ?: return@TextField
                         customInput = sanitized
-                        parseHexColor(sanitized)?.let { color ->
-                            onApplyLive(String.format("#%08X", color))
-                        }
+                        // 手指落在输入框里就是在选「自定义颜色」，能解析出完整色值就顺带选中该行。
+                        parseHexColor(sanitized)?.let { stagedValue = formatArgb(it) }
                     },
                     label = "#RRGGBB",
                     singleLine = true,
@@ -398,7 +407,7 @@ private fun SetPerKeyColorDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
-                TextButton(text = "完成", onClick = onDismiss)
+                TextButton(text = "保存", onClick = { onSave(stagedValue, stagedInvert) })
             }
         }
     }
