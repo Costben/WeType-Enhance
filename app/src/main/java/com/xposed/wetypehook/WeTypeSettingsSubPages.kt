@@ -262,6 +262,10 @@ internal fun WeTypeSettingsState.renderSubPageContent(
                     onClipboardImageMaxCountChange = { clipboardImageMaxCount = it },
                     clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
                     onClipboardImageMaxSizeMbChange = { clipboardImageMaxSizeMb = it },
+                    clipboardWaterfallFlowEnabled = clipboardWaterfallFlowEnabled,
+                    onClipboardWaterfallFlowEnabledChange = { clipboardWaterfallFlowEnabled = it },
+                    clipboardWaterfallMaxHeightDp = clipboardWaterfallMaxHeightDp,
+                    onClipboardWaterfallMaxHeightDpChange = { clipboardWaterfallMaxHeightDp = it },
                     onOpenClipboardBackup = {
                         WeTypeHostLauncher.launchBackupPage(settingsContext as? Activity)
                     }

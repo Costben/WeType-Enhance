@@ -333,6 +333,8 @@ internal class WeTypeSettingsState(
     var clipboardImageUniformRowHeight by mutableStateOf(snapshot.clipboardImageUniformRowHeight)
     var clipboardImageMaxCount by mutableIntStateOf(snapshot.clipboardImageMaxCount)
     var clipboardImageMaxSizeMb by mutableIntStateOf(snapshot.clipboardImageMaxSizeMb)
+    var clipboardWaterfallFlowEnabled by mutableStateOf(snapshot.clipboardWaterfallFlowEnabled)
+    var clipboardWaterfallMaxHeightDp by mutableIntStateOf(snapshot.clipboardWaterfallMaxHeightDp)
     var qwertyGestureEnabled by mutableStateOf(snapshot.qwertyGestureEnabled)
     var t9GestureEnabled by mutableStateOf(snapshot.t9GestureEnabled)
     var gestureThreshold by mutableIntStateOf(snapshot.gestureThreshold)
@@ -804,6 +806,8 @@ internal class WeTypeSettingsState(
             clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
             clipboardImageMaxCount = clipboardImageMaxCount,
             clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
+            clipboardWaterfallFlowEnabled = clipboardWaterfallFlowEnabled,
+            clipboardWaterfallMaxHeightDp = clipboardWaterfallMaxHeightDp,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -911,6 +915,8 @@ internal class WeTypeSettingsState(
         clipboardImageUniformRowHeight = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT
         clipboardImageMaxCount = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_MAX_COUNT
         clipboardImageMaxSizeMb = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB
+        clipboardWaterfallFlowEnabled = WeTypeSettings.DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED
+        clipboardWaterfallMaxHeightDp = WeTypeSettings.DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP
         qwertyGestureEnabled = WeTypeSettings.DEFAULT_QWERTY_GESTURE_ENABLED
         t9GestureEnabled = WeTypeSettings.DEFAULT_T9_GESTURE_ENABLED
         gestureThreshold = WeTypeSettings.DEFAULT_GESTURE_THRESHOLD

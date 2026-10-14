@@ -105,7 +105,10 @@ internal object WeTypeClipboardImageEntries {
                 thumbnailByHolder[holder]?.get()?.visibility = View.GONE
                 rowClickByHolder[holder]?.get()?.visibility = View.GONE
                 contentScroll?.visibility = View.VISIBLE
-                applyLineHeight(line1, line1Px)
+                if (!WeTypeClipboardWaterfallHooks.isWaterfallEnabled()) {
+                    // 瀑布流行高由文本自身撑开，这里再把行高写回单行高就会把长文本压死。
+                    applyLineHeight(line1, line1Px)
+                }
                 return
             }
             boundItemByHolder[holder] = item
@@ -123,7 +126,10 @@ internal object WeTypeClipboardImageEntries {
             // 统一高度 = 两行高（默认）；关闭 = 单行高。缩略图高 = 行高 - 2*inset，
             // 宽按原比例，超过行宽则等比缩高（ADR-0002 修订）。
             val uniform = WeTypeSettings.isClipboardImageUniformRowHeightXposed()
-            val rowHeight = if (uniform) line1Px + line2Px else line1Px
+            val maxCardPx = WeTypeClipboardWaterfallHooks.maxContentHeightPx()
+            val rawRowHeight = if (uniform) line1Px + line2Px else line1Px
+            // 瀑布流开启时按用户设定的卡片最大高度封顶，长图不再独占整列。
+            val rowHeight = if (maxCardPx > 0) rawRowHeight.coerceAtMost(maxCardPx) else rawRowHeight
             val targetHeight = (rowHeight - 2 * inset).coerceAtLeast(1)
             val adjustRatio = WeTypeSettings.isClipboardImageAdjustRatioXposed()
             val crop = WeTypeSettings.isClipboardImageCropXposed()
@@ -343,6 +349,7 @@ internal object WeTypeClipboardImageEntries {
     /** 行的可用宽度：行宽（未布局时退化为屏宽）- 缩略图左缩进 - 右留白。 */
     private fun rowMaxWidth(line1: View?, indent: Int): Int {
         val rowWidth = line1?.width?.takeIf { it > 0 }
+            ?: line1?.let { WeTypeClipboardWaterfallHooks.columnWidthFallbackPx(it) }?.takeIf { it > 0 }
             ?: line1?.resources?.displayMetrics?.widthPixels
             ?: return Int.MAX_VALUE
         val reserve = WeTypeClipboardImageHost.rawToPx(THUMB_INSET_DP)

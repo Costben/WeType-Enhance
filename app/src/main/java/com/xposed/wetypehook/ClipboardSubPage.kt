@@ -35,6 +35,10 @@ internal fun LazyListScope.ClipboardSubPageContent(
     onClipboardImageMaxCountChange: (Int) -> Unit,
     clipboardImageMaxSizeMb: Int,
     onClipboardImageMaxSizeMbChange: (Int) -> Unit,
+    clipboardWaterfallFlowEnabled: Boolean,
+    onClipboardWaterfallFlowEnabledChange: (Boolean) -> Unit,
+    clipboardWaterfallMaxHeightDp: Int,
+    onClipboardWaterfallMaxHeightDpChange: (Int) -> Unit,
     onOpenClipboardBackup: () -> Unit
 ) {
     item {
@@ -131,6 +135,32 @@ internal fun LazyListScope.ClipboardSubPageContent(
                 selectedIndex = imageSizeOptions.indexOf(clipboardImageMaxSizeMb).coerceAtLeast(0),
                 onSelectedIndexChange = { index ->
                     onClipboardImageMaxSizeMbChange(imageSizeOptions[index])
+                }
+            )
+        }
+    }
+
+    item {
+        SmallTitle(text = "排版与布局")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            SwitchPreference(
+                title = "剪贴板双列瀑布流",
+                summary = "剪贴板以双列瀑布流展示；卡片超过最大高度时，文本末行显示省略号，图片等比缩放",
+                checked = clipboardWaterfallFlowEnabled,
+                onCheckedChange = onClipboardWaterfallFlowEnabledChange
+            )
+            val waterfallHeightOptions = listOf(100, 120, 140, 160, 180, 200, 240)
+            OverlayDropdownPreference(
+                title = "卡片最大高度",
+                items = waterfallHeightOptions.map { "$it dp" },
+                selectedIndex = waterfallHeightOptions
+                    .indexOf(clipboardWaterfallMaxHeightDp)
+                    .coerceAtLeast(0),
+                onSelectedIndexChange = { index ->
+                    onClipboardWaterfallMaxHeightDpChange(waterfallHeightOptions[index])
                 }
             )
         }

@@ -100,6 +100,8 @@ object WeTypeSettings {
     const val KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT = "clipboard_image_uniform_row_height"
     const val KEY_CLIPBOARD_IMAGE_MAX_COUNT = "clipboard_image_max_count"
     const val KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB = "clipboard_image_max_size_mb"
+    const val KEY_CLIPBOARD_WATERFALL_FLOW = "clipboard_waterfall_flow_enabled"
+    const val KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP = "clipboard_waterfall_max_height_dp"
 
     // 剪贴板备份与恢复（独立读写，不进入 Snapshot）。
     const val KEY_BACKUP_LOCAL_FOLDER_URI = "clipboard_backup_local_folder_uri"
@@ -157,6 +159,15 @@ object WeTypeSettings {
         } else {
             value.coerceIn(CLIPBOARD_IMAGE_MIN_SIZE_MB, CLIPBOARD_IMAGE_MAX_SIZE_MB_LIMIT)
         }
+
+    // 剪贴板双列瀑布流：默认关闭；最大高度默认 140dp（范围 80dp~300dp）。
+    const val DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED = false
+    const val DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP = 140
+    const val CLIPBOARD_WATERFALL_MIN_HEIGHT_DP = 80
+    const val CLIPBOARD_WATERFALL_MAX_HEIGHT_DP_LIMIT = 300
+
+    fun sanitizeClipboardWaterfallMaxHeightDp(value: Int): Int =
+        value.coerceIn(CLIPBOARD_WATERFALL_MIN_HEIGHT_DP, CLIPBOARD_WATERFALL_MAX_HEIGHT_DP_LIMIT)
 
     const val DEFAULT_QWERTY_GESTURE_ENABLED = true
     const val DEFAULT_T9_GESTURE_ENABLED = false
@@ -506,6 +517,8 @@ object WeTypeSettings {
         val clipboardImageUniformRowHeight: Boolean = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         val clipboardImageMaxCount: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_COUNT,
         val clipboardImageMaxSizeMb: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
+        val clipboardWaterfallFlowEnabled: Boolean = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
+        val clipboardWaterfallMaxHeightDp: Int = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
         val qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         val t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         val gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -555,6 +568,12 @@ object WeTypeSettings {
 
     fun getClipboardImageMaxSizeMb(context: Context): Int =
         readSnapshot(context).clipboardImageMaxSizeMb
+
+    fun isClipboardWaterfallFlowEnabled(context: Context): Boolean =
+        readSnapshot(context).clipboardWaterfallFlowEnabled
+
+    fun getClipboardWaterfallMaxHeightDp(context: Context): Int =
+        readSnapshot(context).clipboardWaterfallMaxHeightDp
 
     /**
      * 语音端点判定参数。识别服务跑在模块进程，读的就是模块自己那份偏好（由桥接写入），
@@ -691,6 +710,12 @@ object WeTypeSettings {
     fun getClipboardImageMaxCountXposed(): Int = readSnapshotXposed().clipboardImageMaxCount
 
     fun getClipboardImageMaxSizeMbXposed(): Int = readSnapshotXposed().clipboardImageMaxSizeMb
+
+    fun isClipboardWaterfallFlowEnabledXposed(): Boolean =
+        readSnapshotXposed().clipboardWaterfallFlowEnabled
+
+    fun getClipboardWaterfallMaxHeightDpXposed(): Int =
+        readSnapshotXposed().clipboardWaterfallMaxHeightDp
 
     fun isQwertyGestureEnabledXposed(): Boolean = readSnapshotXposed().qwertyGestureEnabled
     fun isT9GestureEnabledXposed(): Boolean = readSnapshotXposed().t9GestureEnabled
@@ -1206,6 +1231,8 @@ object WeTypeSettings {
         clipboardImageUniformRowHeight: Boolean = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         clipboardImageMaxCount: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_COUNT,
         clipboardImageMaxSizeMb: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
+        clipboardWaterfallFlowEnabled: Boolean = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
+        clipboardWaterfallMaxHeightDp: Int = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -1288,6 +1315,8 @@ object WeTypeSettings {
             clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
             clipboardImageMaxCount = clipboardImageMaxCount,
             clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
+            clipboardWaterfallFlowEnabled = clipboardWaterfallFlowEnabled,
+            clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(clipboardWaterfallMaxHeightDp),
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -1386,6 +1415,8 @@ object WeTypeSettings {
             clipboardImageUniformRowHeight = current.clipboardImageUniformRowHeight,
             clipboardImageMaxCount = current.clipboardImageMaxCount,
             clipboardImageMaxSizeMb = current.clipboardImageMaxSizeMb,
+            clipboardWaterfallFlowEnabled = current.clipboardWaterfallFlowEnabled,
+            clipboardWaterfallMaxHeightDp = current.clipboardWaterfallMaxHeightDp,
             qwertyGestureEnabled = current.qwertyGestureEnabled,
             t9GestureEnabled = current.t9GestureEnabled,
             gestureThreshold = current.gestureThreshold,
@@ -1652,6 +1683,8 @@ object WeTypeSettings {
         clipboardImageUniformRowHeight: Boolean = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         clipboardImageMaxCount: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_COUNT,
         clipboardImageMaxSizeMb: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
+        clipboardWaterfallFlowEnabled: Boolean = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
+        clipboardWaterfallMaxHeightDp: Int = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -1737,6 +1770,8 @@ object WeTypeSettings {
             clipboardImageUniformRowHeight = clipboardImageUniformRowHeight,
             clipboardImageMaxCount = sanitizeClipboardImageMaxCount(clipboardImageMaxCount),
             clipboardImageMaxSizeMb = sanitizeClipboardImageMaxSizeMb(clipboardImageMaxSizeMb),
+            clipboardWaterfallFlowEnabled = clipboardWaterfallFlowEnabled,
+            clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(clipboardWaterfallMaxHeightDp),
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold.coerceIn(10, 48),
@@ -1897,6 +1932,8 @@ object WeTypeSettings {
             .putBoolean(KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT, snapshot.clipboardImageUniformRowHeight)
             .putInt(KEY_CLIPBOARD_IMAGE_MAX_COUNT, snapshot.clipboardImageMaxCount)
             .putInt(KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB, snapshot.clipboardImageMaxSizeMb)
+            .putBoolean(KEY_CLIPBOARD_WATERFALL_FLOW, snapshot.clipboardWaterfallFlowEnabled)
+            .putInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, snapshot.clipboardWaterfallMaxHeightDp)
             .putBoolean(KEY_QWERTY_GESTURE_ENABLED, snapshot.qwertyGestureEnabled)
             .putBoolean(KEY_T9_GESTURE_ENABLED, snapshot.t9GestureEnabled)
             .putInt(KEY_GESTURE_THRESHOLD, snapshot.gestureThreshold)
@@ -2091,6 +2128,8 @@ object WeTypeSettings {
         putBoolean(KEY_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT, clipboardImageUniformRowHeight)
         putInt(KEY_CLIPBOARD_IMAGE_MAX_COUNT, clipboardImageMaxCount)
         putInt(KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB, clipboardImageMaxSizeMb)
+        putBoolean(KEY_CLIPBOARD_WATERFALL_FLOW, clipboardWaterfallFlowEnabled)
+        putInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, clipboardWaterfallMaxHeightDp)
         putBoolean(KEY_QWERTY_GESTURE_ENABLED, qwertyGestureEnabled)
         putBoolean(KEY_T9_GESTURE_ENABLED, t9GestureEnabled)
         putInt(KEY_GESTURE_THRESHOLD, gestureThreshold)
@@ -2257,6 +2296,13 @@ object WeTypeSettings {
             ),
             clipboardImageMaxSizeMb = sanitizeClipboardImageMaxSizeMb(
                 getInt(KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB, defaults.clipboardImageMaxSizeMb)
+            ),
+            clipboardWaterfallFlowEnabled = getBoolean(
+                KEY_CLIPBOARD_WATERFALL_FLOW,
+                defaults.clipboardWaterfallFlowEnabled
+            ),
+            clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(
+                getInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, defaults.clipboardWaterfallMaxHeightDp)
             ),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, defaults.qwertyGestureEnabled),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, defaults.t9GestureEnabled),
@@ -2540,6 +2586,13 @@ object WeTypeSettings {
             clipboardImageMaxSizeMb = sanitizeClipboardImageMaxSizeMb(
                 getInt(KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB, DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB)
             ),
+            clipboardWaterfallFlowEnabled = getBoolean(
+                KEY_CLIPBOARD_WATERFALL_FLOW,
+                DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED
+            ),
+            clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(
+                getInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP)
+            ),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, DEFAULT_QWERTY_GESTURE_ENABLED),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, DEFAULT_T9_GESTURE_ENABLED),
             gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, DEFAULT_GESTURE_THRESHOLD).coerceIn(10, 48),
@@ -2652,6 +2705,8 @@ object WeTypeSettings {
         clipboardImageUniformRowHeight = DEFAULT_CLIPBOARD_IMAGE_UNIFORM_ROW_HEIGHT,
         clipboardImageMaxCount = DEFAULT_CLIPBOARD_IMAGE_MAX_COUNT,
         clipboardImageMaxSizeMb = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
+        clipboardWaterfallFlowEnabled = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
+        clipboardWaterfallMaxHeightDp = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
         qwertyGestureEnabled = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold = DEFAULT_GESTURE_THRESHOLD,

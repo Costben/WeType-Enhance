@@ -74,6 +74,8 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "clipboardImageUniformRowHeight" to clipboardImageUniformRowHeight,
     "clipboardImageMaxCount" to clipboardImageMaxCount,
     "clipboardImageMaxSizeMb" to clipboardImageMaxSizeMb,
+    "clipboardWaterfallFlowEnabled" to clipboardWaterfallFlowEnabled,
+    "clipboardWaterfallMaxHeightDp" to clipboardWaterfallMaxHeightDp,
     "qwertyGestureEnabled" to qwertyGestureEnabled,
     "t9GestureEnabled" to t9GestureEnabled,
     "gestureThreshold" to gestureThreshold,
@@ -218,6 +220,10 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
         ?: clipboardImageUniformRowHeight
     clipboardImageMaxCount = saved["clipboardImageMaxCount"] as? Int ?: clipboardImageMaxCount
     clipboardImageMaxSizeMb = saved["clipboardImageMaxSizeMb"] as? Int ?: clipboardImageMaxSizeMb
+    clipboardWaterfallFlowEnabled = saved["clipboardWaterfallFlowEnabled"] as? Boolean
+        ?: clipboardWaterfallFlowEnabled
+    clipboardWaterfallMaxHeightDp = saved["clipboardWaterfallMaxHeightDp"] as? Int
+        ?: clipboardWaterfallMaxHeightDp
     qwertyGestureEnabled = saved["qwertyGestureEnabled"] as? Boolean ?: qwertyGestureEnabled
     t9GestureEnabled = saved["t9GestureEnabled"] as? Boolean ?: t9GestureEnabled
     gestureThreshold = saved["gestureThreshold"] as? Int ?: gestureThreshold

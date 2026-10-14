@@ -87,6 +87,13 @@ internal object WeTypeClipboardHooks {
             Log.e("Failed: Installing clipboard search filter: ${it.message}")
             Log.i(it)
         }
+        // 双列瀑布流：必须在图片条目/搜索过滤之后挂，onBindViewHolder 后处理按注册顺序收尾。
+        runCatching {
+            WeTypeClipboardWaterfallHooks.install(classLoader)
+        }.onFailure {
+            Log.e("Failed: Installing clipboard waterfall hooks: ${it.message}")
+            Log.i(it)
+        }
     }
 
     /**
