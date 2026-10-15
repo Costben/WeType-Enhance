@@ -30,8 +30,8 @@ internal object ClipboardWaterfallLayoutLogic {
         return usable / spanCount
     }
 
-    /** 点 ⋮ 展开的操作栏里常驻的按钮数：常用语、选词、删除。 */
-    const val ACTION_BUTTON_COUNT = 3
+    /** 展开操作栏上面一行并排的按钮数：常用语、选词；删除单独占下面一整行。 */
+    const val ACTION_COLUMN_COUNT = 2
 
     /**
      * 文本卡片最多排几行，让整张卡片不超过「卡片最大高度」。
@@ -46,6 +46,30 @@ internal object ClipboardWaterfallLayoutLogic {
         if (maxCardPx <= 0 || lineHeightPx <= 0) return Int.MAX_VALUE
         val budget = (maxCardPx - chromePx.coerceAtLeast(0)).coerceAtLeast(0)
         return (budget / lineHeightPx).coerceAtLeast(1)
+    }
+
+    /**
+     * 文本折行视口（px）：滚动容器的实测宽扣掉它随卡片链一起虚高的部分与文本自身左右内边距。
+     *
+     * 卡片链的宽度由 Hook 层按条目实测宽写死，但那一轮布局量出来的滚动容器宽度可能还是宿主原生口径
+     * （整块面板宽）—— 卡片比条目宽多少，它就比真实视口宽多少，减掉才是这一列真正的视口。
+     * 滚动容器还没排版（[scrollWidthPx] ≤ 0）时，退回用已知的固定占位 [knownInsetPx]
+     * （卡片宽 - 滚动容器宽，与列宽无关的布局常量）从条目宽 [itemWidthPx] 反推。
+     * 结果 ≤ 0 表示算不出来，调用方应跳过（保持原样，等下一次布局）。
+     */
+    fun textViewportPx(
+        scrollWidthPx: Int,
+        cardWidthPx: Int,
+        itemWidthPx: Int,
+        knownInsetPx: Int,
+        paddingPx: Int
+    ): Int {
+        val chrome = paddingPx.coerceAtLeast(0)
+        if (scrollWidthPx > 0) {
+            return scrollWidthPx - (cardWidthPx - itemWidthPx).coerceAtLeast(0) - chrome
+        }
+        if (knownInsetPx >= 0 && itemWidthPx > 0) return itemWidthPx - knownInsetPx - chrome
+        return 0
     }
 
     /**
@@ -69,14 +93,12 @@ internal object ClipboardWaterfallLayoutLogic {
     }
 
     /**
-     * 展开后操作栏里每颗按钮的边长。
+     * 展开后操作栏上面一行里每颗按钮的宽度。
      *
-     * 宿主展开动画是把条目横向滚动「操作栏宽度」那么远，视口就是列宽。原生三颗带文字的按钮合计
-     * 约 726px，列宽只有 456px，滚到头会把最左边的按钮整个挤出视口。这里反过来算：
-     * 视口里要给卡片尾部留出 ⋮（[moreButtonPx]）加 [tailPaddingPx] 的位置，否则用户没法再点 ⋮ 收起，
-     * 剩下的宽度由 [count] 颗按钮和它们前面的间隙 [gapPx] 平分，结果夹在
-     * [[minButtonPx], [maxButtonPx]] 之间（上限是原生图标按钮宽，列宽富裕时不放大）。
-     * 列宽未知（≤ 0）返回 0，调用方应保持原生。
+     * 宿主展开动画是把条目横向滚动「操作栏宽度」那么远，视口就是列宽。操作栏太宽会把卡片整个顶出视口，
+     * 用户也就没法再点 ⋮ 收起，所以视口里要给卡片尾部留出 ⋮（[moreButtonPx]）加 [tailPaddingPx] 的位置，
+     * 剩下的宽度由 [count] 颗按钮和它们前面的间隙 [gapPx] 平分，结果夹在 [[minButtonPx], [maxButtonPx]]
+     * 之间（上限是想要的紧凑宽度，列宽富裕时不放大）。列宽未知（≤ 0）返回 0，调用方应保持原生。
      */
     fun actionButtonPx(
         columnWidthPx: Int,
@@ -85,7 +107,7 @@ internal object ClipboardWaterfallLayoutLogic {
         gapPx: Int,
         minButtonPx: Int,
         maxButtonPx: Int,
-        count: Int = ACTION_BUTTON_COUNT
+        count: Int = ACTION_COLUMN_COUNT
     ): Int {
         if (columnWidthPx <= 0 || count <= 0) return 0
         val menuBudget = columnWidthPx - moreButtonPx.coerceAtLeast(0) - tailPaddingPx.coerceAtLeast(0)
@@ -93,7 +115,56 @@ internal object ClipboardWaterfallLayoutLogic {
         return raw.coerceIn(minButtonPx, maxOf(minButtonPx, maxButtonPx))
     }
 
-    /** 操作栏总宽：每颗按钮前都有一段间隙。 */
-    fun actionMenuWidthPx(buttonPx: Int, gapPx: Int, count: Int = ACTION_BUTTON_COUNT): Int =
+    /** 操作栏总宽：每列按钮前都有一段间隙。 */
+    fun actionMenuWidthPx(buttonPx: Int, gapPx: Int, count: Int = ACTION_COLUMN_COUNT): Int =
         count * (buttonPx + gapPx.coerceAtLeast(0))
+
+    /** 文本卡片的最小行数：单行卡片也撑到这个行数的高度，展开后的按钮才不会小得没法点。 */
+    const val CARD_MIN_LINES = 2
+
+    /** 展开操作栏最高只到这么多行文本的卡片高度，内容再长也不会继续长高。 */
+    const val ACTION_MAX_LINES = 3
+
+    /** 读不到卡片圆角时，按钮圆角取行高的这个比例。 */
+    const val ACTION_FALLBACK_RADIUS_RATIO = 0.3f
+
+    /**
+     * [lines] 行文本的卡片有多高：卡片上不属于文本行的固定占位 [chromePx]（上下内边距）加 [lines] 个行距。
+     * 行距 ≤ 0（还没排出版）或行数 ≤ 0 返回 0，表示「不知道」。
+     */
+    fun linesCardHeightPx(chromePx: Int, linePitchPx: Int, lines: Int): Int {
+        if (linePitchPx <= 0 || lines <= 0) return 0
+        return chromePx.coerceAtLeast(0) + lines * linePitchPx
+    }
+
+    /**
+     * 展开后三个按钮组合起来的总高度：与盖住它们的卡片一样高，最多到 [maxBlockPx]（三行文本的卡片高度）。
+     * 卡片高度未知（≤ 0）返回 0，调用方应保持原生；[maxBlockPx] ≤ 0 表示不封顶。
+     */
+    fun actionBlockHeightPx(cardHeightPx: Int, maxBlockPx: Int): Int {
+        if (cardHeightPx <= 0) return 0
+        return if (maxBlockPx > 0) minOf(cardHeightPx, maxBlockPx) else cardHeightPx
+    }
+
+    /**
+     * 把总高 [blockHeightPx] 拆成「上排高度、下排高度」：两排之间隔 [gapPx]，
+     * 上排取整，余数留给下排，两排加间隙正好等于总高（奇数像素也不会比卡片矮一截）。
+     */
+    fun actionRowHeightsPx(blockHeightPx: Int, gapPx: Int): Pair<Int, Int> {
+        if (blockHeightPx <= 0) return 0 to 0
+        val gap = gapPx.coerceAtLeast(0)
+        val top = ((blockHeightPx - gap) / 2).coerceAtLeast(1)
+        val bottom = (blockHeightPx - gap - top).coerceAtLeast(1)
+        return top to bottom
+    }
+
+    /**
+     * 按钮圆角：与卡片一致，但不超过最矮一排高度的一半（再大就不是圆角矩形而是胶囊了）。
+     * 读不到卡片圆角（[cardRadiusPx] ≤ 0）时退回行高的 [ACTION_FALLBACK_RADIUS_RATIO]。
+     */
+    fun actionCornerRadiusPx(cardRadiusPx: Int, shortestRowPx: Int): Int {
+        if (shortestRowPx <= 0) return 0
+        if (cardRadiusPx <= 0) return (shortestRowPx * ACTION_FALLBACK_RADIUS_RATIO).toInt().coerceAtLeast(1)
+        return minOf(cardRadiusPx, shortestRowPx / 2).coerceAtLeast(1)
+    }
 }

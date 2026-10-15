@@ -84,33 +84,123 @@ class ClipboardWaterfallLayoutLogicTest {
     }
 
     @Test
-    fun actionButtonsSplitWhatIsLeftAfterTheMoreButtonTail() {
-        // 实机口径：列宽 456、⋮ 84、尾部留白 30、间隙 18：
-        // 菜单预算 456 - 84 - 30 = 342，扣三段间隙 54 → 288 / 3 = 96。
-        val button = ClipboardWaterfallLayoutLogic.actionButtonPx(456, 84, 30, 18, 72, 120)
-        assertEquals(96, button)
-        // 总宽 3 × (96 + 18) = 342，视口里卡片尾部剩 456 - 342 = 114 = ⋮ 84 + 留白 30。
-        val menu = ClipboardWaterfallLayoutLogic.actionMenuWidthPx(button, 18)
-        assertEquals(342, menu)
-        assertEquals(114, 456 - menu)
+    fun actionButtonsAreCappedAtTheCompactWidthWhenTheColumnHasRoom() {
+        // 实机口径：列宽 456、⋮ 84、尾部留白 30、间隙 9、紧凑宽度上限 90：
+        // 菜单预算 456 - 84 - 30 = 342，扣两段间隙 18 → 324 / 2 = 162，夹到上限 90。
+        assertEquals(90, ClipboardWaterfallLayoutLogic.actionButtonPx(456, 84, 30, 9, 60, 90))
+        // 总宽 2 × (90 + 9) = 198，视口里卡片尾部剩 456 - 198 = 258，远大于 ⋮ 84 + 留白 30。
+        assertEquals(198, ClipboardWaterfallLayoutLogic.actionMenuWidthPx(90, 9))
+        assertEquals(258, 456 - ClipboardWaterfallLayoutLogic.actionMenuWidthPx(90, 9))
     }
 
     @Test
-    fun actionButtonsNeverGrowPastTheNativeIconButtonWidth() {
-        // 列宽富裕（1008px 的单列）时不放大，维持原生图标按钮 120px。
-        assertEquals(120, ClipboardWaterfallLayoutLogic.actionButtonPx(1008, 84, 30, 18, 72, 120))
-    }
-
-    @Test
-    fun actionButtonsStopShrinkingAtTheMinimumEvenIfTheMenuOverflows() {
+    fun actionButtonsShrinkToKeepTheMoreButtonReachableInNarrowColumns() {
+        // 列宽 300：预算 300 - 84 - 30 = 186，扣间隙 18 → 168 / 2 = 84。
+        assertEquals(84, ClipboardWaterfallLayoutLogic.actionButtonPx(300, 84, 30, 9, 60, 90))
         // 列宽小到装不下时宁可溢出也不继续缩（再小就点不中了）。
-        assertEquals(72, ClipboardWaterfallLayoutLogic.actionButtonPx(300, 84, 30, 18, 72, 120))
+        assertEquals(60, ClipboardWaterfallLayoutLogic.actionButtonPx(200, 84, 30, 9, 60, 90))
     }
 
     @Test
     fun actionButtonsStayNativeWhenTheColumnWidthIsUnknown() {
-        assertEquals(0, ClipboardWaterfallLayoutLogic.actionButtonPx(0, 84, 30, 18, 72, 120))
-        assertEquals(0, ClipboardWaterfallLayoutLogic.actionButtonPx(-5, 84, 30, 18, 72, 120))
-        assertEquals(0, ClipboardWaterfallLayoutLogic.actionButtonPx(456, 84, 30, 18, 72, 120, count = 0))
+        assertEquals(0, ClipboardWaterfallLayoutLogic.actionButtonPx(0, 84, 30, 9, 60, 90))
+        assertEquals(0, ClipboardWaterfallLayoutLogic.actionButtonPx(-5, 84, 30, 9, 60, 90))
+        assertEquals(0, ClipboardWaterfallLayoutLogic.actionButtonPx(456, 84, 30, 9, 60, 90, count = 0))
+    }
+
+    @Test
+    fun linesCardHeightIsTheChromePlusWholeLines() {
+        // 实机口径：上下内边距共 48px，行距 72px：两行 192px，三行 264px。
+        assertEquals(192, ClipboardWaterfallLayoutLogic.linesCardHeightPx(48, 72, ClipboardWaterfallLayoutLogic.CARD_MIN_LINES))
+        assertEquals(264, ClipboardWaterfallLayoutLogic.linesCardHeightPx(48, 72, ClipboardWaterfallLayoutLogic.ACTION_MAX_LINES))
+        // 占位为负按 0 算。
+        assertEquals(144, ClipboardWaterfallLayoutLogic.linesCardHeightPx(-5, 72, 2))
+    }
+
+    @Test
+    fun linesCardHeightIsUnknownBeforeTheTextHasALinePitch() {
+        assertEquals(0, ClipboardWaterfallLayoutLogic.linesCardHeightPx(48, 0, 2))
+        assertEquals(0, ClipboardWaterfallLayoutLogic.linesCardHeightPx(48, 72, 0))
+    }
+
+    @Test
+    fun actionBlockFollowsTheCardHeightUpToTheThreeLineCap() {
+        // 两行卡片：按钮总高正好等于卡片高度。
+        assertEquals(192, ClipboardWaterfallLayoutLogic.actionBlockHeightPx(192, 264))
+        // 介于两行与三行之间：照样等于卡片高度。
+        assertEquals(230, ClipboardWaterfallLayoutLogic.actionBlockHeightPx(230, 264))
+        // 内容很长、卡片比三行还高：按钮总高封顶在三行高度。
+        assertEquals(264, ClipboardWaterfallLayoutLogic.actionBlockHeightPx(420, 264))
+    }
+
+    @Test
+    fun actionBlockStaysNativeWithoutACardHeightAndIsUncappedWithoutACap() {
+        assertEquals(0, ClipboardWaterfallLayoutLogic.actionBlockHeightPx(0, 264))
+        assertEquals(0, ClipboardWaterfallLayoutLogic.actionBlockHeightPx(-1, 264))
+        assertEquals(420, ClipboardWaterfallLayoutLogic.actionBlockHeightPx(420, 0))
+    }
+
+    @Test
+    fun actionRowsAddUpToExactlyTheBlockHeight() {
+        // 192 - 9 = 183：上排 91，下排拿余数 92，91 + 9 + 92 = 192。
+        val (top, bottom) = ClipboardWaterfallLayoutLogic.actionRowHeightsPx(192, 9)
+        assertEquals(91, top)
+        assertEquals(92, bottom)
+        assertEquals(192, top + 9 + bottom)
+        // 偶数时两排等高。
+        assertEquals(96 to 96, ClipboardWaterfallLayoutLogic.actionRowHeightsPx(201, 9))
+    }
+
+    @Test
+    fun actionRowsNeverCollapseAndStayNativeWithoutABlockHeight() {
+        assertEquals(0 to 0, ClipboardWaterfallLayoutLogic.actionRowHeightsPx(0, 9))
+        assertEquals(0 to 0, ClipboardWaterfallLayoutLogic.actionRowHeightsPx(-3, 9))
+        // 总高比间隙还小：每排至少 1px，不出现 0 或负数。
+        val (top, bottom) = ClipboardWaterfallLayoutLogic.actionRowHeightsPx(5, 9)
+        assertEquals(1, top)
+        assertEquals(1, bottom)
+    }
+
+    @Test
+    fun actionRadiusMatchesTheCardButNeverTurnsIntoAPill() {
+        // 卡片圆角 32px、最矮一排 91px：与卡片一致。
+        assertEquals(32, ClipboardWaterfallLayoutLogic.actionCornerRadiusPx(32, 91))
+        // 行高很小时封在一半以内。
+        assertEquals(20, ClipboardWaterfallLayoutLogic.actionCornerRadiusPx(32, 40))
+    }
+
+    @Test
+    fun actionRadiusFallsBackToARatioOfTheRowWhenTheCardRadiusIsUnknown() {
+        assertEquals(27, ClipboardWaterfallLayoutLogic.actionCornerRadiusPx(0, 91))
+        assertEquals(27, ClipboardWaterfallLayoutLogic.actionCornerRadiusPx(-1, 91))
+        assertEquals(0, ClipboardWaterfallLayoutLogic.actionCornerRadiusPx(32, 0))
+    }
+
+    @Test
+    fun textViewportDropsThePartTheScrollViewBorrowedFromTheStaleCardWidth() {
+        // 布局已经跟上列宽：滚动容器实测宽就是视口（实机 456 的列里卡片 456、滚动容器 332）。
+        assertEquals(332, ClipboardWaterfallLayoutLogic.textViewportPx(332, 456, 456, 124, 0))
+        // 绑定时量到的还是宿主原生口径（卡片 1008、滚动容器 884）：卡片比条目宽 552，
+        // 滚动容器虚高的部分一样多，减掉才回到这一列真正的视口。
+        assertEquals(332, ClipboardWaterfallLayoutLogic.textViewportPx(884, 1008, 456, -1, 0))
+        // 卡片反而比条目窄（测量落后于写进去的宽度）时不算虚高。
+        assertEquals(332, ClipboardWaterfallLayoutLogic.textViewportPx(332, 400, 456, -1, 0))
+        // 文本自身左右内边距要扣掉。
+        assertEquals(316, ClipboardWaterfallLayoutLogic.textViewportPx(332, 456, 456, 124, 16))
+    }
+
+    @Test
+    fun textViewportFallsBackToTheKnownInsetBeforeTheScrollViewIsMeasured() {
+        // 绑定期滚动容器还没排版（0）：用「卡片宽 - 滚动容器宽」这个与列宽无关的常量从条目宽反推。
+        assertEquals(332, ClipboardWaterfallLayoutLogic.textViewportPx(0, 0, 456, 124, 0))
+        // 还没量到过那个常量、或条目宽未知：算不出来，调用方保持原样等下一次布局。
+        assertEquals(0, ClipboardWaterfallLayoutLogic.textViewportPx(0, 0, 456, -1, 0))
+        assertEquals(0, ClipboardWaterfallLayoutLogic.textViewportPx(0, 0, 0, 124, 0))
+    }
+
+    @Test
+    fun textViewportGoesNegativeWhenTheScrollViewOutrunsTheStaleCard() {
+        // 滚动容器已经是新值、卡片还是旧值：扣完只剩负数，调用方据此跳过，不写坏 maxWidth。
+        assertEquals(-220, ClipboardWaterfallLayoutLogic.textViewportPx(332, 1008, 456, -1, 0))
     }
 }
