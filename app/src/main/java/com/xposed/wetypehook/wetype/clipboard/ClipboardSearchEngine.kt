@@ -45,12 +45,23 @@ object ClipboardSearchEngine {
      */
     private fun matchRanges(content: String, kw: String): List<IntRange>? {
         if (content.isEmpty()) return null
-        // 1. 不分大小写包含命中。
+        // 1. 不分大小写包含命中：**全部**命中都要返回，不能只回第一处。
+        //    调用方（卡片高亮）是逐段染色的；只回第一处的话，一张卡片里同一个词的第 2 处起永远不标红
+        //    （实机：搜 `SS` 只有开头那一处变色，用户报「有些没有标红」）。区间互不重叠、按顺序给出。
+        //    未命中时不分配任何对象：这条路径在「搜一个不存在的词」时会被 10 万条内容各走一遍。
         val lower = content.lowercase(Locale.ROOT)
-        val idx = lower.indexOf(kw)
-        if (idx >= 0) {
-            val end = (idx + kw.length - 1).coerceAtMost(content.length - 1)
-            if (idx < content.length && end >= idx) return listOf(idx..end)
+        val first = lower.indexOf(kw)
+        if (first >= 0) {
+            val hits = ArrayList<IntRange>(2)
+            var from = first
+            while (from <= lower.length - kw.length) {
+                val idx = lower.indexOf(kw, from)
+                if (idx < 0) break
+                val end = (idx + kw.length - 1).coerceAtMost(content.length - 1)
+                if (idx < content.length && end >= idx) hits.add(idx..end)
+                from = idx + kw.length
+            }
+            if (hits.isNotEmpty()) return hits
             return null
         }
         // 2. 拼音命中：关键词须为 ASCII 词（拼音/首字母），含汉字则字面已判负，直接返回。

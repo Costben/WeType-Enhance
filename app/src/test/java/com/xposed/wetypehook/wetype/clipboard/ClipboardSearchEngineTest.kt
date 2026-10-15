@@ -31,6 +31,15 @@ class ClipboardSearchEngineTest {
     }
 
     @Test
+    fun literalMatchReturnsEveryOccurrenceNotJustTheFirst() {
+        // 卡片高亮是逐段染色的：内核只回第一处命中，同一张卡里后面的命中就永远不标红
+        // （实机：搜 `SS` 只有开头那一处变色）。三段互不重叠的命中都要给出来。
+        val res = ClipboardSearchEngine.search(listOf("ss-a-ss-b-ss"), "ss")
+        assertEquals(1, res.size)
+        assertEquals(listOf(0..1, 5..6, 10..11), res[0].ranges)
+    }
+
+    @Test
     fun chineseLiteralContains() {
         assertTrue(ClipboardSearchEngine.matches("微信输入法剪贴板", "输入法"))
         assertFalse(ClipboardSearchEngine.matches("微信输入法剪贴板", "搜狗"))

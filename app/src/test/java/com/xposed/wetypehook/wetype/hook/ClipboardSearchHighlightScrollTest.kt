@@ -46,9 +46,41 @@ class ClipboardSearchHighlightScrollTest {
     }
 
     @Test fun highlightAppliesScrollAfterSpans() {
-        val setText = source.indexOf("tv.setText(spannable, TextView.BufferType.SPANNABLE)")
-        assertTrue("span setText must exist", setText >= 0)
-        val call = source.indexOf("scrollContentToHighlight(tv, firstStart)", setText)
-        assertTrue("scroll must be triggered after span setText", call > setText)
+        // 染色与写回现在收在 colorRanges 里，highlightTextView 先调它、拿到首个命中起点后再滚。
+        val colorIdx = source.indexOf("private fun colorRanges")
+        assertTrue("colorRanges must exist", colorIdx >= 0)
+        val colorBody = source.substring(colorIdx, source.indexOf("private fun scheduleSnippetIfMatchOffscreen"))
+        assertTrue(
+            "colorRanges must write the spannable back to the TextView",
+            colorBody.contains("tv.setText(spannable, TextView.BufferType.NORMAL)")
+        )
+        val body = source.substring(source.indexOf("private fun highlightTextView"), colorIdx)
+        val applied = body.indexOf("colorRanges(tv, original, ranges)")
+        assertTrue("spans must be applied first", applied >= 0)
+        val call = body.indexOf("scrollContentToHighlight(tv, firstStart)", applied)
+        assertTrue("scroll must be triggered after spans are applied", call > applied)
+    }
+
+    @Test fun highlightNeverWritesSpannableBuffer() {
+        // SPANNABLE 会让 TextView 改用 DynamicLayout：不按 maxLines 封顶、没有省略号，
+        // 瀑布流 rebuildTextLayout 永远收敛不了（每帧重排）。
+        assertFalse(
+            "highlight must not write BufferType.SPANNABLE",
+            source.contains("BufferType.SPANNABLE")
+        )
+    }
+
+    @Test fun snippetIsJudgedOnEveryLayoutNotOnce() {
+        val idx = source.indexOf("private fun scheduleSnippetIfMatchOffscreen")
+        assertTrue("scheduleSnippetIfMatchOffscreen must exist", idx >= 0)
+        val body = source.substring(idx, source.indexOf("private fun evaluateSnippet"))
+        assertTrue(
+            "must watch layout changes instead of judging once",
+            body.contains("addOnLayoutChangeListener(snippetLayoutListener)")
+        )
+        assertTrue(
+            "decision must go through the pure logic with ellipsis start",
+            source.contains("ClipboardSnippetLogic.isMatchHidden") && source.contains("getEllipsisStart(last)")
+        )
     }
 }

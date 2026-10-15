@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.Spannable
 import android.text.SpannableString
+import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
@@ -13,6 +14,7 @@ import android.view.ViewGroup
 import android.widget.HorizontalScrollView
 import android.widget.TextView
 import com.xposed.wetypehook.wetype.clipboard.ClipboardSearchEngine
+import com.xposed.wetypehook.wetype.clipboard.ClipboardSnippetLogic
 import com.xposed.wetypehook.wetype.host.HostContractId
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.host.pickHostMethod
@@ -53,6 +55,28 @@ internal object WeTypeClipboardSearchFilter {
     // 用前景色（文字色）而非底色，避免与深浅主题底色冲突；清空时移除同色 span 恢复原样。
     private const val HIGHLIGHT_COLOR = 0xFFFB7299.toInt()
 
+    /** 片段起点相对命中往前留的字符数：留一点上下文，又保证命中落在第一行（半列一行约 7 个全角字）。 */
+    private const val SNIPPET_LEAD_CHARS = 3
+
+    /** 片段最多取多少字符：卡片只排几行，不必把几万字的原文整段塞给 `TextView`。 */
+    private const val SNIPPET_MAX_CHARS = 400
+
+    /** 片段验证没通过（命中被截掉）时最多再收窄几轮窗口，仍不行才退回紧凑片段。 */
+    private const val SNIPPET_MAX_ROUNDS = 3
+
+    /** 每轮收窄时在验证量到的可见字数上再扣多少字，留出换行时的误差。 */
+    private const val SNIPPET_SHRINK_MARGIN = 3
+
+    /** 卡片文本至少这么长才去找「它是某条完整内容的前缀」（宿主截断显示）：短文本是标签 / 按钮文字。 */
+    private const val TRUNCATED_TEXT_MIN_CHARS = 256
+
+    /** 命中片段前面补的省略号（片段不是从原文开头开始时才有）。 */
+    private const val SNIPPET_ELLIPSIS = "…"
+
+    /** 被换成「命中片段」的正文 → 完整原文，清空关键词或重新绑定时还原。 */
+    private val snippetOriginals: MutableMap<TextView, CharSequence> =
+        Collections.synchronizedMap(WeakHashMap())
+
     @Volatile
     private var hooked = false
 
@@ -69,6 +93,10 @@ internal object WeTypeClipboardSearchFilter {
 
     @Volatile
     private var currentKeyword = ""
+
+    /** 最近一次回放给列表的文本条目的完整内容（只在关键词非空时有），用来找回被宿主截断的卡片原文。 */
+    @Volatile
+    private var shownContents: List<String> = emptyList()
 
     /** 供图片注入器判断是否正在回放过滤结果（避免把图片塞回搜索结果）。 */
     internal fun isReplaying(): Boolean = applyingFilter.get()
@@ -221,7 +249,15 @@ internal object WeTypeClipboardSearchFilter {
             } else {
                 filterSnapshot(snapshot, keyword)
             }
-            mainHandler.post { applyResultOnMain(v, keyword, targets, filtered) }
+            // 回放出去的文本条目的完整内容：卡片里的文字被宿主截断时，要靠它找回命中。
+            val contents: List<String> = if (keyword.isEmpty()) emptyList() else filtered.mapNotNull { item ->
+                try {
+                    if (getItemType(item) == 0L) getItemContent(item) else null
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+            mainHandler.post { applyResultOnMain(v, keyword, targets, filtered, contents) }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "background filter failed: ${t.message}")
         }
@@ -280,11 +316,19 @@ internal object WeTypeClipboardSearchFilter {
 
     // ---- 主线程回放（原生链路刷新） ----
 
-    private fun applyResultOnMain(v: Long, keyword: String, targets: List<Any>, filtered: List<Any>) {
+    private fun applyResultOnMain(
+        v: Long,
+        keyword: String,
+        targets: List<Any>,
+        filtered: List<Any>,
+        contents: List<String>
+    ) {
         try {
             if (v != version.get()) return
             if (!WeTypeSettings.isClipboardSearchEnabledXposed()) return
             if (targets.isEmpty()) return
+            // 必须在回放之前换好：回放会立刻触发重绑，绑定后的高亮要用它。
+            shownContents = contents
             for (scrollView in targets) {
                 try {
                     applyingFilter.set(true)
@@ -497,41 +541,237 @@ internal object WeTypeClipboardSearchFilter {
 
     private fun highlightTextView(tv: TextView, keyword: String) {
         try {
+            // 上一轮可能把正文换成了「命中片段」，先还原成完整原文再重算。
+            restoreSnippet(tv)
+            pendingSnippets.remove(tv)
             // 先清除上一轮同色高亮，恢复原样后再按当前关键词重打。
             clearOurSpans(tv)
             if (keyword.isEmpty()) return
-            val text = tv.text?.toString().orEmpty()
+            val original = tv.text ?: return
+            val text = original.toString()
             if (text.isEmpty()) return
+            // 宿主只把正文的前一段放进卡片（实机：13415 字的条目卡片里只有前 3000 字），命中落在
+            // 被截掉的部分时，卡片文本里压根没有它 —— 只搜卡片文本就永远标不出来。
+            val source = resolveFullContent(text)
             val ranges = try {
-                val hits = ClipboardSearchEngine.search(listOf(text), keyword, 1)
+                val hits = ClipboardSearchEngine.search(listOf(source), keyword, 1)
                 if (hits.isEmpty()) emptyList() else hits[0].ranges
             } catch (t: Throwable) {
                 AndroidLog.e(TAG, "highlight search failed: ${t.message}")
                 return
             }
             if (ranges.isEmpty()) return
-            val spannable = SpannableString(tv.text)
-            var firstStart = -1
-            for (range in ranges) {
-                try {
-                    val start = range.first.coerceIn(0, spannable.length)
-                    val endExclusive = (range.last + 1).coerceIn(0, spannable.length)
-                    if (start >= endExclusive) continue
-                    spannable.setSpan(
-                        ForegroundColorSpan(HIGHLIGHT_COLOR),
-                        start,
-                        endExclusive,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
-                    if (firstStart < 0) firstStart = start
-                } catch (t: Throwable) {
-                    AndroidLog.e(TAG, "apply span range failed: ${t.message}")
-                }
-            }
-            tv.setText(spannable, TextView.BufferType.SPANNABLE)
+            val firstStart = colorRanges(tv, original, ranges)
             if (firstStart >= 0) scrollContentToHighlight(tv, firstStart)
+            scheduleSnippetIfMatchOffscreen(tv, original, source, ranges)
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "highlightTextView failed: ${t.message}")
+        }
+    }
+
+    /**
+     * 卡片文本是某条完整内容的前缀（宿主截断了显示）时返回那条完整内容，否则就是卡片文本本身。
+     *
+     * 只认够长的文本：药丸标签、操作栏按钮这类几个字的控件，其文字完全可能恰好是某条内容的开头，
+     * 认成前缀会把它们的文字换成别的条目的内容。
+     */
+    private fun resolveFullContent(text: String): String {
+        if (text.length < TRUNCATED_TEXT_MIN_CHARS) return text
+        for (content in shownContents) {
+            if (content.length > text.length && content.startsWith(text)) return content
+        }
+        return text
+    }
+
+    /** 把 [ranges] 逐个染上高亮色并写回，返回首个命中区间的起点（没染上返回 -1）。 */
+    private fun colorRanges(tv: TextView, source: CharSequence, ranges: List<IntRange>): Int {
+        val spannable = SpannableString(source)
+        var firstStart = -1
+        for (range in ranges) {
+            try {
+                val start = range.first.coerceIn(0, spannable.length)
+                val endExclusive = (range.last + 1).coerceIn(0, spannable.length)
+                if (start >= endExclusive) continue
+                spannable.setSpan(
+                    ForegroundColorSpan(HIGHLIGHT_COLOR),
+                    start,
+                    endExclusive,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                if (firstStart < 0) firstStart = start
+            } catch (t: Throwable) {
+                AndroidLog.e(TAG, "apply span range failed: ${t.message}")
+            }
+        }
+        // 必须是 NORMAL：SPANNABLE 会让 TextView 改用 DynamicLayout，它不按 maxLines 封顶、也没有省略号，
+        // 宿主瀑布流的 rebuildTextLayout（判据是 lineCount > maxLines）就永远收敛不了，实机表现为一张长卡片
+        // 每帧都在重新排版（空闲 4 秒 255 次）。NORMAL 会把 Spanned 包成 SpannedString，区间保留、走 StaticLayout。
+        tv.setText(spannable, TextView.BufferType.NORMAL)
+        return firstStart
+    }
+
+    /**
+     * 「命中片段」待办。[original] 是卡片当前文本，[source] 是完整内容。
+     * [applied] 非空表示片段已经换上去了，正在等它自己的排版来验证命中看得见（[appliedMatchEnd] 是命中在片段里的终点）。
+     */
+    private class PendingSnippet(
+        val original: CharSequence,
+        val source: String,
+        val ranges: List<IntRange>,
+        val applied: CharSequence? = null,
+        val appliedMatchEnd: Int = -1,
+        val round: Int = 0
+    )
+
+    /** 还在等排版、可能要换成命中片段的卡片正文。重新绑定或清空关键词时作废。 */
+    private val pendingSnippets: MutableMap<TextView, PendingSnippet> =
+        Collections.synchronizedMap(WeakHashMap())
+
+    /** 已挂上排版监听的正文（监听只挂一次，`addOnLayoutChangeListener` 自己不去重）。 */
+    private val snippetWatched: MutableSet<TextView> =
+        Collections.newSetFromMap(Collections.synchronizedMap(WeakHashMap<TextView, Boolean>()))
+
+    private val snippetLayoutListener = View.OnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+        (v as? TextView)?.let { evaluateSnippet(it) }
+    }
+
+    /**
+     * 命中落在卡片可见行之外时，把正文换成「命中附近的片段」，前面加省略号。
+     *
+     * 瀑布流会把正文按「卡片最大高度」压成几行（`maxLines` + `ellipsize`），而搜索是按**整条内容**
+     * 匹配的 —— 只搜两个拉丁字母时走首字母拼音路径（例如「在吗」「怎么」的 z…m），命中的汉字可能在
+     * 很后面。这时 span 确实打上去了，却落在被 `maxLines` 裁掉的那几行里，用户看到的就是「这条没标红」。
+     *
+     * **判断必须挂在排版上，不能算一次就收工**：绑定当下的排版是上一条内容留下的，`maxLines` 随后又会被
+     * 估算、被布局后纠偏改小（而且改小之后排版不一定重建），宽度也要等条目量到才定。实机第一版是 `post`
+     * 之后算一次，那一刻 `maxLines=4` 而排版还有 13 行、没有省略号，于是「看不见」被判成「看得见」，
+     * 片段一次都没触发过。现在挂一个排版监听，每次排版后重判，直到换成片段或重新绑定。
+     *
+     * 片段按原卡片能显示的字数取窗口、命中放中间（[ClipboardSnippetLogic.snippetWindowStart]），
+     * 换上去后再用片段自己的排版验证：命中被截掉就按量到的可见字数收窄窗口重来（最多 [SNIPPET_MAX_ROUNDS] 轮），
+     * 实在不行才退回紧凑片段（命中必在第一行）。
+     */
+    private fun scheduleSnippetIfMatchOffscreen(
+        tv: TextView,
+        original: CharSequence,
+        source: String,
+        ranges: List<IntRange>
+    ) {
+        if (ranges.first().first <= 0) return
+        pendingSnippets[tv] = PendingSnippet(original, source, ranges)
+        if (snippetWatched.add(tv)) tv.addOnLayoutChangeListener(snippetLayoutListener)
+        tv.post { evaluateSnippet(tv) }
+    }
+
+    private fun evaluateSnippet(tv: TextView) {
+        try {
+            val pending = pendingSnippets[tv] ?: return
+            val applied = pending.applied
+            // 这一帧已经被重绑/改写，不是我们写进去的那份文本就作废。
+            if (!TextUtils.equals(tv.text, applied ?: pending.original)) {
+                pendingSnippets.remove(tv)
+                return
+            }
+            val layout = tv.layout
+            // 排版还是别的文本的（长度对不上）或宽度没量出来，等下一次排版。
+            val expectedLength = (applied ?: pending.original).length
+            if (layout == null || layout.text.length != expectedLength || tv.width <= 0 || layout.lineCount <= 0) return
+            val visibleEnd = visibleEnd(layout, tv.maxLines)
+            if (applied != null) {
+                // 片段自己的排版出来了：命中还被截掉（片段里的字比原文宽）就退回紧凑片段，只验证这一次。
+                pendingSnippets.remove(tv)
+                if (ClipboardSnippetLogic.isMatchHidden(pending.appliedMatchEnd, visibleEnd)) {
+                    // 片段里的字比原文宽，窗口取大了：按这次量到的可见字数收窄再来，别一下子退成只剩一行。
+                    if (pending.round < SNIPPET_MAX_ROUNDS) {
+                        applySnippet(
+                            tv, pending, (visibleEnd - SNIPPET_SHRINK_MARGIN).coerceAtLeast(1),
+                            compact = false, round = pending.round + 1
+                        )
+                    } else {
+                        applySnippet(tv, pending, visibleEnd = 0, compact = true, round = pending.round)
+                    }
+                }
+                return
+            }
+            val first = pending.ranges.first()
+            // 命中整个落在卡片文本之外（宿主截断了）一定看不见；否则按排版判断。
+            val hidden = first.last >= pending.original.length ||
+                ClipboardSnippetLogic.isMatchHidden(first.last, visibleEnd)
+            if (hidden) applySnippet(tv, pending, visibleEnd, compact = false, round = 0)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "evaluate highlight snippet failed: ${t.message}")
+        }
+    }
+
+    /** 把排版量出来的数交给纯算术：卡片上看得见的文字到哪个下标为止，规则见 [ClipboardSnippetLogic.visibleEnd]。 */
+    private fun visibleEnd(layout: android.text.Layout, maxLines: Int): Int {
+        val last = layout.lineCount - 1
+        val capLine = (maxLines - 1).coerceIn(0, last)
+        return ClipboardSnippetLogic.visibleEnd(
+            lineCount = layout.lineCount,
+            maxLines = maxLines,
+            capLineEnd = layout.getLineEnd(capLine),
+            lastLineStart = layout.getLineStart(last),
+            lastLineEnd = layout.getLineEnd(last),
+            ellipsisStart = layout.getEllipsisStart(last),
+            ellipsisCount = layout.getEllipsisCount(last)
+        )
+    }
+
+    /**
+     * 把正文换成命中附近的片段（前面补省略号），原文留在 [snippetOriginals] 里供还原。
+     * [visibleEnd] 是原卡片能显示的字数，用来决定窗口从哪里开始；[compact] 为真时退回紧凑片段。
+     */
+    private fun applySnippet(
+        tv: TextView,
+        pending: PendingSnippet,
+        visibleEnd: Int,
+        compact: Boolean,
+        round: Int
+    ) {
+        val first = pending.ranges.first()
+        val compactStart = ClipboardSnippetLogic.snippetStart(first.first, SNIPPET_LEAD_CHARS)
+        var start = if (compact) {
+            compactStart
+        } else {
+            ClipboardSnippetLogic.snippetWindowStart(first.first, pending.source.length, visibleEnd)
+        }
+        // 窗口算出来贴着开头（等于没换）时，至少用紧凑片段，否则命中仍在看不见的位置。
+        if (start <= 0) start = compactStart
+        if (start <= 0) {
+            pendingSnippets.remove(tv)
+            return
+        }
+        val endExclusive = minOf(pending.source.length, start + SNIPPET_MAX_CHARS)
+        val head = SNIPPET_ELLIPSIS
+        val snippet = SpannableStringBuilder().append(head).append(pending.source, start, endExclusive)
+        for (range in pending.ranges) {
+            val s0 = (range.first - start).coerceAtLeast(0) + head.length
+            val s1 = (range.last + 1 - start).coerceAtMost(endExclusive - start) + head.length
+            if (range.last + 1 <= start || range.first >= endExclusive || s0 >= s1) continue
+            snippet.setSpan(ForegroundColorSpan(HIGHLIGHT_COLOR), s0, s1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        snippetOriginals[tv] = pending.original
+        // 紧凑片段本身就保证命中在第一行，不用再验证。
+        if (compact) {
+            pendingSnippets.remove(tv)
+        } else {
+            pendingSnippets[tv] = PendingSnippet(
+                pending.original, pending.source, pending.ranges,
+                applied = snippet, appliedMatchEnd = first.last - start + head.length, round = round
+            )
+        }
+        tv.setText(snippet, TextView.BufferType.NORMAL)
+    }
+
+    /** 把 [snippetOriginals] 里存着的完整原文还回去（正文没被我们换过就什么都不做）。 */
+    private fun restoreSnippet(tv: TextView) {
+        val original = snippetOriginals.remove(tv) ?: return
+        try {
+            if (TextUtils.equals(tv.text, original)) return
+            tv.setText(original, TextView.BufferType.NORMAL)
+        } catch (t: Throwable) {
+            AndroidLog.e(TAG, "restore snippet failed: ${t.message}")
         }
     }
 
@@ -619,7 +859,7 @@ internal object WeTypeClipboardSearchFilter {
                     AndroidLog.e(TAG, "remove span failed: ${t.message}")
                 }
             }
-            if (changed) tv.setText(editable, TextView.BufferType.SPANNABLE)
+            if (changed) tv.setText(editable, TextView.BufferType.NORMAL)
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "clear spans failed: ${t.message}")
         }
