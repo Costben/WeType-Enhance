@@ -15,6 +15,8 @@ import com.xposed.wetypehook.wetype.clipboard.ClipboardWaterfallLayoutLogic
 import com.xposed.wetypehook.wetype.host.HostContractId
 import com.xposed.wetypehook.wetype.host.HostResources
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
+import com.xposed.wetypehook.wetype.host.isItemAnimatorSetter
+import com.xposed.wetypehook.wetype.host.viewHolderItemViewField
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.Log as ModuleLog
@@ -27,8 +29,9 @@ import java.util.WeakHashMap
  * 剪贴板双列瀑布流（Waterfall Flow）。
  *
  * 原生剪贴板列表是「单列 + 单行横向滚动」：
- * - `ImeClipboardScrollView.s()`（继承自 `view.M`）给列表 RecyclerView 装
- *   `ImePagingLinearLayoutManager`（单列垂直）；
+ * - `ImeClipboardScrollView` 的构造函数末尾会调一次自己的初始化方法（继承自 `view.M`，
+ *   混淆名每版都变，4.0.0 是 `s()`），给列表 RecyclerView 装 `ImePagingLinearLayoutManager`
+ *   （单列垂直）和宿主自己的列表动画器；
  * - ViewHolder `clipboard.z#h()` 每次绑定都把 `clipboard_item_line1` 的宽高写死成
  *   「面板宽 - 2*margin」×「单行高」，文本控件 `clipboard_content_tv` 被包在
  *   `HorizontalScrollView` 里做单行横向滚动。
@@ -59,8 +62,6 @@ internal object WeTypeClipboardWaterfallHooks {
     private const val LAYOUT_MANAGER_CLASS_NAME =
         "androidx.recyclerview.widget.RecyclerView\$LayoutManager"
     private const val SGLM_CLASS_NAME = "androidx.recyclerview.widget.StaggeredGridLayoutManager"
-    private const val ITEM_ANIMATOR_CLASS_NAME =
-        "androidx.recyclerview.widget.RecyclerView\$ItemAnimator"
 
     private const val SPAN_COUNT = ClipboardWaterfallLayoutLogic.SPAN_COUNT
 
@@ -204,7 +205,7 @@ internal object WeTypeClipboardWaterfallHooks {
             .onFailure { AndroidLog.e(TAG, "hook setList failed: ${it.message}") }
         runCatching { hookSizeChanged(classLoader) }
             .onFailure { AndroidLog.e(TAG, "hook onSizeChanged failed: ${it.message}") }
-        runCatching { hookBind(classLoader) }
+        runCatching { hookBind() }
             .onFailure { AndroidLog.e(TAG, "hook onBindViewHolder failed: ${it.message}") }
         installed = true
         AndroidLog.i(TAG, "waterfall hooks installed (container=$containerId line1=${WeTypeClipboardImageHost.line1Id})")
@@ -245,18 +246,25 @@ internal object WeTypeClipboardWaterfallHooks {
         rvGetter = scrollClass.methods.firstOrNull {
             it.parameterTypes.isEmpty() && it.returnType.name == RV_CLASS_NAME
         }
-        val sMethod = scrollClass.declaredMethods.firstOrNull {
-            it.name == "s" && it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
-        } ?: run {
-            AndroidLog.e(TAG, "clipboard scroll view init method (s) missing")
+        // 宿主的初始化方法（4.0.0 叫 `s()`，名字每版都变）只在这个类自己的构造函数末尾被调用一次，
+        // dex 里没有第二个调用点，所以「初始化方法之后」就是「构造函数返回之后」。
+        // 链式构造（2 参 → 3 参 → 4 参）里真正干活的是参数最多的那一个，别的只是转调。
+        val widest = scrollClass.declaredConstructors.maxOfOrNull { it.parameterTypes.size } ?: run {
+            AndroidLog.e(TAG, "clipboard scroll view has no constructor")
             return
         }
-        sMethod.isAccessible = true
-        sMethod.hookAfter { param ->
-            runCatching { applyLayoutMode(param.thisObject) }
-                .onFailure { AndroidLog.e(TAG, "apply layout on init failed: ${it.message}") }
+        val constructors = scrollClass.declaredConstructors.filter { it.parameterTypes.size == widest }
+        constructors.forEach { constructor ->
+            constructor.isAccessible = true
+            constructor.hookAfter { param ->
+                runCatching { applyLayoutMode(param.thisObject) }
+                    .onFailure { AndroidLog.e(TAG, "apply layout on init failed: ${it.message}") }
+            }
         }
-        AndroidLog.i(TAG, "hooked clipboard scroll view init (rvGetter=${rvGetter != null})")
+        ModuleLog.i(
+            "$TAG: hooked clipboard scroll view init via constructor($widest params) x${constructors.size} " +
+                "(rvGetter=${rvGetter?.name})"
+        )
     }
 
     private fun hookSetList(classLoader: ClassLoader) {
@@ -303,11 +311,10 @@ internal object WeTypeClipboardWaterfallHooks {
         AndroidLog.i(TAG, "hooked onSizeChanged for waterfall (${target.declaringClass.simpleName})")
     }
 
-    private fun hookBind(classLoader: ClassLoader) {
+    private fun hookBind() {
+        // 契约自己带名字兜底（HostContracts 的 CLIPBOARD_ADAPTER_CLASS），这里不再重复抄一份短名。
         val adapterClass = runCatching {
             WeTypeHostContracts.classOf(HostContractId.CLIPBOARD_ADAPTER)
-        }.getOrNull() ?: runCatching {
-            Class.forName("com.tencent.wetype.plugin.hld.clipboard.v", false, classLoader)
         }.getOrNull() ?: run {
             AndroidLog.e(TAG, "clipboard adapter class missing")
             return
@@ -488,17 +495,23 @@ internal object WeTypeClipboardWaterfallHooks {
      * 点 ⋮ 展开只是宿主对那一条 `notifyItemChanged`，但宿主给列表装了自己的动画器：变更会交叉淡入淡出
      * （还会多 inflate 一个 ViewHolder），双列交错布局里其余卡片也会跟着做移动动画，看上去就是
      * 「下面的内容整片重排」。瀑布流下直接关掉列表动画，变更原地重绑、位置变化一步到位。
-     * 同样不能按名字找（`setItemAnimator` 会被 R8 改名），按参数 / 返回类型找。
+     *
+     * **连 `ItemAnimator` 这个类型名都不能写**：4.0.0 的 dex 里它已经被改成 `RecyclerView$m`
+     * （`LayoutManager` / `ViewHolder` 却还叫原名），按全名去比对，setter 与 getter 都找不到，
+     * `dropItemAnimator` 就静默 `return` —— 宿主动画器一直没被摘掉，日志里却一行错误也没有。
+     * 所以类型按形状认（[isItemAnimatorSetter]：RecyclerView 的嵌套类 + ItemAnimator 的抽象方法形状），
+     * getter 再用「返回类型与 setter 参数类型相同」配对。**只认形状会认错**：`View.setContentCaptureSession`
+     * 的参数类型形状相同，真机上被当成 setter 调了 `setContentCaptureSession(null)`，所以必须叠加嵌套关系。
      */
     private fun itemAnimatorSetter(rv: View): Method? =
-        rv.javaClass.methods.firstOrNull {
-            it.parameterTypes.size == 1 && it.parameterTypes[0].name == ITEM_ANIMATOR_CLASS_NAME
-        }
+        rv.javaClass.methods.firstOrNull(::isItemAnimatorSetter)
 
-    private fun currentItemAnimator(rv: View): Any? =
-        rv.javaClass.methods.firstOrNull {
-            it.parameterTypes.isEmpty() && it.returnType.name == ITEM_ANIMATOR_CLASS_NAME
+    private fun currentItemAnimator(rv: View): Any? {
+        val type = itemAnimatorSetter(rv)?.parameterTypes?.get(0) ?: return null
+        return rv.javaClass.methods.firstOrNull {
+            it.parameterTypes.isEmpty() && it.returnType == type
         }?.let { runCatching { it.invoke(rv) }.getOrNull() }
+    }
 
     private fun setItemAnimator(rv: View, animator: Any?) {
         val method = itemAnimatorSetter(rv)
@@ -506,11 +519,23 @@ internal object WeTypeClipboardWaterfallHooks {
         method.invoke(rv, animator)
     }
 
-    /** 宿主可能在别处再装回动画器，所以每次应用布局模式都确认一次；已经是空就不动。 */
+    private val itemAnimatorMissingLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * 宿主可能在别处再装回动画器，所以每次应用布局模式都确认一次；已经是空就不动。
+     * 找不到 setter 必须留痕（只留一次）：这一步以前就是静默落空的。
+     */
     private fun dropItemAnimator(rv: View) {
-        if (currentItemAnimator(rv) == null) return
+        if (itemAnimatorSetter(rv) == null) {
+            if (itemAnimatorMissingLogged.compareAndSet(false, true)) {
+                ModuleLog.e("$TAG: item animator setter not found by shape on ${rv.javaClass.name}; list keeps host animations")
+            }
+            return
+        }
+        val animator = currentItemAnimator(rv) ?: return
         runCatching { setItemAnimator(rv, null) }
-            .onFailure { AndroidLog.e(TAG, "drop item animator failed: ${it.message}") }
+            .onSuccess { ModuleLog.i("$TAG: dropped host item animator ${animator.javaClass.name}") }
+            .onFailure { ModuleLog.e("$TAG: drop item animator failed: ${it.message}") }
     }
 
     private fun setLayoutManager(rv: View, lm: Any) {
@@ -1376,16 +1401,24 @@ internal object WeTypeClipboardWaterfallHooks {
         view.layoutParams = lp
     }
 
+    /**
+     * ViewHolder 的根视图：`RecyclerView.ViewHolder.itemView`，按形状取（[viewHolderItemViewField]）。
+     *
+     * 以前是「沿继承链取第一个非空的 View 类型字段」：宿主行 ViewHolder（4.0.0 的 `clipboard.z`）自己
+     * 声明了十几个 View 字段，取到哪个全看字段的声明顺序（4.0.0 上第一个恰好就是根视图，实机核对过
+     * 两种取法是同一个 View），换一版重排字段就可能拿到卡片或文本控件，而整条瀑布流的条目校准都挂在
+     * 这个视图上。
+     */
     private fun holderItemView(holder: Any): View? {
-        var clazz: Class<*>? = holder.javaClass
-        while (clazz != null && clazz != Any::class.java) {
-            for (field in clazz.declaredFields) {
-                if (!View::class.java.isAssignableFrom(field.type)) continue
-                field.isAccessible = true
-                (field.get(holder) as? View)?.let { return it }
+        val field = viewHolderItemViewField(holder.javaClass)
+        if (field == null) {
+            if (itemViewMissingLogged.compareAndSet(false, true)) {
+                ModuleLog.e("$TAG: ViewHolder.itemView not found by shape on ${holder.javaClass.name}; waterfall items stay native")
             }
-            clazz = clazz.superclass
+            return null
         }
-        return null
+        return field.get(holder) as? View
     }
+
+    private val itemViewMissingLogged = java.util.concurrent.atomic.AtomicBoolean(false)
 }
