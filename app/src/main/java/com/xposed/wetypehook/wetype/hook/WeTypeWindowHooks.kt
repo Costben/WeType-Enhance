@@ -140,6 +140,7 @@ internal object WeTypeWindowHooks {
         }
         val cleaned = runOnMainThreadBlocking {
             WeTypeOverlayCompositor.clearAll()
+            WeTypeFloatingKeyboardHooks.clearAll()
             states.forEach { state ->
                 state.windowVisible = false
                 removeBackgroundListeners(state)
@@ -157,10 +158,12 @@ internal object WeTypeWindowHooks {
 
     fun hookTransparentOverlayUnderlay() {
         WeTypeOverlayCompositor.install()
+        WeTypeFloatingKeyboardHooks.install()
     }
 
     fun reconcileCurrentOverlayUnderlays(rootViews: List<View>) {
         WeTypeOverlayCompositor.reconcile(rootViews)
+        WeTypeFloatingKeyboardHooks.reconcile(rootViews)
     }
 
     fun hookWindowBlur() {
@@ -226,6 +229,8 @@ internal object WeTypeWindowHooks {
         state.computedVisibleImeHeightPx = null
         scheduleWindowBlur(inputMethodService)
         reconcileCurrentResourceViews(inputMethodService)
+        // 悬浮键盘在独立窗口里，背板载体管不到；背景设置变了要让它同步重放。
+        WeTypeFloatingKeyboardHooks.refresh()
     }
 
     private fun reconcileCurrentResourceViews(inputMethodService: Any) {
@@ -843,6 +848,35 @@ internal object WeTypeWindowHooks {
         state.originalWindowBackground = null
         state.originalWindowBlurRadius = null
     }
+
+    /**
+     * 悬浮键盘面板的背景样式：与停靠态背板同一套设置（颜色与透明度、背景模糊、边缘光），
+     * 只把几何换成面板自己的圆角。
+     *
+     * 悬浮键盘不在输入法窗口里，而是宿主挂在输入法 token 上的独立 PopupWindow，背板载体
+     * 盖不到它。返回值在设置、圆角、深浅色、密度都没变时保持相等，调用方据此判断要不要重建。
+     */
+    internal fun floatingPanelStyle(panel: View, radiusPx: Float): Any {
+        val context = panel.context
+        val settings = WeTypeSettings.readSnapshotXposed()
+        val uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return BackgroundStyle(
+            color = if (uiMode == Configuration.UI_MODE_NIGHT_YES) settings.darkColor else settings.lightColor,
+            blurRadius = settings.blurRadius,
+            edgeHighlightEnabled = settings.edgeHighlightEnabled,
+            backgroundLight = settings.backgroundLight,
+            edgeLightAngle = settings.edgeLightAngle,
+            cornerRadii = WeTypeCornerRadii(radiusPx, radiusPx, radiusPx, radiusPx),
+            nightMode = uiMode,
+            density = context.resources.displayMetrics.density,
+            // 面板只走着色 + 模糊这条路径；系统材质的 RenderNode 是为整宽背板载体写的。
+            systemMaterialEnabled = false,
+            systemMaterialActive = false
+        )
+    }
+
+    internal fun createFloatingPanelBackground(panel: View, style: Any): Drawable =
+        createBackgroundDrawable(panel, panel.context, style as BackgroundStyle)
 
     private fun createBackgroundDrawable(
         targetView: View,
