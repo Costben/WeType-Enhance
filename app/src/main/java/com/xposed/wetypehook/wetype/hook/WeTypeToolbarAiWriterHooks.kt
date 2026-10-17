@@ -15,6 +15,7 @@ import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import org.luckypray.dexkit.DexKitBridge
+import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 /**
@@ -39,6 +40,9 @@ internal object WeTypeToolbarAiWriterHooks {
     private const val HOST_AI_WRITER_VALUE_BIT = 1048576
 
     private const val TOOLBAR_PACKAGE = "com.tencent.wetype.plugin.hld.toolbar"
+    private const val TOOLBAR_CONFIG_PACKAGE = "com.tencent.wetype.plugin.hld.utils"
+    private const val TOOLBAR_CONFIG_KEY = "ime_custom_toolbar_key"
+    private const val FALLBACK_TOOLBAR_CONFIG_CLASS = "com.tencent.wetype.plugin.hld.utils.j1"
     private const val FALLBACK_CUSTOM_TOOLBAR_ADAPTER_CLASS = "com.tencent.wetype.plugin.hld.toolbar.a"
     private const val FALLBACK_TOOLBAR_ROUND_VIEW_HOLDER_CLASS = "com.tencent.wetype.plugin.hld.toolbar.B"
     private const val FALLBACK_CUSTOM_TOOLBAR_VIEW_HOLDER_CLASS = "com.tencent.wetype.plugin.hld.toolbar.m"
@@ -49,10 +53,28 @@ internal object WeTypeToolbarAiWriterHooks {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private fun insertAiWriter(valueBit: Int, target: MutableList<Any?>) {
+    /**
+     * 宿主工具栏的 RecyclerView 方向（3.5.5 起列表首项排在最右）。
+     * 由已绑定条目的实测 x 判断，判断不出来时按未反向处理。
+     */
+    @Volatile
+    private var toolbarReversed: Boolean? = null
+
+    private fun insertAiWriter(
+        valueBit: Int,
+        target: MutableList<Any?>,
+        preferredIndex: Int?,
+        reversed: Boolean?,
+    ) {
         if (target.any { (it as? Number)?.toInt() == valueBit }) return
-        val sentinelIdx = target.indexOfFirst { (it as? Number)?.toInt() == Int.MIN_VALUE }
-        target.add(if (sentinelIdx >= 0) sentinelIdx else target.size, valueBit)
+        val index = when {
+            target.isEmpty() -> 0
+            preferredIndex != null -> preferredIndex.coerceIn(0, target.size)
+            // 反向布局：列表末尾排在最左，紧挨宿主固定的品牌 logo。
+            reversed == true -> target.size
+            else -> 1.coerceAtMost(target.size)
+        }
+        target.add(index, valueBit)
     }
 
     fun install(sourceDir: String?, classLoader: ClassLoader) {
@@ -82,6 +104,8 @@ internal object WeTypeToolbarAiWriterHooks {
         val valueBitField = pickHostField(roundViewHolderClass, "valueBit", "g", "f") {
             it.type == Int::class.javaPrimitiveType
         }
+        val notifyMethod = runCatching { customAdapterClass.getMethod("notifyDataSetChanged") }.getOrNull()
+        val configReader = resolveToolbarConfigReader(sourceDir, classLoader)
 
         val imageViewField = roundViewHolderClass.declaredFields
             .filter { it.type == ImageView::class.java }
@@ -113,7 +137,52 @@ internal object WeTypeToolbarAiWriterHooks {
             applyAiWriterIconIfNeeded(holders[AI_WRITER_VALUE_BIT])
         }
 
-        // 0. 放行白名单门禁
+        /**
+         * 宿主工具栏可能把列表首项排在最右（3.5.5 实测如此）。用已绑定条目的实测 x 判断方向，
+         * 判断不出来返回 null，调用方按旧行为处理。
+         */
+        fun detectToolbarReversed(adapter: Any?): Boolean? {
+            toolbarReversed?.let { return it }
+            val holders = runCatching { viewHoldersField?.get(adapter) as? Map<*, *> }.getOrNull() ?: return null
+            val tools = runCatching { toolsField?.get(adapter) as? List<*> }.getOrNull() ?: return null
+            val firstBit = (tools.firstOrNull() as? Number)?.toInt() ?: return null
+            val lastBit = (tools.lastOrNull() as? Number)?.toInt() ?: return null
+            if (firstBit == lastBit) return null
+            fun xOf(bit: Int): Float? {
+                val holder = holders[bit] ?: return null
+                val itemView = runCatching {
+                    holder.javaClass.getField("itemView").get(holder) as? View
+                }.getOrNull() ?: return null
+                return itemView.x
+            }
+            val firstX = xOf(firstBit) ?: return null
+            val lastX = xOf(lastBit) ?: return null
+            if (firstX == lastX) return null
+            return (firstX > lastX).also { toolbarReversed = it }
+        }
+
+        /** 宿主持久化配置里该条目的位置；用于保留用户拖拽后的排序。 */
+        fun persistedIndexInHostConfig(): Int? = runCatching {
+            val (instance, reader) = configReader ?: return null
+            val config = reader.invoke(instance) ?: return null
+            val list = config.javaClass.getMethod("getToolsList").invoke(config) as? List<*> ?: return null
+            list.indexOfFirst { (it as? Number)?.toInt() == AI_WRITER_VALUE_BIT }.takeIf { it >= 0 }
+        }.getOrNull()
+
+        /** 布局出来之后把条目校正到左起第 2 位（只在首次播种、方向未知时调用）。 */
+        fun ensureSecondFromLeft(adapter: Any?) {
+            val tools = runCatching { toolsField?.get(adapter) as? MutableList<Any?> }.getOrNull() ?: return
+            val aiIndex = tools.indexOfFirst { (it as? Number)?.toInt() == AI_WRITER_VALUE_BIT }
+            if (aiIndex < 0) return
+            val reversed = detectToolbarReversed(adapter) ?: return
+            val desired = if (reversed) tools.size - 1 else 1
+            if (aiIndex == desired) return
+            val item = tools.removeAt(aiIndex)
+            tools.add(desired.coerceIn(0, tools.size), item)
+            runCatching { notifyMethod?.invoke(adapter) }
+            Log.i("WeTypeToolbarAiWriter: reordered toolbar item (reversed=$reversed, index=$desired)")
+        }
+
         val valueBitGates = customViewHolderClass.declaredClasses
             .flatMap { it.declaredMethods.asSequence() }
             .filter { method ->
@@ -132,49 +201,18 @@ internal object WeTypeToolbarAiWriterHooks {
             }
         }
 
-        // 1. 列表构造点：Companion.c(boolean, boolean) -> Pair<List<Integer>, Map<Integer, 来源枚举>>
+        // 1. 来源枚举与宿主持久化配置读取（用于判断条目是否已被宿主写入配置）
         val permanentSource = resolvePermanentSource(classLoader)
-        val buildToolsMethod = customAdapterClass.declaredClasses
-            .flatMap { it.declaredMethods.asSequence() }
-            .firstOrNull { method ->
-                method.parameterCount == 2 &&
-                    method.parameterTypes[0] == Boolean::class.javaPrimitiveType &&
-                    method.parameterTypes[1] == Boolean::class.javaPrimitiveType &&
-                    !method.returnType.isPrimitive &&
-                    method.returnType != Void.TYPE
-            }?.apply { isAccessible = true }
-
-        buildToolsMethod?.hookAfter { param ->
-            val pair = param.result ?: return@hookAfter
-            val list = readTupleSlot(pair, "first", 0) as? MutableList<Any?> ?: return@hookAfter
-            val preferences = seedPreferences()
-            val isEnabled = WeTypeSettings.isColorosAiWriterEnabledXposed()
-
-            if (!isEnabled) {
-                // 总开关关闭：清理条目与播种位
-                list.removeAll { (it as? Number)?.toInt() == AI_WRITER_VALUE_BIT }
-                @Suppress("UNCHECKED_CAST")
-                (readTupleSlot(pair, "second", 1) as? MutableMap<Int, Any?>)?.remove(AI_WRITER_VALUE_BIT)
-                clearSeeded(preferences)
-                return@hookAfter
-            }
-
-            // 总开关开启：检查播种
-            val seeded = preferences?.getBoolean(SEED_PREFS_KEY, false) ?: false
-            val present = list.any { (it as? Number)?.toInt() == AI_WRITER_VALUE_BIT }
-            if (present) {
-                if (!seeded) markSeeded(preferences)
-                return@hookAfter
-            }
-            if (seeded) return@hookAfter
-            insertAiWriter(AI_WRITER_VALUE_BIT, list)
-            if (permanentSource != null) {
-                @Suppress("UNCHECKED_CAST")
-                (readTupleSlot(pair, "second", 1) as? MutableMap<Int, Any?>)
-                    ?.put(AI_WRITER_VALUE_BIT, permanentSource)
-            }
-            markSeeded(preferences)
+        val sourceMapMethod = pickHostMethod(toolbarAdapterClass, "v") { method ->
+            method.parameterCount == 0 && HashMap::class.java.isAssignableFrom(method.returnType)
         }
+
+        fun isPersistedInHostConfig(): Boolean = runCatching {
+            val (instance, reader) = configReader ?: return false
+            val config = reader.invoke(instance) ?: return false
+            val list = config.javaClass.getMethod("getToolsList").invoke(config) as? List<*> ?: return false
+            list.any { (it as? Number)?.toInt() == AI_WRITER_VALUE_BIT }
+        }.getOrDefault(false)
 
         // 2. updateData 方法 (4.0.0: I, 3.5.4: F)
         val updateDataMethod = pickHostMethod(customAdapterClass, "I", "F", "updateData") { method ->
@@ -186,9 +224,56 @@ internal object WeTypeToolbarAiWriterHooks {
 
         updateDataMethod?.hookAfter { param ->
             val adapter = param.thisObject
-            if (toolsField?.get(adapter) as? List<*> == null) return@hookAfter
+            @Suppress("UNCHECKED_CAST")
+            val tools = toolsField?.get(adapter) as? MutableList<Any?> ?: return@hookAfter
+            val preferences = seedPreferences()
+            val enabled = WeTypeSettings.isColorosAiWriterEnabledXposed()
+            val present = tools.any { (it as? Number)?.toInt() == AI_WRITER_VALUE_BIT }
+
+            if (!enabled) {
+                if (present) {
+                    tools.removeAll { (it as? Number)?.toInt() == AI_WRITER_VALUE_BIT }
+                    runCatching { notifyMethod?.invoke(adapter) }
+                }
+                clearSeeded(preferences)
+                return@hookAfter
+            }
+
+            val persisted = isPersistedInHostConfig()
+            if (present) {
+                if (persisted) markSeeded(preferences)
+                applyFromViewHolderCache(adapter)
+                mainHandler.postDelayed({ applyFromViewHolderCache(adapter) }, BIND_RETRY_DELAY_MS)
+                return@hookAfter
+            }
+
+            // 宿主 3.5.5 在 updateData 里用 m$b.b(List) 把未知 valueBit 过滤掉，
+            // 该过滤方法被 ART 内联后 hook 不到，所以在 updateData 结束后补回。
+            // 只有宿主配置里从未写入过该条目、且未播种过时才补回；用户删除后不再补回。
+            val seeded = preferences?.getBoolean(SEED_PREFS_KEY, false) ?: false
+            if (seeded && !persisted) return@hookAfter
+
+            val reversed = detectToolbarReversed(adapter)
+            val persistedIndex = if (persisted) persistedIndexInHostConfig() else null
+            insertAiWriter(AI_WRITER_VALUE_BIT, tools, persistedIndex, reversed)
+            if (permanentSource != null) {
+                @Suppress("UNCHECKED_CAST")
+                (runCatching { sourceMapMethod?.invoke(adapter) }.getOrNull() as? MutableMap<Int, Any?>)
+                    ?.put(AI_WRITER_VALUE_BIT, permanentSource)
+            }
+            runCatching { notifyMethod?.invoke(adapter) }
+            // 读不到宿主配置时退回旧语义：播种一次即标记，用户删除后不再补回。
+            if (persisted || configReader == null) markSeeded(preferences)
+            Log.i(
+                "WeTypeToolbarAiWriter: seeded toolbar item (persisted=$persisted, " +
+                    "reversed=$reversed, index=${tools.indexOf(AI_WRITER_VALUE_BIT)})"
+            )
             applyFromViewHolderCache(adapter)
             mainHandler.postDelayed({ applyFromViewHolderCache(adapter) }, BIND_RETRY_DELAY_MS)
+            if (reversed == null && persistedIndex == null) {
+                // 首次播种时工具栏还没排版，方向未知：等布局出来后再校正到左起第 2 位。
+                mainHandler.postDelayed({ ensureSecondFromLeft(adapter) }, LAYOUT_SETTLE_DELAY_MS)
+            }
         }
 
         // 3. 绑定与刷新图标
@@ -268,13 +353,15 @@ internal object WeTypeToolbarAiWriterHooks {
 
         Log.i(
             "WeTypeToolbarAiWriter: installed (${customAdapterClass.name}, updateData=${updateDataMethod?.name}, " +
-                "buildTools=${buildToolsMethod?.name}, updateIcon=${updateIconMethod?.name}, " +
+                "updateIcon=${updateIconMethod?.name}, " +
                 "bind=${bindMethod?.name}, onClick=${onClickMethod?.name}, " +
-                "valueBitGates=${valueBitGates.size}, iconRes=${iconResMethod?.name})"
+                "valueBitGates=${valueBitGates.size}, iconRes=${iconResMethod?.name}, " +
+                "configReader=${configReader != null})"
         )
     }
 
     private const val BIND_RETRY_DELAY_MS = 120L
+    private const val LAYOUT_SETTLE_DELAY_MS = 400L
 
     private fun resolveCustomAdapterClass(sourceDir: String?, classLoader: ClassLoader): Class<*>? {
         if (!sourceDir.isNullOrEmpty()) {
@@ -302,6 +389,42 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun resolvePermanentSource(classLoader: ClassLoader): Any? {
         val clazz = loadClassOrNull(FALLBACK_TOOLBAR_ITEM_SOURCE_CLASS, classLoader)
         return clazz?.enumConstants?.firstOrNull { it is Enum<*> && it.name == TOOLBAR_SOURCE_PERMANENT }
+    }
+
+    /**
+     * 宿主的工具栏配置（MMKV `ime_custom_toolbar_key`）读取器：返回单例与无参读取方法。
+     * 用来判断 `-9527` 是否已经被宿主写进持久化配置，从而区分「从未持久化」与「用户已删除」。
+     */
+    private fun resolveToolbarConfigReader(sourceDir: String?, classLoader: ClassLoader): Pair<Any, Method>? {
+        val clazz = runCatching {
+            if (!sourceDir.isNullOrEmpty()) {
+                DexKitBridge.create(sourceDir).use { bridge ->
+                    bridge.findClass {
+                        searchPackages(TOOLBAR_CONFIG_PACKAGE)
+                        matcher { usingStrings(TOOLBAR_CONFIG_KEY) }
+                    }.firstOrNull()?.let { loadClassOrNull(it.name, classLoader) }
+                }
+            } else {
+                null
+            }
+        }.getOrNull() ?: loadClassOrNull(FALLBACK_TOOLBAR_CONFIG_CLASS, classLoader) ?: return null
+
+        val instance = runCatching {
+            clazz.declaredFields
+                .firstOrNull { Modifier.isStatic(it.modifiers) && it.type == clazz }
+                ?.apply { isAccessible = true }
+                ?.get(null)
+        }.getOrNull() ?: return null
+
+        val reader = runCatching {
+            clazz.declaredMethods.firstOrNull { method ->
+                method.name == "N" &&
+                    method.parameterCount == 0 &&
+                    method.returnType.name.endsWith("ImeLocalCustomToolbarConfig")
+            }?.apply { isAccessible = true }
+        }.getOrNull() ?: return null
+
+        return instance to reader
     }
 
     private fun resolveIconResolverClass(sourceDir: String?, classLoader: ClassLoader): Class<*>? {
@@ -341,11 +464,4 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun clearSeeded(preferences: SharedPreferences?) {
         preferences?.edit()?.remove(SEED_PREFS_KEY)?.apply()
     }
-
-    private fun readTupleSlot(pair: Any, preferred: String, fallbackIndex: Int): Any? = runCatching {
-        val fields = pair.javaClass.declaredFields.filter { !Modifier.isStatic(it.modifiers) }
-        val field = fields.firstOrNull { it.name == preferred } ?: fields.getOrNull(fallbackIndex) ?: return null
-        field.isAccessible = true
-        field.get(pair)
-    }.getOrNull()
 }
