@@ -98,10 +98,10 @@ jobs:
           fi
           echo "Publishing $TAG -> $TITLE"
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # 没有配套 notes 文件说明这次发布说明是手写的，只补附件，
+            # 不要用 tag 名把标题覆盖掉。
             if [ -f "$NOTES_FILE" ]; then
               gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE"
-            else
-              gh release edit "$TAG" --title "$TITLE"
             fi
             gh release upload "$TAG" "$SIGNED_APK" --clobber
           elif [ -f "$NOTES_FILE" ]; then
