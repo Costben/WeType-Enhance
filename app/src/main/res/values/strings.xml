@@ -52,6 +52,8 @@
 
     <string name="settings_disable_hot_update_title">Disable hot update</string>
     <string name="settings_disable_hot_update_desc">Block WeType hotfix updates</string>
+    <string name="settings_receive_alpha_title">Receive alpha updates</string>
+    <string name="settings_receive_alpha_desc">Include pre-release builds when checking for updates</string>
 
     <string name="settings_preview_title">Effect preview</string>
     <string name="settings_preview_mode_light">Light mode</string>

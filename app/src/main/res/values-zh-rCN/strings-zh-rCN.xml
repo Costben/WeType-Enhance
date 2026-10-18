@@ -52,6 +52,8 @@
 
     <string name="settings_disable_hot_update_title">禁用热更新</string>
     <string name="settings_disable_hot_update_desc">阻止微信输入法热修复</string>
+    <string name="settings_receive_alpha_title">接收 Alpha 版本更新</string>
+    <string name="settings_receive_alpha_desc">检查更新时一并提示预发布版本</string>
 
     <string name="settings_preview_title">效果预览</string>
     <string name="settings_preview_mode_light">浅色模式</string>

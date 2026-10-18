@@ -30,6 +30,8 @@ internal fun LazyListScope.FeatureTabContent(
     onColorosAiWriterEnabledChange: (Boolean) -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
+    receiveAlpha: Boolean,
+    onReceiveAlphaChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
     onRestoreDefaults: () -> Unit
 ) {
@@ -106,6 +108,12 @@ internal fun LazyListScope.FeatureTabContent(
             insideMargin = PaddingValues(0.dp)
         ) {
             Column {
+                SwitchPreference(
+                    title = stringResource(R.string.settings_receive_alpha_title),
+                    summary = stringResource(R.string.settings_receive_alpha_desc),
+                    checked = receiveAlpha,
+                    onCheckedChange = onReceiveAlphaChange
+                )
                 BasicComponent(
                     title = "模块版本",
                     summary = "v${BuildConfig.VERSION_NAME} (Code ${BuildConfig.VERSION_CODE})",

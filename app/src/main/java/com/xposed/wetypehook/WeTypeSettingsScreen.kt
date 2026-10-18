@@ -125,9 +125,16 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
             }
         }
     }
+    // 接收预发布的开关直接读写模块自己的偏好，跟输入法设置管道无关。
+    var receiveAlpha by remember { mutableStateOf(ModuleUpdatePreferences.isReceiveAlpha(preferencesContext)) }
     // 每次进入模块设置时检查一次更新，失败静默忽略；勾过「跳过本次更新」的版本不再弹。
-    LaunchedEffect(Unit) {
-        ModuleUpdateChecker.check(BuildConfig.VERSION_NAME)?.let { info ->
+    // 开关本身也参与重启检查：刚打开「接收 Alpha」就应当看到当前能升的那个预发布。
+    LaunchedEffect(receiveAlpha) {
+        ModuleUpdateChecker.check(
+            currentVersionCode = BuildConfig.VERSION_CODE,
+            currentVersionName = BuildConfig.VERSION_NAME,
+            includePrereleases = receiveAlpha
+        )?.let { info ->
             if (!ModuleUpdateSkip.isSkipped(preferencesContext, info.versionName)) {
                 updateInfo = info
                 showUpdateSheet = true
@@ -282,6 +289,11 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                                     onColorosAiWriterEnabledChange = { colorosAiWriterEnabled = it },
                                     disableHotUpdate = disableHotUpdate,
                                     onDisableHotUpdateChange = { disableHotUpdate = it },
+                                    receiveAlpha = receiveAlpha,
+                                    onReceiveAlphaChange = { enabled ->
+                                        receiveAlpha = enabled
+                                        ModuleUpdatePreferences.setReceiveAlpha(preferencesContext, enabled)
+                                    },
                                     activationStatus = activationStatus,
                                     onRestoreDefaults = ::restoreDefaults
                                 )
