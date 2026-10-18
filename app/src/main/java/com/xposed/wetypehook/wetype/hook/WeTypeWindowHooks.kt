@@ -46,6 +46,13 @@ import java.util.concurrent.TimeUnit
 private const val WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX = 2
 
 /**
+ * 输入法窗口里的系统底栏。它是框架视图（`InputMethodService` 自己的导航栏），
+ * 不是宿主绘制的：收起键盘（∨）、切换输入法（地球）与手势条都在这里。
+ */
+private const val IME_NAVIGATION_BAR_FRAME = "android.inputmethodservice.navigationbar.NavigationBarFrame"
+private const val IME_NAVIGATION_BAR_ID = "input_method_navigation_bar_view"
+
+/**
  * 导航栏图标反色的亮度判据。
  *
  * 微信输入法自己不声明导航栏 appearance，而 `DisplayPolicy.chooseNavigationColorWindowLw`
@@ -129,10 +136,15 @@ internal object WeTypeWindowHooks {
         var originalWindowBackground: Drawable? = null,
         var originalWindowBlurRadius: Int? = null,
         var navBarAppearanceCaptured: Boolean = false,
-        var originalNavBarAppearance: Int = 0
+        var originalNavBarAppearance: Int = 0,
+        var navigationBarFrame: WeakReference<View>? = null,
+        var originalNavigationBarVisibility: Int = View.VISIBLE
     )
 
     private val weTypeWindowStates = WeakHashMap<Any, WeTypeWindowState>()
+
+    /** 悬浮键盘显示期间，输入法窗口的系统底栏与模块背板都不该出现。 */
+    private var floatingKeyboardActive = false
 
     fun prepareForHotReload(): Boolean {
         val states = synchronized(weTypeWindowStates) {
@@ -141,6 +153,7 @@ internal object WeTypeWindowHooks {
         val cleaned = runOnMainThreadBlocking {
             WeTypeOverlayCompositor.clearAll()
             WeTypeFloatingKeyboardHooks.clearAll()
+            floatingKeyboardActive = false
             states.forEach { state ->
                 state.windowVisible = false
                 removeBackgroundListeners(state)
@@ -233,6 +246,77 @@ internal object WeTypeWindowHooks {
         WeTypeFloatingKeyboardHooks.refresh()
     }
 
+    /**
+     * 悬浮键盘显示 / 退出时切换输入法窗口的底栏。
+     *
+     * 悬浮态下输入法窗口里只剩系统 IME 导航栏（`NavigationBarFrame`：收起键盘、切换输入法、
+     * 手势条）与 144px 的导航栏 inset。模块把皮肤色置透明之后，这条底栏变成一层透明的壳：
+     * 既没有宿主底色，又还占着屏幕最底部一条。悬浮时直接把它藏掉、同时停掉模块背板在该
+     * 区域的绘制，退出悬浮时原样还原。
+     */
+    internal fun onFloatingKeyboardStateChanged(active: Boolean) {
+        if (floatingKeyboardActive == active) return
+        floatingKeyboardActive = active
+        val states = synchronized(weTypeWindowStates) { weTypeWindowStates.values.toList() }
+        states.forEach { state ->
+            state.backgroundUpdatePending = true
+            state.backgroundStyleDirty = true
+            val decorView = state.backgroundDecorView?.get() ?: return@forEach
+            runCatching {
+                if (active) {
+                    hideImeNavigationBar(decorView, state)
+                    hideBackgroundCarrier(state)
+                } else {
+                    restoreImeNavigationBar(state)
+                }
+                decorView.invalidate()
+            }.onFailure {
+                Log.i("Failed: Toggle floating keyboard bottom bar")
+                Log.i(it)
+            }
+        }
+    }
+
+    private fun hideImeNavigationBar(decorView: View, state: WeTypeWindowState) {
+        val frame = state.navigationBarFrame?.get()?.takeIf { it.parent != null }
+            ?: findImeNavigationBar(decorView)?.also {
+                state.navigationBarFrame = WeakReference(it)
+                state.originalNavigationBarVisibility = it.visibility
+            }
+            ?: return
+        if (frame.visibility != View.GONE) frame.visibility = View.GONE
+    }
+
+    private fun restoreImeNavigationBar(state: WeTypeWindowState) {
+        val frame = state.navigationBarFrame?.get() ?: return
+        if (frame.visibility != state.originalNavigationBarVisibility) {
+            frame.visibility = state.originalNavigationBarVisibility
+        }
+        state.navigationBarFrame = null
+    }
+
+    /**
+     * 框架类名不会被 R8 改；退路是按框架资源 id 找到 `NavigationBarView`，隐藏它的外层容器。
+     */
+    private fun findImeNavigationBar(decorView: View): View? {
+        findViewByClassName(decorView, IME_NAVIGATION_BAR_FRAME)?.let { return it }
+        val id = runCatching {
+            decorView.context.resources.getIdentifier(IME_NAVIGATION_BAR_ID, "id", "android")
+        }.getOrDefault(0)
+        if (id == 0) return null
+        val view = decorView.findViewById<View>(id) ?: return null
+        return (view.parent as? View)?.takeIf { it !== decorView } ?: view
+    }
+
+    private fun findViewByClassName(view: View, className: String): View? {
+        if (view.javaClass.name == className) return view
+        val group = view as? ViewGroup ?: return null
+        for (index in 0 until group.childCount) {
+            findViewByClassName(group.getChildAt(index), className)?.let { return it }
+        }
+        return null
+    }
+
     private fun reconcileCurrentResourceViews(inputMethodService: Any) {
         val decorView = resolveInputMethodDecorView(inputMethodService) ?: return
         val state = getWindowState(inputMethodService)
@@ -263,6 +347,10 @@ internal object WeTypeWindowHooks {
     private fun onComputeInsets(inputMethodService: Any, insets: InputMethodService.Insets?) {
         runCatching {
             val state = getWindowState(inputMethodService)
+            if (floatingKeyboardActive) {
+                // 框架每次重算 insets 都可能把底栏重新显示出来，这里补一刀。
+                resolveInputMethodDecorView(inputMethodService)?.let { hideImeNavigationBar(it, state) }
+            }
             val window = (inputMethodService as? InputMethodService)?.window?.window ?: return@runCatching
             val rootHeight = window.decorView.rootView?.height?.takeIf { it > 0 }
                 ?: window.decorView.height.takeIf { it > 0 }
@@ -371,6 +459,13 @@ internal object WeTypeWindowHooks {
                     val context: Context = service
                     val window = service.window?.window ?: return@runCatching true
                     val latestDecorView = window.decorView
+                    if (floatingKeyboardActive) {
+                        // 悬浮键盘浮在 App 上，底栏只是框架留下的空壳：图标与背板一起停掉。
+                        hideImeNavigationBar(latestDecorView, state)
+                        hideBackgroundCarrier(state)
+                        return@runCatching true
+                    }
+                    restoreImeNavigationBar(state)
                     val bounds = collectBackgroundBounds(service, latestDecorView, state.locationBuffer, state)
                     if (shouldHideBackground(latestDecorView, state, bounds)) {
                         hideBackgroundCarrier(state)
@@ -425,6 +520,7 @@ internal object WeTypeWindowHooks {
         runCatching {
             val state = getWindowState(inputMethodService)
             state.windowVisible = false
+            restoreImeNavigationBar(state)
             state.stopMaterialObserver?.invoke()
             state.stopMaterialObserver = null
             state.computedVisibleImeHeightPx = null
@@ -825,6 +921,7 @@ internal object WeTypeWindowHooks {
         state.stopMaterialObserver = null
         state.hyperMaterial?.clear()
         state.hyperMaterial = null
+        restoreImeNavigationBar(state)
         // 必须在置空 state.window 之前交还：restoreNavigationBarAppearance 依赖它取窗口。
         restoreNavigationBarAppearance(state)
         val carrier = state.backgroundCarrier ?: return
@@ -837,6 +934,7 @@ internal object WeTypeWindowHooks {
     }
 
     private fun restoreWindowState(state: WeTypeWindowState) {
+        restoreImeNavigationBar(state)
         restoreNavigationBarAppearance(state)
         if (!state.originalWindowStateCaptured) return
         val window = state.window?.get() ?: return

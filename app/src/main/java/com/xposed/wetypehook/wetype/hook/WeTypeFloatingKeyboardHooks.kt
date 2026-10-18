@@ -5,6 +5,8 @@ import android.graphics.Outline
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.NinePatchDrawable
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -67,6 +69,10 @@ internal object WeTypeFloatingKeyboardHooks {
 
     private val panels = WeakHashMap<View, PanelState>()
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var floatingActive = false
+    private var floatingStateCheckScheduled = false
+
     /** 被我们换掉背景的视图 → 宿主原来的背景，热重载与撤销时还原。 */
     private val originals = WeakHashMap<View, Drawable?>()
 
@@ -118,6 +124,11 @@ internal object WeTypeFloatingKeyboardHooks {
             runCatching { view.visibility = visibility }
         }
         hiddenFrames.clear()
+        floatingStateCheckScheduled = false
+        if (floatingActive) {
+            floatingActive = false
+            WeTypeWindowHooks.onFloatingKeyboardStateChanged(false)
+        }
     }
 
     private fun track(decor: View) {
@@ -128,17 +139,45 @@ internal object WeTypeFloatingKeyboardHooks {
             val reference = WeakReference(decor)
             val listener = object : View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: View) {
-                    reference.get()?.let { register(it, state) }
+                    reference.get()?.let {
+                        register(it, state)
+                        notifyFloatingState()
+                    }
                 }
 
                 override fun onViewDetachedFromWindow(v: View) {
-                    reference.get()?.let { unregister(it, state, removeAttach = false) }
+                    reference.get()?.let {
+                        unregister(it, state, removeAttach = false)
+                        notifyFloatingState()
+                    }
                 }
             }
             state.attachListener = listener
             decor.addOnAttachStateChangeListener(listener)
         }
-        if (decor.isAttachedToWindow) register(decor, state)
+        if (decor.isAttachedToWindow) {
+            register(decor, state)
+            notifyFloatingState()
+        }
+    }
+
+    /**
+     * 悬浮键盘是否正显示：宿主把面板放进独立 PopupWindow，面板挂上窗口即悬浮态。
+     *
+     * 退出悬浮（弹窗销毁）或收起键盘时随之解除。用一帧去重，避免宿主重建弹窗时
+     * 「先 detach 再 attach」把输入法底栏闪回来。
+     */
+    private fun notifyFloatingState() {
+        if (floatingStateCheckScheduled) return
+        floatingStateCheckScheduled = true
+        mainHandler.post {
+            floatingStateCheckScheduled = false
+            val active = synchronized(panels) { panels.keys.any { it.isAttachedToWindow } }
+            if (active == floatingActive) return@post
+            floatingActive = active
+            Log.i("Floating keyboard bottom bar ${if (active) "hidden" else "restored"}")
+            WeTypeWindowHooks.onFloatingKeyboardStateChanged(active)
+        }
     }
 
     /**
