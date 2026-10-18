@@ -146,6 +146,20 @@ internal object WeTypeWindowHooks {
     /** 悬浮键盘显示期间，输入法窗口的系统底栏与模块背板都不该出现。 */
     private var floatingKeyboardActive = false
 
+    /**
+     * MIUI / HyperOS 的系统剪贴板（`InputMethodBottomManager.sClipboardWindow`）是否正在显示。
+     * 由 `MainHook` 装好宿主类之后回填；其它 ROM 上始终为 null。
+     */
+    private var miuiClipboardVisibilityProvider: (() -> Boolean)? = null
+
+    fun setMiuiClipboardVisibilityProvider(provider: (() -> Boolean)?) {
+        miuiClipboardVisibilityProvider = provider
+    }
+
+    fun isMiuiClipboardActive(): Boolean = runCatching {
+        miuiClipboardVisibilityProvider?.invoke() == true
+    }.getOrDefault(false)
+
     fun prepareForHotReload(): Boolean {
         val states = synchronized(weTypeWindowStates) {
             weTypeWindowStates.values.toList()
@@ -154,6 +168,7 @@ internal object WeTypeWindowHooks {
             WeTypeOverlayCompositor.clearAll()
             WeTypeFloatingKeyboardHooks.clearAll()
             floatingKeyboardActive = false
+            miuiClipboardVisibilityProvider = null
             states.forEach { state ->
                 state.windowVisible = false
                 removeBackgroundListeners(state)
@@ -355,8 +370,25 @@ internal object WeTypeWindowHooks {
             val rootHeight = window.decorView.rootView?.height?.takeIf { it > 0 }
                 ?: window.decorView.height.takeIf { it > 0 }
                 ?: return@runCatching
-            val visibleTopInsets = insets?.visibleTopInsets ?: return@runCatching
-            val visibleImeHeight = (rootHeight - visibleTopInsets).coerceAtLeast(0)
+            insets ?: return@runCatching
+            if (rootHeight - insets.visibleTopInsets <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX &&
+                state.windowVisible && isMiuiClipboardActive()
+            ) {
+                val inputFrame = readViewField(inputMethodService, "mInputFrame")
+                if (inputFrame?.visibility == View.INVISIBLE && inputFrame.isAttachedToWindow &&
+                    inputFrame.isLaidOut && inputFrame.height > 0
+                ) {
+                    // MIUI 剪贴板只把按键区藏起来，系统底栏不能跟着塌陷：把可见 / 可触区域
+                    // 维持在真实输入帧上，模块背板才盖得住弹出的剪贴板。
+                    inputFrame.getLocationInWindow(state.locationBuffer)
+                    val top = state.locationBuffer[1]
+                    if (top in 0 until rootHeight) {
+                        insets.contentTopInsets = minOf(insets.contentTopInsets, top)
+                        insets.visibleTopInsets = top
+                    }
+                }
+            }
+            val visibleImeHeight = (rootHeight - insets.visibleTopInsets).coerceAtLeast(0)
             val previousVisibleImeHeight = state.computedVisibleImeHeightPx
 
             if (!state.windowVisible) return@runCatching
@@ -580,14 +612,25 @@ internal object WeTypeWindowHooks {
             }.getOrNull()
             state.inputViewMethodResolved = true
         }
+        val inputFrame = readViewField(inputMethodService, "mInputFrame")
+        val clipboardShowing = isMiuiClipboardActive()
         val contentViews = listOfNotNull(
             readViewField(inputMethodService, "mCandidatesFrame"),
-            readViewField(inputMethodService, "mInputFrame"),
+            inputFrame,
             runCatching { state.inputViewMethod?.invoke(inputMethodService) as? View }.getOrNull()
         )
         val geometry = resolveWeTypeBackgroundBounds(
             decorView.toBackgroundLayout(location),
-            contentViews.map { it.toBackgroundLayout(location) }
+            contentViews.map { view ->
+                view.toBackgroundLayout(location).let { layout ->
+                    // 剪贴板 / 常用语弹出时宿主把输入帧置为 INVISIBLE，但背板仍要盖住它。
+                    if (clipboardShowing && view === inputFrame && view.visibility == View.INVISIBLE) {
+                        layout.copy(isShown = true)
+                    } else {
+                        layout
+                    }
+                }
+            }
         )
         // 键盘真实高度以 IME 自己声明的可见高度为准。
         //
@@ -859,7 +902,8 @@ internal object WeTypeWindowHooks {
     ): Boolean {
         val collapsedByInsets = state.computedVisibleImeHeightPx
             ?.let { it <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX } == true
-        if (collapsedByInsets) {
+        // 剪贴板 / 常用语弹出时按键区被宿主藏起来，但窗口还占着屏幕，不能据此判成收起。
+        if (collapsedByInsets && !isMiuiClipboardActive()) {
             // 与 onComputeInsets 同一套纪律：imeH=1 的单次上报不足以判定收起，必须由几何
             // 正面确认（几何取不到时视为宿主正在重排，保持现状）。
             if (bounds != null && bounds.height <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {

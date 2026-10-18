@@ -21,6 +21,7 @@ import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import com.xposed.wetypehook.oplus.OplusAiWriterHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeClipboardHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeGestureHooks
@@ -309,7 +310,7 @@ class MainHook : XposedModule() {
         }
 
         HookEnvironment.withHookScope("miui.dynamic-loader") {
-            hookInputMethodModuleManager(isNonCustomize)
+            hookInputMethodModuleManager(packageName)
         }
 
         Log.i("Hook MIUI IME Done!")
@@ -441,7 +442,7 @@ class MainHook : XposedModule() {
         } ?: Log.e("Failed:Class not found: InputMethodServiceInjector")
     }
 
-    private fun hookInputMethodModuleManager(isNonCustomize: Boolean) {
+    private fun hookInputMethodModuleManager(packageName: String) {
         runCatching {
             findMethod("android.inputmethodservice.InputMethodModuleManager") {
                 name == "loadDex" && parameterTypes.sameAs(ClassLoader::class.java, String::class.java)
@@ -455,7 +456,7 @@ class MainHook : XposedModule() {
                         targetClassLoader.invokeMethodAs<Any?>("addDexPath", dexPath)
                     }
                     HookEnvironment.withHookScope("miui.dynamic-bottom") {
-                        installBottomManagerHooks(targetClassLoader, isNonCustomize)
+                        installBottomManagerHooks(targetClassLoader, packageName)
                     }
                     param.result = null
                 }.onFailure {
@@ -474,7 +475,8 @@ class MainHook : XposedModule() {
             Class.forName(INPUT_METHOD_BOTTOM_MANAGER, true, classLoader)
         }.isSuccess
 
-    private fun installBottomManagerHooks(classLoader: ClassLoader, isNonCustomize: Boolean) {
+    private fun installBottomManagerHooks(classLoader: ClassLoader, packageName: String) {
+        val isNonCustomize = packageName !in miuiImeList
         hookDeleteNotSupportIme(
             "$INPUT_METHOD_BOTTOM_MANAGER\$MiuiSwitchInputMethodListener",
             classLoader
@@ -490,6 +492,48 @@ class MainHook : XposedModule() {
             hookMiuiBottomInsetCompatibility(bottomManagerClass)
         }
         hookSupportImeList(bottomManagerClass)
+        if (packageName == WETYPE_PACKAGE) hookMiuiClipboardMaterial(bottomManagerClass)
+    }
+
+    /**
+     * HyperOS / MIUI 的系统剪贴板与常用语面板由 `InputMethodBottomManager` 自己的
+     * `sClipboardWindow` 承载，默认不跟输入法的透明皮肤走。这里让宿主把它当成高级材质
+     * 窗口，并把「剪贴板是否正在显示」交给 [WeTypeWindowHooks]：剪贴板弹出期间键盘输入区
+     * 会被宿主置为 INVISIBLE，窗口侧据此维持可见区域与背板，避免底栏塌陷 / 背景丢失。
+     *
+     * 只在小程序动态底栏类上安装，且只对微信输入法生效；ColorOS 等没有这个类的 ROM
+     * 在 [installBottomManagerHooks] 里已经提前返回，不会走到这里。
+     */
+    private fun hookMiuiClipboardMaterial(clazz: Class<*>) {
+        val token = classHookToken("clipboardMaterial", clazz)
+        if (!installedHookTokens.add(token)) return
+        runCatching {
+            val enabled = clazz.getDeclaredMethod("isHyperMaterialEnabled")
+            val popup = clazz.getDeclaredField("sClipboardWindow")
+            val inputAreaHidden = popup.type.getDeclaredField("mInputAreaHidden")
+            if (inputAreaHidden.type != Boolean::class.javaPrimitiveType ||
+                enabled.returnType != Boolean::class.javaPrimitiveType ||
+                !Modifier.isStatic(enabled.modifiers) || !Modifier.isStatic(popup.modifiers) ||
+                !PopupWindow::class.java.isAssignableFrom(popup.type)
+            ) return@runCatching
+            popup.isAccessible = true
+            inputAreaHidden.isAccessible = true
+            enabled.hookReturnConstant(true)
+            var previousWindow = WeakReference<PopupWindow>(null)
+            WeTypeWindowHooks.setMiuiClipboardVisibilityProvider {
+                val window = (popup.get(null) as? PopupWindow)?.also {
+                    if (previousWindow.get() !== it) previousWindow = WeakReference(it)
+                } ?: previousWindow.get()
+                // 宿主的收起动画结束前会先把输入区还原，底栏重建也可能清掉静态引用。
+                val active = window != null && (window.isShowing || inputAreaHidden.getBoolean(window))
+                if (!active) previousWindow.clear()
+                active
+            }
+        }.onFailure {
+            installedHookTokens.remove(token)
+            Log.i("Failed:Hook MIUI clipboard material")
+            Log.i(it)
+        }
     }
 
     private fun hookMiuiBottomInsetCompatibility(clazz: Class<*>) {
@@ -702,7 +746,9 @@ class MainHook : XposedModule() {
         if (rootView !is LinearLayout || rootView.orientation != LinearLayout.VERTICAL ||
             fullscreenArea.parent !== rootView || inputFrame.parent !== rootView ||
             bottomArea.parent !== rootView || fullscreenArea.visibility != View.INVISIBLE ||
-            inputFrame.visibility != View.VISIBLE || bottomArea.visibility != View.VISIBLE ||
+            (inputFrame.visibility != View.VISIBLE &&
+                !(inputFrame.visibility == View.INVISIBLE && WeTypeWindowHooks.isMiuiClipboardActive())) ||
+            bottomArea.visibility != View.VISIBLE ||
             fullscreenArea.layoutParams !is LinearLayout.LayoutParams ||
             inputFrame.paddingBottom != 0
         ) return false
@@ -1305,7 +1351,7 @@ class MainHook : XposedModule() {
         bottomManagerClasses.forEach { bottomManagerClass ->
             val classLoader = bottomManagerClass.classLoader ?: return@forEach
             HookEnvironment.withHookScope("miui.dynamic-bottom") {
-                installBottomManagerHooks(classLoader, isNonCustomize)
+                installBottomManagerHooks(classLoader, packageName)
             }
         }
         return if (isNonCustomize) bottomManagerClasses else emptyList()
