@@ -28,6 +28,7 @@ import com.xposed.wetypehook.xposed.hookReturnConstant
 import com.xposed.wetypehook.xposed.loadClassOrNull
 import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLight
 import com.xposed.wetypehook.wetype.graphics.WeTypeIconEdgeLightLayer
+import com.xposed.wetypehook.wetype.host.HostDexKit
 import com.xposed.wetypehook.wetype.host.HostResources
 import com.xposed.wetypehook.wetype.host.pickHostField
 import com.xposed.wetypehook.wetype.logo.LogoImageRenderer
@@ -640,30 +641,30 @@ internal object WeTypeResourceHooks {
             return
         }
         runCatching {
-            System.loadLibrary("dexkit")
-            DexKitBridge.create(sourceDir).use { bridge ->
-                val access = resolveButtonColorAccess(bridge, classLoader)
-                if (access == null) {
-                    Log.e("Failed: Cannot resolve host button background setter")
-                    return@use
-                }
-                access.setter.hookBefore { param ->
+            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val access = resolveButtonColorAccess(bridge, classLoader)
+            if (access == null) {
+                Log.e("Failed: Cannot resolve host button background setter")
+                return@runCatching
+            }
+            access.setter.hookBefore { param ->
+                if (!perKeyColorResolver.isEnabled()) return@hookBefore
+                val resolved = perKeyColorResolver.resolve(access.readKeyId(param.thisObject))
+                    ?: return@hookBefore
+                param.args[0] = resolved.color
+            }
+            access.labelSetters.forEach { setter ->
+                setter.hookBefore { param ->
+                    if (!perKeyColorResolver.isEnabled()) return@hookBefore
                     val resolved = perKeyColorResolver.resolve(access.readKeyId(param.thisObject))
                         ?: return@hookBefore
-                    param.args[0] = resolved.color
+                    param.args[0] = perKeyLabelColor(resolved.color, resolved.invert)
                 }
-                access.labelSetters.forEach { setter ->
-                    setter.hookBefore { param ->
-                        val resolved = perKeyColorResolver.resolve(access.readKeyId(param.thisObject))
-                            ?: return@hookBefore
-                        param.args[0] = perKeyLabelColor(resolved.color, resolved.invert)
-                    }
-                }
-                Log.i(
-                    "Success: Hook WeType per-key colors (draw context setters: " +
-                        "bg + ${access.labelSetters.size} label)"
-                )
             }
+            Log.i(
+                "Success: Hook WeType per-key colors (draw context setters: " +
+                    "bg + ${access.labelSetters.size} label)"
+            )
         }.onFailure {
             Log.i("Failed: Hook WeType per-key colors (draw context setters)")
             Log.i(it)
@@ -681,6 +682,7 @@ internal object WeTypeResourceHooks {
             // 所以 8 位可保留用户设的半透明键帽色，不要改成 6 位。
             listOf("getBgColor", "getInitialColor").forEach { getterName ->
                 keyDataClass.getMethod(getterName).hookAfter { param ->
+                    if (!perKeyColorResolver.isEnabled()) return@hookAfter
                     val keyId = runCatching { idGetter.invoke(param.thisObject) as? String }
                         .getOrNull()
                     val resolved = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
@@ -692,6 +694,7 @@ internal object WeTypeResourceHooks {
             // 是两组独立字段（各含常态与按下态），四路都要盖，否则按下时会闪回原色。
             LABEL_COLOR_GETTERS.forEach { getterName ->
                 keyDataClass.getMethod(getterName).hookAfter { param ->
+                    if (!perKeyColorResolver.isEnabled()) return@hookAfter
                     val keyId = runCatching { idGetter.invoke(param.thisObject) as? String }
                         .getOrNull()
                     val resolved = perKeyColorResolver.resolve(keyId) ?: return@hookAfter
@@ -725,13 +728,23 @@ internal object WeTypeResourceHooks {
         @Volatile
         private var overrides = WeTypeKeyColorOverrides.decode(null)
 
-        fun resolve(rawKeyId: String?): ResolvedKeyColor? {
-            if (rawKeyId.isNullOrEmpty()) return null
+        /** 逐键颜色关闭时，调用方应在读 keyId（两次反射）之前就问一次。 */
+        fun isEnabled(): Boolean {
+            refreshOverrides()
+            return overrides.enabled
+        }
+
+        private fun refreshOverrides() {
             val json = WeTypeSettings.getPerKeyColorsJsonXposed()
             if (json != cachedJson) {
                 cachedJson = json
                 overrides = WeTypeKeyColorOverrides.decode(json)
             }
+        }
+
+        fun resolve(rawKeyId: String?): ResolvedKeyColor? {
+            if (rawKeyId.isNullOrEmpty()) return null
+            refreshOverrides()
             if (!overrides.enabled) return null
             val token = WeTypeKeyColorOverrides.tokenOf(rawKeyId) ?: return null
             val color = when (val value = overrides.colors[token]) {

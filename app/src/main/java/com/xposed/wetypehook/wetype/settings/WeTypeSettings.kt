@@ -1472,6 +1472,13 @@ object WeTypeSettings {
         readSnapshotXposed().edgeHighlightEnabled
 
     /**
+     * 绘制热路径上的开关判断：不需要 Context，只读一次快照缓存。
+     * 逐键绘制每帧都会问一次，拿 Context 只是为了走旧签名。
+     */
+    fun isEdgeHighlightEnabledXposed(): Boolean =
+        readSnapshotXposed().edgeHighlightEnabled
+
+    /**
      * 绘制侧取某一类元素（背景 / 图标 / 按键）的光感设置。
      *
      * 三类共用同一个角度，但它不在这里：角度是 `getEdgeLightAngleXposed()`。

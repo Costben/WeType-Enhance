@@ -1,8 +1,11 @@
 package com.xposed.wetypehook.wetype.graphics
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import com.xposed.wetypehook.wetype.settings.EdgeLightGroup
 import com.xposed.wetypehook.wetype.settings.EdgeLightTarget
 import com.xposed.wetypehook.wetype.settings.MaterialPresetCatalog
@@ -39,15 +42,58 @@ internal class WeTypeSelfDrawnEdgeLight(
     private var drawable: WeTypeBloomStrokeDrawable? = null
     private var drawableRadius = Float.NaN
 
+    private data class BitmapKey(val width: Int, val height: Int, val radius: Int)
+
+    /**
+     * 每个键尺寸一份预渲染位图。
+     *
+     * 边缘光是「四层 BlurMaskFilter 路径」堆出来的，直接在每一帧给 26 个键各画一遍会把
+     * RenderThread 打满（实机 p50 从 20ms 涨到 100ms）。
+     *
+     * 键帽宽高不是整齐的同一值：同一排也会差 1px（布局取整），按精确尺寸做键会永远不命中，
+     * 每帧都在新建位图。这里按 [BUCKET] 像素分桶，渲染后用 `drawBitmap(src=null, dst=rect)`
+     * 缩到真实矩形，误差最多 4px，肉眼看不出来。
+     */
+    private val bitmapCache = LinkedHashMap<BitmapKey, Bitmap>(16, 0.75f, true)
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val destination = RectF()
+
     override fun draw(canvas: Canvas, rect: Rect, radiusPx: Float, dark: Boolean): Boolean {
         if (rect.isEmpty) return false
-        val light = drawableFor(radiusPx)
-        val save = canvas.save()
-        canvas.translate(rect.left.toFloat(), rect.top.toFloat())
-        light.setBounds(0, 0, rect.width(), rect.height())
-        light.draw(canvas)
-        canvas.restoreToCount(save)
+        val width = rect.width()
+        val height = rect.height()
+        if (width <= 0 || height <= 0) return false
+        val radius = radiusPx.coerceAtLeast(0f)
+        val key = BitmapKey(bucket(width.toFloat()), bucket(height.toFloat()), bucket(radius))
+        val bitmap = bitmapCache[key] ?: renderBitmap(
+            radius,
+            key.width * BUCKET,
+            key.height * BUCKET
+        ).also {
+            bitmapCache[key] = it
+            if (bitmapCache.size > MAX_CACHED_SIZES) {
+                val eldest = bitmapCache.entries.iterator()
+                if (eldest.hasNext()) {
+                    eldest.next().value.recycle()
+                    eldest.remove()
+                }
+            }
+        }
+        destination.set(rect)
+        canvas.drawBitmap(bitmap, null, destination, bitmapPaint)
         return true
+    }
+
+    private fun bucket(value: Float): Int =
+        (value / BUCKET).toInt().coerceAtLeast(1)
+
+    private fun renderBitmap(radiusPx: Float, width: Int, height: Int): Bitmap {
+        val light = drawableFor(radiusPx)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val bitmapCanvas = Canvas(bitmap)
+        light.setBounds(0, 0, width, height)
+        light.draw(bitmapCanvas)
+        return bitmap
     }
 
     private fun drawableFor(radiusPx: Float): WeTypeBloomStrokeDrawable {
@@ -73,6 +119,12 @@ internal class WeTypeSelfDrawnEdgeLight(
     }
 
     companion object {
+        /** 键帽尺寸的取值很少（普通键 / 功能键 / 空格），留一点余量防止异常布局把缓存撑大。 */
+        private const val MAX_CACHED_SIZES = 32
+
+        /** 位图缓存的分桶粒度（px）。 */
+        private const val BUCKET = 4
+
         /**
          * 自绘高光的基准宽度（dp）。CSS 阴影栈里的偏移量就是按这个宽度写的，
          * `strokeWidthScale = 宽度设置 / 本值` 把「宽度」滑杆映射成几何缩放。

@@ -19,6 +19,7 @@ import com.xposed.wetypehook.wetype.settings.EdgeLightTarget
 import com.xposed.wetypehook.wetype.settings.GestureLabelLayout
 import com.xposed.wetypehook.wetype.settings.LIGHT_KEY_COLOR_GROUP_ID
 import com.xposed.wetypehook.wetype.settings.WeTypeGestureSettings
+import com.xposed.wetypehook.wetype.host.HostDexKit
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.MethodHookParam
@@ -162,69 +163,67 @@ internal object WeTypeKeyLabelHooks {
         }
 
         runCatching {
-            System.loadLibrary("dexkit")
-            DexKitBridge.create(sourceDir).use { bridge ->
-                keyDataMethod = resolveKeyDataMethod(bridge, classLoader)
-                resolveBgCornerGetter(bridge, classLoader)?.let {
-                    bgCornerGetter = it
+            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            keyDataMethod = resolveKeyDataMethod(bridge, classLoader)
+            resolveBgCornerGetter(bridge, classLoader)?.let {
+                bgCornerGetter = it
+            }
+            val targets = bridge.findMethod {
+                searchPackages(DRAW_METHOD_PACKAGE)
+                matcher {
+                    returnType = "void"
+                    paramCount = 2
                 }
-                val targets = bridge.findMethod {
-                    searchPackages(DRAW_METHOD_PACKAGE)
-                    matcher {
-                        returnType = "void"
-                        paramCount = 2
-                    }
-                }.mapNotNull { data ->
-                    if (data.paramTypes.size != 2) return@mapNotNull null
-                    if (data.paramTypes[0].name != CANVAS_CLASS) return@mapNotNull null
-                    if (!data.paramTypes[1].name.startsWith(DRAW_CONTEXT_PACKAGE)) return@mapNotNull null
-                    val method = runCatching { data.getMethodInstance(classLoader) }.getOrNull()
-                        ?: return@mapNotNull null
-                    if (Modifier.isAbstract(method.modifiers)) return@mapNotNull null
-                    method
-                }
-                if (targets.isEmpty()) {
-                    Log.e("[$TAG] Failed to locate single-key draw method")
-                    return
-                }
-                targets.forEach { method ->
-                    method.hookAround(
-                        before = {
-                            val depth = drawNesting.get() + 1
-                            if (depth > MAX_PLAUSIBLE_DRAW_NESTING) {
-                                // hookAround 保证 before/after 成对，走到这里说明
-                                // 还有别的调用路径绕开了配对，只能就地自愈。
-                                if (nestingLeakLogsRemaining.getAndUpdate { current ->
-                                        if (current > 0) current - 1 else 0
-                                    } > 0
-                                ) {
-                                    Log.e("[$TAG] draw nesting hit $depth; resetting" +
-                                        " (thread=${Thread.currentThread().name})")
-                                }
-                                drawNesting.set(1)
-                            } else {
-                                drawNesting.set(depth)
-                            }
-                        },
-                        after = { param: MethodHookParam, failure: Throwable? ->
-                            val remaining = (drawNesting.get() - 1).coerceAtLeast(0)
-                            drawNesting.set(remaining)
-                            // 宿主绘制抛异常时这里依然执行（try/finally 保证），
-                            // 但那一帧的键帽已经画残，落笔没有意义。
-                            if (failure != null && hostDrawFailuresRemaining.getAndUpdate { current ->
+            }.mapNotNull { data ->
+                if (data.paramTypes.size != 2) return@mapNotNull null
+                if (data.paramTypes[0].name != CANVAS_CLASS) return@mapNotNull null
+                if (!data.paramTypes[1].name.startsWith(DRAW_CONTEXT_PACKAGE)) return@mapNotNull null
+                val method = runCatching { data.getMethodInstance(classLoader) }.getOrNull()
+                    ?: return@mapNotNull null
+                if (Modifier.isAbstract(method.modifiers)) return@mapNotNull null
+                method
+            }
+            if (targets.isEmpty()) {
+                Log.e("[$TAG] Failed to locate single-key draw method")
+                return
+            }
+            targets.forEach { method ->
+                method.hookAround(
+                    before = {
+                        val depth = drawNesting.get() + 1
+                        if (depth > MAX_PLAUSIBLE_DRAW_NESTING) {
+                            // hookAround 保证 before/after 成对，走到这里说明
+                            // 还有别的调用路径绕开了配对，只能就地自愈。
+                            if (nestingLeakLogsRemaining.getAndUpdate { current ->
                                     if (current > 0) current - 1 else 0
                                 } > 0
                             ) {
-                                Log.e("[$TAG] host draw threw: ${failure.javaClass.name}: ${failure.message}")
+                                Log.e("[$TAG] draw nesting hit $depth; resetting" +
+                                    " (thread=${Thread.currentThread().name})")
                             }
-                            if (remaining == 0 && failure == null) {
-                                drawKeyLabel(param.args.getOrNull(0), param.args.getOrNull(1))
-                            }
+                            drawNesting.set(1)
+                        } else {
+                            drawNesting.set(depth)
                         }
-                    )
-                }
-                Log.i("[$TAG] Hooked ${targets.size} single-key draw methods")
+                    },
+                    after = { param: MethodHookParam, failure: Throwable? ->
+                        val remaining = (drawNesting.get() - 1).coerceAtLeast(0)
+                        drawNesting.set(remaining)
+                        // 宿主绘制抛异常时这里依然执行（try/finally 保证），
+                        // 但那一帧的键帽已经画残，落笔没有意义。
+                        if (failure != null && hostDrawFailuresRemaining.getAndUpdate { current ->
+                                if (current > 0) current - 1 else 0
+                            } > 0
+                        ) {
+                            Log.e("[$TAG] host draw threw: ${failure.javaClass.name}: ${failure.message}")
+                        }
+                        if (remaining == 0 && failure == null) {
+                            drawKeyLabel(param.args.getOrNull(0), param.args.getOrNull(1))
+                        }
+                    }
+                )
             }
+            Log.i("[$TAG] Hooked ${targets.size} single-key draw methods")
         }.onFailure {
             Log.e("Failed: Installing WeType key label hooks: ${it.message}")
             Log.i(it)
@@ -246,16 +245,31 @@ internal object WeTypeKeyLabelHooks {
     private fun drawKeyLabel(canvasArg: Any?, drawCtx: Any?) {
         val canvas = canvasArg as? Canvas ?: return
         if (drawCtx == null) return
+        // 两个功能都关着时，连 accessFor 与字段反射都不要做：26 个键每帧各一次。
+        if (!WeTypeSettings.isEdgeHighlightEnabledXposed() &&
+            !WeTypeSettings.isShowGestureKeyLabelsXposed()
+        ) {
+            return
+        }
         val access = accessFor(drawCtx) ?: return
         val keyView = runCatching { access.viewField.get(drawCtx) as? View }.getOrNull() ?: return
+        // 两个功能都关着时直接返回：键帽矩形与圆角都要走反射，26 个键每帧各做一次，
+        // 在 120Hz 键盘上是实打实的开销（实机打开光感时 RenderThread 直接打满）。
+        val edgeLight = WeTypeSettings.isEdgeHighlightEnabledXposed(keyView.context) &&
+            WeTypeSettings.isKeyEdgeLightEnabledXposed()
+        val gestureLabels = WeTypeSettings.isShowGestureKeyLabelsXposed()
+        if (!edgeLight && !gestureLabels) return
+
         val rect = resolveKeyCapRect(access, drawCtx) ?: return
         if (rect.isEmpty) return
 
         // 按键光感开启时给每个按键叠边缘光（模块自绘）。
         // 它与手势标签互相独立：即使标签功能关闭也要画，因此放在标签开关判断之前。
-        drawSelfDrawnKeyLight(canvas, keyView, rect, resolveKeyCornerPx(drawCtx, keyView))
+        if (edgeLight) {
+            drawSelfDrawnKeyLight(canvas, keyView, rect, resolveKeyCornerPx(drawCtx, keyView))
+        }
 
-        if (!WeTypeSettings.isShowGestureKeyLabelsXposed()) return
+        if (!gestureLabels) return
 
         val isT9 = isT9Key(keyView, drawCtx)
         val enabled = if (isT9) {
