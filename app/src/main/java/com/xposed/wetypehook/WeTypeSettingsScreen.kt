@@ -295,6 +295,7 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                                         ModuleUpdatePreferences.setReceiveAlpha(preferencesContext, enabled)
                                     },
                                     activationStatus = activationStatus,
+                                    onExportConfig = ::exportConfig,
                                     onRestoreDefaults = ::restoreDefaults
                                 )
                             }

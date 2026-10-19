@@ -744,6 +744,58 @@ internal class WeTypeSettingsState(
     }
 
     /**
+     * 导出全部模块配置。落点交给系统文件选择器，写入在 IO 线程完成。
+     *
+     * 与其他文件选择器一样，回调必须在唤起前注册：桥在派发时会消费掉回调，
+     * 复用同一个请求码的第二次导出才不会没反应。
+     */
+    fun exportConfig() {
+        val hostActivity = settingsContext as? Activity
+        if (hostActivity == null) {
+            Toast.makeText(context, "无法获取宿主窗口，请重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val requestCode = WeTypeHostActivityResultBridge.REQUEST_EXPORT_CONFIG
+        WeTypeHostActivityResultBridge.register(requestCode) { resultCode, data ->
+            val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+            if (uri != null) {
+                coroutineScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching { WeTypeConfigExport.export(settingsContext, uri) }
+                    }
+                    result.onSuccess { count ->
+                        Toast.makeText(context, "已导出 $count 项配置", Toast.LENGTH_LONG).show()
+                    }.onFailure { error ->
+                        Toast.makeText(
+                            context,
+                            "导出失败：${error.message ?: error.javaClass.simpleName}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+        runCatching {
+            hostActivity.startActivityForResult(
+                Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = WeTypeConfigExport.MIME_TYPE
+                    putExtra(
+                        Intent.EXTRA_MIME_TYPES,
+                        arrayOf("application/json", "text/plain", "application/octet-stream")
+                    )
+                    putExtra(Intent.EXTRA_TITLE, WeTypeConfigExport.buildFileName())
+                    addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                },
+                requestCode
+            )
+        }.onFailure {
+            WeTypeHostActivityResultBridge.unregister(requestCode)
+            Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
      * 把当前状态写进偏好文件。
      *
      * [silent] 给自动保存用：成功不提示，失败仍然要提示，否则用户会以为改动已经存上了。

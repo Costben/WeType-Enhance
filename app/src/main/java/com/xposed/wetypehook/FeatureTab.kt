@@ -33,6 +33,7 @@ internal fun LazyListScope.FeatureTabContent(
     receiveAlpha: Boolean,
     onReceiveAlphaChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
+    onExportConfig: () -> Unit,
     onRestoreDefaults: () -> Unit
 ) {
     // 1. 剪贴板增强卡片
@@ -99,7 +100,24 @@ internal fun LazyListScope.FeatureTabContent(
         }
     }
 
-    // 5. 关于与重置卡片
+    // 5. 配置备份卡片
+    item {
+        SmallTitle(text = "配置备份")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                ArrowPreference(
+                    title = "导出配置",
+                    summary = "将全部模块设置导出为 JSON 文件，含账号与密钥字段，请妥善保管",
+                    onClick = onExportConfig
+                )
+            }
+        }
+    }
+
+    // 6. 关于与重置卡片
     item {
         val context = LocalContext.current
         SmallTitle(text = "关于与重置")
