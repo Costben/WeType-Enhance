@@ -14,8 +14,8 @@ android {
         applicationId = "com.costben.wetypeenhance"
         minSdk = 31
         targetSdk = 37
-        versionCode = 59
-        versionName = "1.28.19"
+        versionCode = 60
+        versionName = "1.29.0"
     }
 
     buildTypes {
