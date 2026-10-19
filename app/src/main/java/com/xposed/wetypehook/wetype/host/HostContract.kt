@@ -730,21 +730,16 @@ internal object WeTypeHostContracts {
      * 解析全部契约并打印自检报告。幂等；由 [com.xposed.wetypehook.MainHook] 在
      * 各 hook 组安装之前调用一次。
      *
-     * 指纹未变时直接复用上次的描述符（不跑 DexKit），描述符逐条重新校验；
-     * 任一失配即整轮重解析，保证缓存永远不会掩盖宿主漂移。
+     * 指纹未变时直接复用上次的描述符，描述符逐条重新校验；任一失配即整轮重解析，
+     * 保证缓存永远不会掩盖宿主漂移。缓存命中时**不创建 DexKit**：宿主的 APK 约 216MB，
+     * 每次 create 都要整包解析，输入法进程启动时没有这个余量。
      */
     fun install(sourceDir: String?, classLoader: ClassLoader) {
         if (installed) return
         installed = true
 
-        val bridge = runCatching {
-            System.loadLibrary("dexkit")
-            sourceDir?.let { DexKitBridge.create(it) }
-        }.getOrNull()
-
         try {
             fingerprint = fingerprintOf(sourceDir)
-            val context = HostContext(classLoader, bridge) { handles[it] }
             val restored = restoreFromCache(classLoader)
             if (restored != null && restored.size == HOST_CONTRACTS.size) {
                 restored.forEach { (id, handle) ->
@@ -754,14 +749,14 @@ internal object WeTypeHostContracts {
             } else {
                 handles.clear()
                 outcomes.clear()
+                val bridge = HostDexKit.get(sourceDir)
+                val context = HostContext(classLoader, bridge) { handles[it] }
                 resolveAll(context)
             }
             persistCache()
             logReport()
         } catch (throwable: Throwable) {
             Log.e(TAG, "host contract self-check failed", throwable)
-        } finally {
-            runCatching { bridge?.close() }
         }
     }
 

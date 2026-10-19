@@ -7,6 +7,7 @@ import android.os.Looper
 import android.view.View
 import android.widget.ImageView
 import com.xposed.wetypehook.wetype.aiwriter.WeTypeAiWriterLauncher
+import com.xposed.wetypehook.wetype.host.HostDexKit
 import com.xposed.wetypehook.wetype.host.pickHostField
 import com.xposed.wetypehook.wetype.host.pickHostMethod
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
@@ -14,7 +15,6 @@ import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.hookAfter
 import com.xposed.wetypehook.xposed.hookBefore
 import com.xposed.wetypehook.xposed.loadClassOrNull
-import org.luckypray.dexkit.DexKitBridge
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
@@ -366,7 +366,7 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun resolveCustomAdapterClass(sourceDir: String?, classLoader: ClassLoader): Class<*>? {
         if (!sourceDir.isNullOrEmpty()) {
             runCatching {
-                DexKitBridge.create(sourceDir).use { bridge ->
+                HostDexKit.get(sourceDir)?.let { bridge ->
                     val data = bridge.findClass {
                         searchPackages(TOOLBAR_PACKAGE)
                         matcher {
@@ -398,7 +398,7 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun resolveToolbarConfigReader(sourceDir: String?, classLoader: ClassLoader): Pair<Any, Method>? {
         val clazz = runCatching {
             if (!sourceDir.isNullOrEmpty()) {
-                DexKitBridge.create(sourceDir).use { bridge ->
+                HostDexKit.get(sourceDir)?.let { bridge ->
                     bridge.findClass {
                         searchPackages(TOOLBAR_CONFIG_PACKAGE)
                         matcher { usingStrings(TOOLBAR_CONFIG_KEY) }
@@ -430,7 +430,7 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun resolveIconResolverClass(sourceDir: String?, classLoader: ClassLoader): Class<*>? {
         if (!sourceDir.isNullOrEmpty()) {
             runCatching {
-                DexKitBridge.create(sourceDir).use { bridge ->
+                HostDexKit.get(sourceDir)?.let { bridge ->
                     val data = bridge.findClass {
                         searchPackages(TOOLBAR_PACKAGE)
                         matcher {

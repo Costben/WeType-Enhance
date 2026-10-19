@@ -32,6 +32,7 @@ import com.xposed.wetypehook.wetype.hook.WeTypeToolbarAiWriterHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeUpdateHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeVoiceHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeWindowHooks
+import com.xposed.wetypehook.wetype.host.HostDexKit
 import com.xposed.wetypehook.wetype.host.WeTypeHostContracts
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.wetype.voice.shell.EtaSpeechHooks
@@ -57,7 +58,6 @@ import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
-import org.luckypray.dexkit.DexKitBridge
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -207,6 +207,7 @@ class MainHook : XposedModule() {
     override fun onHotReloading(param: HotReloadingParam): Boolean {
         param.setSavedInstanceState(activeTargetsBundle())
         HookEnvironment.prepareForHotReload()
+        HostDexKit.close()
 
         val hostClean = WeTypeHostLauncher.prepareForHotReload()
         val windowClean = WeTypeWindowHooks.prepareForHotReload()
@@ -1208,45 +1209,43 @@ class MainHook : XposedModule() {
      */
     private fun startPackageValidationHook(sourceDir: String, classLoader: ClassLoader) {
         runCatching {
-            System.loadLibrary("dexkit")
-            DexKitBridge.create(sourceDir).use { bridge ->
-                val validationMethod = bridge.findMethod {
-                    matcher {
-                        declaredClass = MIUI_INPUT_PROVIDER
-                        returnType = "boolean"
-                        usingStrings(
-                            "InputProvider",
-                            "Invalid caller UID: ",
-                            "No package name for UID: ",
-                            "Package validation failed: ",
-                            "Unexpected error during package validation"
-                        )
-                    }
-                }.singleOrNull()?.getMethodInstance(classLoader) ?: run {
-                    Log.e("Failed:Locate package validation method in $MIUI_INPUT_PROVIDER")
-                    return@use
+            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val validationMethod = bridge.findMethod {
+                matcher {
+                    declaredClass = MIUI_INPUT_PROVIDER
+                    returnType = "boolean"
+                    usingStrings(
+                        "InputProvider",
+                        "Invalid caller UID: ",
+                        "No package name for UID: ",
+                        "Package validation failed: ",
+                        "Unexpected error during package validation"
+                    )
                 }
-                validationMethod.hookBefore { param ->
-                    runCatching {
-                        val provider = param.thisObject ?: return@runCatching
-                        val context = provider.invokeMethodAs<Context>("getContext")
-                            ?: return@runCatching
-                        val currentInputMethodPackageName = Settings.Secure.getString(
-                            context.contentResolver,
-                            Settings.Secure.DEFAULT_INPUT_METHOD
-                        )?.substringBefore('/') ?: return@runCatching
-                        val packagesForUid = context.packageManager
-                            .getPackagesForUid(Binder.getCallingUid()) ?: return@runCatching
-                        if (packagesForUid.contains(currentInputMethodPackageName)) {
-                            param.result = true
-                        }
-                    }.onFailure {
-                        Log.i("Failed:Validate calling package for clipboard access")
-                        Log.i(it)
-                    }
-                }
-                Log.i("Success:Hook package validation")
+            }.singleOrNull()?.getMethodInstance(classLoader) ?: run {
+                Log.e("Failed:Locate package validation method in $MIUI_INPUT_PROVIDER")
+                return@runCatching
             }
+            validationMethod.hookBefore { param ->
+                runCatching {
+                    val provider = param.thisObject ?: return@runCatching
+                    val context = provider.invokeMethodAs<Context>("getContext")
+                        ?: return@runCatching
+                    val currentInputMethodPackageName = Settings.Secure.getString(
+                        context.contentResolver,
+                        Settings.Secure.DEFAULT_INPUT_METHOD
+                    )?.substringBefore('/') ?: return@runCatching
+                    val packagesForUid = context.packageManager
+                        .getPackagesForUid(Binder.getCallingUid()) ?: return@runCatching
+                    if (packagesForUid.contains(currentInputMethodPackageName)) {
+                        param.result = true
+                    }
+                }.onFailure {
+                    Log.i("Failed:Validate calling package for clipboard access")
+                    Log.i(it)
+                }
+            }
+            Log.i("Success:Hook package validation")
         }.onFailure {
             Log.e("Failed:Hook package validation")
             Log.i(it)

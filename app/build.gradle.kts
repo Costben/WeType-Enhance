@@ -74,7 +74,7 @@ dependencies {
         exclude(group = "top.yukonga.miuix.kmp", module = "miuix-android")
     }
     implementation("io.github.kyant0:capsule:2.1.3")
-    implementation("org.luckypray:dexkit:2.2.0")
+    implementation("org.luckypray:dexkit:2.3.0")
     // 系统识别服务开关要写 Settings.Secure：优先借 Shizuku 的 shell 权限，没有才退回 root
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")

@@ -3,6 +3,7 @@ package com.xposed.wetypehook.wetype.hook
 import android.view.MotionEvent
 import android.view.View
 import com.xposed.wetypehook.wetype.gesture.KeyGestureResolver
+import com.xposed.wetypehook.wetype.host.HostDexKit
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.hookBefore
 import org.luckypray.dexkit.DexKitBridge
@@ -31,15 +32,13 @@ internal object WeTypeGestureHooks {
         }
 
         runCatching {
-            System.loadLibrary("dexkit")
-            DexKitBridge.create(sourceDir).use { bridge ->
-                val keyDataMethod = resolveKeyDataMethod(bridge, classLoader)
-                val keyIdMethod = resolveKeyIdMethod(bridge, classLoader)
-                val newResolver = KeyGestureResolver(keyDataMethod, keyIdMethod)
-                resolver = newResolver
+            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val keyDataMethod = resolveKeyDataMethod(bridge, classLoader)
+            val keyIdMethod = resolveKeyIdMethod(bridge, classLoader)
+            val newResolver = KeyGestureResolver(keyDataMethod, keyIdMethod)
+            resolver = newResolver
 
-                installTouchHooks(bridge, classLoader, newResolver)
-            }
+            installTouchHooks(bridge, classLoader, newResolver)
             Log.i("Success: WeType gesture hooks installation completed")
         }.onFailure {
             Log.e("Failed: Installing WeType gesture hooks: ${it.message}")
