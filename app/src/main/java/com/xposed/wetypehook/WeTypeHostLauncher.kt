@@ -40,7 +40,7 @@ import java.util.WeakHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
+private val MODULE_PACKAGE_NAME = BuildConfig.APPLICATION_ID
 private val activeHostDialogs = WeakHashMap<Activity, ComponentDialog>()
 private val activeBackupPages = WeakHashMap<Activity, View>()
 private val backupPageBusy = WeakHashMap<Activity, () -> Boolean>()

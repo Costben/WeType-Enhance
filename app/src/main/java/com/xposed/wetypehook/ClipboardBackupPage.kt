@@ -106,7 +106,7 @@ internal fun ClipboardBackupPage(
     val context = LocalContext.current
     val resolver = settingsContext.contentResolver
     val isEmbeddedHost = remember(settingsContext) {
-        (context.applicationContext ?: context).packageName != "com.xposed.wetypehook"
+        (context.applicationContext ?: context).packageName != BuildConfig.APPLICATION_ID
     }
     var settings by remember { mutableStateOf(WeTypeSettings.readClipboardBackupSettings(settingsContext)) }
     var busy by remember { mutableStateOf(false) }

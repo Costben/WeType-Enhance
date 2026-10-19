@@ -34,7 +34,7 @@ internal object VoiceServiceBridge {
     enum class Channel { APPLIED, NEEDS_PERMISSION, UNAVAILABLE, FAILED }
 
     private const val TAG = "MIUIIME.VoiceBridge"
-    private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
+    private val MODULE_PACKAGE_NAME = BuildConfig.APPLICATION_ID
     private const val DEFAULT_TIMEOUT_MILLIS = 6_000L
 
     private val lock = Object()

@@ -6,7 +6,7 @@ import android.os.SystemClock
 import io.github.libxposed.service.HookedTarget
 
 object ModuleActivationTracker {
-    private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
+    private val MODULE_PACKAGE_NAME = BuildConfig.APPLICATION_ID
     private const val PREF_NAME = "module_activation_status"
     private const val KEY_LAST_ACTIVATED_AT = "last_activated_at"
     private const val KEY_LAST_SOURCE_PACKAGE = "last_source_package"

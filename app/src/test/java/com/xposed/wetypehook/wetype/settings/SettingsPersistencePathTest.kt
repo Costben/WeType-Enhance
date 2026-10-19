@@ -1,5 +1,6 @@
 package com.xposed.wetypehook.wetype.settings
 
+import com.xposed.wetypehook.BuildConfig
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -118,10 +119,10 @@ class SettingsPersistencePathTest {
      */
     @Test fun absentModulePackageIsDetectedNotThrown() {
         val probe: (String) -> Boolean = { packageName ->
-            runCatching { if (packageName == "com.xposed.wetypehook") error("NameNotFoundException") else Unit }
+            runCatching { if (packageName == BuildConfig.APPLICATION_ID) error("NameNotFoundException") else Unit }
                 .isSuccess
         }
-        assertFalse(probe("com.xposed.wetypehook"))
+        assertFalse(probe(BuildConfig.APPLICATION_ID))
         assertTrue(probe("com.tencent.wetype"))
     }
 }

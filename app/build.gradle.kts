@@ -11,7 +11,7 @@ android {
     namespace = "com.xposed.wetypehook"
 
     defaultConfig {
-        applicationId = "com.xposed.wetypehook"
+        applicationId = "com.costben.wetypeenhance"
         minSdk = 31
         targetSdk = 37
         versionCode = 59

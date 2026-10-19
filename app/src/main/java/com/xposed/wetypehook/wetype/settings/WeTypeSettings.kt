@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Log as AndroidLog
+import com.xposed.wetypehook.BuildConfig
 import com.xposed.wetypehook.ModuleBridgeContract
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -17,7 +18,7 @@ object WeTypeSettings {
     const val PREF_GROUP = "wetype_settings"
 
     private const val TAG = "WeTypeSettings"
-    private const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
+    private val MODULE_PACKAGE_NAME = BuildConfig.APPLICATION_ID
     private const val WETYPE_PACKAGE_NAME = "com.tencent.wetype"
     private const val EXTRA_APPEARANCE_COLORS = "appearance_colors"
     private const val KEY_REMOTE_SYNC_PENDING = "remote_sync_pending"
@@ -381,9 +382,13 @@ object WeTypeSettings {
     fun sanitizeVoiceShellPort(value: Int): Int =
         value.coerceIn(VOICE_SHELL_PORT_MIN, VOICE_SHELL_PORT_MAX)
 
-    /** 模块自带的 [android.speech.RecognitionService]，展开成 `包名/类名` 的扁平串。 */
-    const val VOICE_RECOGNITION_COMPONENT =
-        "$MODULE_PACKAGE_NAME/$MODULE_PACKAGE_NAME.wetype.voice.WeTypeRecognitionService"
+    /**
+     * 模块自带的 [android.speech.RecognitionService]，展开成 `包名/类名` 的扁平串。
+     *
+     * 前半段是 applicationId，后半段是 Java 包名（namespace），两者可以不同。
+     */
+    val VOICE_RECOGNITION_COMPONENT =
+        "$MODULE_PACKAGE_NAME/com.xposed.wetypehook.wetype.voice.WeTypeRecognitionService"
 
     /** `Settings.Secure` 里那一条的键名。写它要 `WRITE_SECURE_SETTINGS`，读不用。 */
     const val VOICE_RECOGNITION_SERVICE_KEY = "voice_recognition_service"

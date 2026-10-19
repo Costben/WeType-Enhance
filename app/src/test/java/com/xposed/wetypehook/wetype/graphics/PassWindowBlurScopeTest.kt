@@ -1,5 +1,6 @@
 package com.xposed.wetypehook.wetype.graphics
 
+import com.xposed.wetypehook.BuildConfig
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,7 +16,7 @@ class PassWindowBlurScopeTest {
         scope.withPackage(host) {
             assertTrue(scope.allows(host))
             assertFalse(scope.allows("$host.other"))
-            assertFalse(scope.allows("com.xposed.wetypehook"))
+            assertFalse(scope.allows(BuildConfig.APPLICATION_ID))
         }
         assertFalse(scope.allows(host))
     }

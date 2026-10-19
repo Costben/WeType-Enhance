@@ -79,7 +79,7 @@ object ModuleBridgeContract {
     const val VOICE_CHANNEL_FAILED = "failed"
 
     /** 模块自己的包名。授权入口、显式组件都按它拼。 */
-    const val MODULE_PACKAGE_NAME = "com.xposed.wetypehook"
+    val MODULE_PACKAGE_NAME = BuildConfig.APPLICATION_ID
     private const val BRIDGE_SESSION_PREFERENCES = "module_bridge_session"
     private const val KEY_BRIDGE_SESSION_TOKEN = "bridge_session_token"
     private const val SETTINGS_BRIDGE_REQUEST_CODE = 102

@@ -223,7 +223,7 @@ internal class WeTypeSettingsState(
                     .setComponent(
                         ComponentName(
                             ModuleBridgeContract.MODULE_PACKAGE_NAME,
-                            "${ModuleBridgeContract.MODULE_PACKAGE_NAME}.ShizukuAuthActivity"
+                            ShizukuAuthActivity::class.java.name
                         )
                     )
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1017,7 +1017,7 @@ internal fun rememberWeTypeSettingsState(settingsContext: Context): WeTypeSettin
     val context = LocalContext.current
     val preferencesContext = remember(settingsContext) { settingsContext }
     val isEmbeddedHost = remember(settingsContext) {
-        (context.applicationContext ?: context).packageName != "com.xposed.wetypehook"
+        (context.applicationContext ?: context).packageName != BuildConfig.APPLICATION_ID
     }
     val snapshot = remember(preferencesContext) { WeTypeSettings.readSnapshot(preferencesContext) }
     val systemDarkMode = isSystemInDarkTheme()
