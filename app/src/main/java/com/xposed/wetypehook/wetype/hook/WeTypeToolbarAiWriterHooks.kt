@@ -366,7 +366,7 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun resolveCustomAdapterClass(sourceDir: String?, classLoader: ClassLoader): Class<*>? {
         if (!sourceDir.isNullOrEmpty()) {
             runCatching {
-                HostDexKit.get(sourceDir)?.let { bridge ->
+                HostDexKit.get(sourceDir, classLoader)?.let { bridge ->
                     val data = bridge.findClass {
                         searchPackages(TOOLBAR_PACKAGE)
                         matcher {
@@ -398,7 +398,7 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun resolveToolbarConfigReader(sourceDir: String?, classLoader: ClassLoader): Pair<Any, Method>? {
         val clazz = runCatching {
             if (!sourceDir.isNullOrEmpty()) {
-                HostDexKit.get(sourceDir)?.let { bridge ->
+                HostDexKit.get(sourceDir, classLoader)?.let { bridge ->
                     bridge.findClass {
                         searchPackages(TOOLBAR_CONFIG_PACKAGE)
                         matcher { usingStrings(TOOLBAR_CONFIG_KEY) }
@@ -430,7 +430,7 @@ internal object WeTypeToolbarAiWriterHooks {
     private fun resolveIconResolverClass(sourceDir: String?, classLoader: ClassLoader): Class<*>? {
         if (!sourceDir.isNullOrEmpty()) {
             runCatching {
-                HostDexKit.get(sourceDir)?.let { bridge ->
+                HostDexKit.get(sourceDir, classLoader)?.let { bridge ->
                     val data = bridge.findClass {
                         searchPackages(TOOLBAR_PACKAGE)
                         matcher {

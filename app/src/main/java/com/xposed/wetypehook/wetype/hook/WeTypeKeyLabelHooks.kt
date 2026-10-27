@@ -163,7 +163,7 @@ internal object WeTypeKeyLabelHooks {
         }
 
         runCatching {
-            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val bridge = HostDexKit.get(sourceDir, classLoader) ?: return@runCatching
             keyDataMethod = resolveKeyDataMethod(bridge, classLoader)
             resolveBgCornerGetter(bridge, classLoader)?.let {
                 bgCornerGetter = it

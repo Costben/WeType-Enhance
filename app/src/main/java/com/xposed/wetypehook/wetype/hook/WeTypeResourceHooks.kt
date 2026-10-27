@@ -641,7 +641,7 @@ internal object WeTypeResourceHooks {
             return
         }
         runCatching {
-            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val bridge = HostDexKit.get(sourceDir, classLoader) ?: return@runCatching
             val access = resolveButtonColorAccess(bridge, classLoader)
             if (access == null) {
                 Log.e("Failed: Cannot resolve host button background setter")

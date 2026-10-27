@@ -749,7 +749,7 @@ internal object WeTypeHostContracts {
             } else {
                 handles.clear()
                 outcomes.clear()
-                val bridge = HostDexKit.get(sourceDir)
+                val bridge = HostDexKit.get(sourceDir, classLoader)
                 val context = HostContext(classLoader, bridge) { handles[it] }
                 resolveAll(context)
             }

@@ -7,6 +7,7 @@ import com.xposed.wetypehook.wetype.host.HostDexKit
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.hookBefore
 import org.luckypray.dexkit.DexKitBridge
+import org.luckypray.dexkit.result.MethodDataList
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.util.Locale
@@ -32,7 +33,7 @@ internal object WeTypeGestureHooks {
         }
 
         runCatching {
-            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val bridge = HostDexKit.get(sourceDir, classLoader) ?: return@runCatching
             val keyDataMethod = resolveKeyDataMethod(bridge, classLoader)
             val keyIdMethod = resolveKeyIdMethod(bridge, classLoader)
             val newResolver = KeyGestureResolver(keyDataMethod, keyIdMethod)
@@ -54,7 +55,7 @@ internal object WeTypeGestureHooks {
                     name = "getMainText"
                     returnType = "java.lang.String"
                 }
-            }.firstOrNull()?.getMethodInstance(classLoader)
+            }.resolveIn(classLoader) { it.parameterTypes.isEmpty() }
         }.getOrNull()
     }
 
@@ -65,10 +66,24 @@ internal object WeTypeGestureHooks {
                 matcher {
                     name = "getId"
                 }
-            }.firstOrNull { it.paramTypes.isEmpty() && it.returnType?.name != "void" }
-                ?.getMethodInstance(classLoader)
+            }.resolveIn(classLoader) { it.parameterTypes.isEmpty() && it.returnType != Void.TYPE }
         }.getOrNull()
     }
+
+    /**
+     * 把 DexKit 的匹配列表换成「运行时真的存在」的方法。
+     *
+     * 热修前只取 `firstOrNull()` 够用；热修后桥里同时有 base.apk 与 patch dex 两份条目，
+     * base 那份的类名/方法名已经被宿主重新混淆过，`getMethodInstance` 会抛
+     * `NoSuchMethodException`。只试第一个条目就等于把「旧名字排在前面」变成永久失效，
+     * 所以逐个解析、丢掉抛异常的，取第一个通过 `accept` 的。
+     */
+    private fun MethodDataList.resolveIn(
+        classLoader: ClassLoader,
+        accept: (Method) -> Boolean = { true }
+    ): Method? = asSequence()
+        .mapNotNull { data -> runCatching { data.getMethodInstance(classLoader) }.getOrNull() }
+        .firstOrNull(accept)
 
     /**
      * 安装触摸 hook。
@@ -99,7 +114,13 @@ internal object WeTypeGestureHooks {
             usingString = "onTouch move2 lastKeyOperation is null",
             filterReturnBoolean = true
         )
-        if (qwertyMethod == null) Log.e("[$TAG] Failed to locate QWERTY touch method")
+        if (qwertyMethod == null) {
+            Log.e(
+                "[$TAG] Failed to locate QWERTY touch method " +
+                    "(dex=${bridge.getDexNum()}); a host hotfix dex renames the obfuscated dispatch, " +
+                    "so the bridge must cover the runtime dex set"
+            )
+        }
 
         val targets = linkedSetOf<Method>()
         qwertyMethod?.let { targets += it }
@@ -189,9 +210,9 @@ internal object WeTypeGestureHooks {
                     usingStrings(usingString)
                     if (filterReturnBoolean) returnType = "boolean"
                 }
-            }.firstOrNull { data ->
-                data.paramTypes.any { it.name == "android.view.MotionEvent" }
-            }?.getMethodInstance(classLoader)
+            }.resolveIn(classLoader) { method ->
+                method.parameterTypes.any { it.name == MOTION_EVENT_CLASS }
+            }
         }.getOrNull()
     }
 

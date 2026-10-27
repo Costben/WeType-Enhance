@@ -49,7 +49,7 @@ internal object WeTypeClipboardHooks {
         }
 
         runCatching {
-            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val bridge = HostDexKit.get(sourceDir, classLoader) ?: return@runCatching
             hookCrossDevicePersist(bridge, classLoader)
             hookSystemPaste(bridge, classLoader)
             hookRetentionCount(bridge, classLoader)

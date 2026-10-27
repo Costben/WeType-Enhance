@@ -1209,7 +1209,7 @@ class MainHook : XposedModule() {
      */
     private fun startPackageValidationHook(sourceDir: String, classLoader: ClassLoader) {
         runCatching {
-            val bridge = HostDexKit.get(sourceDir) ?: return@runCatching
+            val bridge = HostDexKit.get(sourceDir, classLoader) ?: return@runCatching
             val validationMethod = bridge.findMethod {
                 matcher {
                     declaredClass = MIUI_INPUT_PROVIDER
