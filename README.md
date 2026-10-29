@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="favicon.png" width="96" height="96" alt="WeType Enhance" />
+
 # WeType Enhance
 
 **微信输入法增强模块 · 外观、手势、剪贴板一次补齐**
