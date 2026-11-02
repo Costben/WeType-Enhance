@@ -46,7 +46,7 @@ internal fun LazyListScope.FeatureTabContent(
         ) {
             ArrowPreference(
                 title = "剪贴板增强",
-                summary = "条目保留、搜索与图片缩略图，以及备份与恢复",
+                summary = "条目保留、搜索、图片缩略图与备份恢复",
                 onClick = { onOpenSubPage(SettingsSubPage.CLIPBOARD) }
             )
         }
@@ -60,7 +60,7 @@ internal fun LazyListScope.FeatureTabContent(
         ) {
             ArrowPreference(
                 title = "Asr2api",
-                summary = "将微信输入法的语音识别能力接入系统识别服务，供语音助手等应用调用",
+                summary = "将微信输入法的语音识别接入系统识别服务",
                 onClick = { onOpenSubPage(SettingsSubPage.VOICE) }
             )
         }
@@ -76,7 +76,7 @@ internal fun LazyListScope.FeatureTabContent(
             Column {
                 SwitchPreference(
                     title = "开启 ColorOS AI写",
-                    summary = "在工具栏与下滑手势中启用 AI 写作入口（需在 LSPosed 中勾选「AI 写作 (com.oplus.aiwriter)」作用域）",
+                    summary = "工具栏与下滑手势的 AI 写作入口（需勾选 aiwriter 作用域）",
                     checked = colorosAiWriterEnabled,
                     onCheckedChange = onColorosAiWriterEnabledChange
                 )
@@ -94,7 +94,7 @@ internal fun LazyListScope.FeatureTabContent(
             Column {
                 SwitchPreference(
                     title = "硬件键盘模式隐藏背景",
-                    summary = "微信输入法收到字母键后会切到硬件键盘模式、软键盘收成一条悬浮候选栏；此时隐藏模块背景，避免它盖住整屏或大半屏。ADB 注入文字时最容易触发",
+                    summary = "软键盘收成悬浮候选栏时隐藏背景，避免盖住整屏",
                     checked = hideBackgroundInCandidateMode,
                     onCheckedChange = onHideBackgroundInCandidateModeChange
                 )
@@ -130,7 +130,7 @@ internal fun LazyListScope.FeatureTabContent(
             Column {
                 ArrowPreference(
                     title = "导出配置",
-                    summary = "将全部模块设置导出为 JSON 文件，含账号与密钥字段，请妥善保管",
+                    summary = "导出全部设置为 JSON，含密钥，请妥善保管",
                     onClick = onExportConfig
                 )
             }
