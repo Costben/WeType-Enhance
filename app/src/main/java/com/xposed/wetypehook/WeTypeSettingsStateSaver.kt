@@ -75,6 +75,7 @@ internal fun WeTypeSettingsState.toSavedStateMap(): Map<String, Any> = mapOf(
     "clipboardImageMaxCount" to clipboardImageMaxCount,
     "clipboardImageMaxSizeMb" to clipboardImageMaxSizeMb,
     "clipboardWaterfallFlowEnabled" to clipboardWaterfallFlowEnabled,
+    "hideBackgroundInCandidateMode" to hideBackgroundInCandidateMode,
     "clipboardWaterfallMaxHeightDp" to clipboardWaterfallMaxHeightDp,
     "qwertyGestureEnabled" to qwertyGestureEnabled,
     "t9GestureEnabled" to t9GestureEnabled,
@@ -222,6 +223,8 @@ private fun WeTypeSettingsState.restoreFromSavedStateMap(saved: Map<String, Any?
     clipboardImageMaxSizeMb = saved["clipboardImageMaxSizeMb"] as? Int ?: clipboardImageMaxSizeMb
     clipboardWaterfallFlowEnabled = saved["clipboardWaterfallFlowEnabled"] as? Boolean
         ?: clipboardWaterfallFlowEnabled
+    hideBackgroundInCandidateMode = saved["hideBackgroundInCandidateMode"] as? Boolean
+        ?: hideBackgroundInCandidateMode
     clipboardWaterfallMaxHeightDp = saved["clipboardWaterfallMaxHeightDp"] as? Int
         ?: clipboardWaterfallMaxHeightDp
     qwertyGestureEnabled = saved["qwertyGestureEnabled"] as? Boolean ?: qwertyGestureEnabled

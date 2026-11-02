@@ -289,6 +289,8 @@ private fun WeTypeSettingsState.WeTypeSettingsScaffold() {
                                     onColorosAiWriterEnabledChange = { colorosAiWriterEnabled = it },
                                     disableHotUpdate = disableHotUpdate,
                                     onDisableHotUpdateChange = { disableHotUpdate = it },
+                                    hideBackgroundInCandidateMode = hideBackgroundInCandidateMode,
+                                    onHideBackgroundInCandidateModeChange = { hideBackgroundInCandidateMode = it },
                                     receiveAlpha = receiveAlpha,
                                     onReceiveAlphaChange = { enabled ->
                                         receiveAlpha = enabled

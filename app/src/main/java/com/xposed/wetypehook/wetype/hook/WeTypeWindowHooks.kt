@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
@@ -44,6 +45,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 private const val WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX = 2
+
+/**
+ * 候选条模式下，可触区顶边要比可见顶边高出窗口高度的这个比例，才认定「按键区不在底部」。
+ * 实测硬件键盘模式 2122 - 419 = 1703（窗口 2266 的 75%），正常键盘差值为 0。
+ */
+private const val CANDIDATE_ONLY_GAP_DIVISOR = 8
 
 /**
  * 输入法窗口里的系统底栏。它是框架视图（`InputMethodService` 自己的导航栏），
@@ -126,9 +133,13 @@ internal object WeTypeWindowHooks {
         var backgroundViewRoot: Any? = null,
         var transparentWindowBackground: Drawable? = null,
         val locationBuffer: IntArray = IntArray(2),
+        /** [isCandidateOnlyInsets] 读可触区顶边时复用，避免每次 insets 回调都新建 Rect。 */
+        val touchableRegionBounds: Rect = Rect(),
         var inputViewMethodResolved: Boolean = false,
         var inputViewMethod: Method? = null,
         var computedVisibleImeHeightPx: Int? = null,
+        /** 宿主处于硬件键盘模式：窗口里只剩一条悬浮候选栏，见 [isCandidateOnlyInsets]。 */
+        var candidateOnlyInsets: Boolean = false,
         var bottomLeftHardwareCornerRadius: Float? = null,
         var bottomRightHardwareCornerRadius: Float? = null,
         var hardwareViewIds: IntArray? = null,
@@ -392,6 +403,34 @@ internal object WeTypeWindowHooks {
             val previousVisibleImeHeight = state.computedVisibleImeHeightPx
 
             if (!state.windowVisible) return@runCatching
+
+            // 宿主收到字母键码就会切进硬件键盘模式（ADB 注入的每个字母都算）：软键盘收成
+            // 一条悬浮候选栏，可见高度只剩导航栏，窗口几何与声明高度都不再代表键盘区域。
+            // 照它们铺开背板就会盖住整屏（声明高度=整窗）或大半屏（几何从候选条拉到窗口底）。
+            val regionBounds = state.touchableRegionBounds
+            insets.touchableRegion.getBounds(regionBounds)
+            if (isCandidateOnlyInsets(
+                    visibleTopInsets = insets.visibleTopInsets,
+                    touchableInsets = insets.touchableInsets,
+                    touchableRegionTop = regionBounds.top,
+                    minGapPx = rootHeight / CANDIDATE_ONLY_GAP_DIVISOR
+                ) && WeTypeSettings.isHideBackgroundInCandidateModeXposed()
+            ) {
+                if (!state.candidateOnlyInsets) {
+                    state.candidateOnlyInsets = true
+                    Log.i("WeType window: candidate-only insets, background hidden")
+                }
+                state.computedVisibleImeHeightPx = null
+                hideBackgroundCarrier(state)
+                return@runCatching
+            }
+            if (state.candidateOnlyInsets) {
+                state.candidateOnlyInsets = false
+                state.computedVisibleImeHeightPx = null
+                Log.i("WeType window: candidate-only insets cleared")
+                scheduleWindowBlur(inputMethodService, refreshStyle = false)
+            }
+
             if (visibleImeHeight > WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX) {
                 state.computedVisibleImeHeightPx = visibleImeHeight
                 WeTypeKeyboardMetrics.record(window.context, visibleImeHeight, rootHeight)
@@ -900,6 +939,8 @@ internal object WeTypeWindowHooks {
         state: WeTypeWindowState,
         bounds: WeTypeBackgroundBounds?
     ): Boolean {
+        // 硬件键盘模式（只剩一条悬浮候选栏）下没有键盘区域可盖，见 isCandidateOnlyInsets。
+        if (state.candidateOnlyInsets) return true
         val collapsedByInsets = state.computedVisibleImeHeightPx
             ?.let { it <= WETYPE_COLLAPSED_IME_HEIGHT_THRESHOLD_PX } == true
         // 剪贴板 / 常用语弹出时按键区被宿主藏起来，但窗口还占着屏幕，不能据此判成收起。

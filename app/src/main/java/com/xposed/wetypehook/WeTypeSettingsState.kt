@@ -335,6 +335,7 @@ internal class WeTypeSettingsState(
     var clipboardImageMaxSizeMb by mutableIntStateOf(snapshot.clipboardImageMaxSizeMb)
     var clipboardWaterfallFlowEnabled by mutableStateOf(snapshot.clipboardWaterfallFlowEnabled)
     var clipboardWaterfallMaxHeightDp by mutableIntStateOf(snapshot.clipboardWaterfallMaxHeightDp)
+    var hideBackgroundInCandidateMode by mutableStateOf(snapshot.hideBackgroundInCandidateMode)
     var qwertyGestureEnabled by mutableStateOf(snapshot.qwertyGestureEnabled)
     var t9GestureEnabled by mutableStateOf(snapshot.t9GestureEnabled)
     var gestureThreshold by mutableIntStateOf(snapshot.gestureThreshold)
@@ -860,6 +861,7 @@ internal class WeTypeSettingsState(
             clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
             clipboardWaterfallFlowEnabled = clipboardWaterfallFlowEnabled,
             clipboardWaterfallMaxHeightDp = clipboardWaterfallMaxHeightDp,
+            hideBackgroundInCandidateMode = hideBackgroundInCandidateMode,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -969,6 +971,7 @@ internal class WeTypeSettingsState(
         clipboardImageMaxSizeMb = WeTypeSettings.DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB
         clipboardWaterfallFlowEnabled = WeTypeSettings.DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED
         clipboardWaterfallMaxHeightDp = WeTypeSettings.DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP
+        hideBackgroundInCandidateMode = WeTypeSettings.DEFAULT_HIDE_BACKGROUND_IN_CANDIDATE_MODE
         qwertyGestureEnabled = WeTypeSettings.DEFAULT_QWERTY_GESTURE_ENABLED
         t9GestureEnabled = WeTypeSettings.DEFAULT_T9_GESTURE_ENABLED
         gestureThreshold = WeTypeSettings.DEFAULT_GESTURE_THRESHOLD

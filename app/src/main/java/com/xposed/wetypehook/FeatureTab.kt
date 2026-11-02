@@ -30,6 +30,8 @@ internal fun LazyListScope.FeatureTabContent(
     onColorosAiWriterEnabledChange: (Boolean) -> Unit,
     disableHotUpdate: Boolean,
     onDisableHotUpdateChange: (Boolean) -> Unit,
+    hideBackgroundInCandidateMode: Boolean,
+    onHideBackgroundInCandidateModeChange: (Boolean) -> Unit,
     receiveAlpha: Boolean,
     onReceiveAlphaChange: (Boolean) -> Unit,
     activationStatus: ModuleActivationTracker.ActivationStatus,
@@ -82,7 +84,25 @@ internal fun LazyListScope.FeatureTabContent(
         }
     }
 
-    // 2. 进阶系统防护卡片
+    // 4. 背景显示卡片
+    item {
+        SmallTitle(text = "背景显示")
+        Card(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp)
+        ) {
+            Column {
+                SwitchPreference(
+                    title = "硬件键盘模式隐藏背景",
+                    summary = "微信输入法收到字母键后会切到硬件键盘模式、软键盘收成一条悬浮候选栏；此时隐藏模块背景，避免它盖住整屏或大半屏。ADB 注入文字时最容易触发",
+                    checked = hideBackgroundInCandidateMode,
+                    onCheckedChange = onHideBackgroundInCandidateModeChange
+                )
+            }
+        }
+    }
+
+    // 5. 进阶系统防护卡片
     item {
         SmallTitle(text = "进阶系统防护")
         Card(
@@ -100,7 +120,7 @@ internal fun LazyListScope.FeatureTabContent(
         }
     }
 
-    // 5. 配置备份卡片
+    // 6. 配置备份卡片
     item {
         SmallTitle(text = "配置备份")
         Card(
@@ -117,7 +137,7 @@ internal fun LazyListScope.FeatureTabContent(
         }
     }
 
-    // 6. 关于与重置卡片
+    // 7. 关于与重置卡片
     item {
         val context = LocalContext.current
         SmallTitle(text = "关于与重置")

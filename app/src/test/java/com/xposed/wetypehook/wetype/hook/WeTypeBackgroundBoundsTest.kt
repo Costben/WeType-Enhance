@@ -89,5 +89,33 @@ class WeTypeBackgroundBoundsTest {
         ))
     }
 
+    @Test
+    fun detectsHardwareKeyboardCandidateStrip() {
+        // 216 实测（1080x2376，窗口高 2266，rootHeight/8 = 283）：
+        // 正常键盘 touchableInsets=2、可触区为空；注入字母后变成 3，区域 (45,419,1035,543)。
+        assertEquals(true, isCandidateOnlyInsets(2122, TOUCHABLE_INSETS_REGION, 419, 283))
+    }
+
+    @Test
+    fun normalKeyboardIsNotMistakenForCandidateStrip() {
+        // 微信输入法正常键盘报可见区域模式。
+        assertEquals(false, isCandidateOnlyInsets(1256, 2, 0, 283))
+        // Gboard 正常键盘也用自定义区域，但矩形顶边与可见顶边重合（实测 991 / 991）。
+        assertEquals(false, isCandidateOnlyInsets(991, TOUCHABLE_INSETS_REGION, 991, 283))
+    }
+
+    @Test
+    fun emptyTouchableRegionIsNotTreatedAsCandidateStrip() {
+        // 区域为空时拿不到顶边，不能凭模式位就隐藏背板。
+        assertEquals(false, isCandidateOnlyInsets(2122, TOUCHABLE_INSETS_REGION, 0, 283))
+        assertEquals(false, isCandidateOnlyInsets(2122, TOUCHABLE_INSETS_REGION, -1, 283))
+    }
+
+    @Test
+    fun candidateStripGapIsInclusiveAtTheThreshold() {
+        assertEquals(true, isCandidateOnlyInsets(2000, TOUCHABLE_INSETS_REGION, 1717, 283))
+        assertEquals(false, isCandidateOnlyInsets(2000, TOUCHABLE_INSETS_REGION, 1718, 283))
+    }
+
     private fun layout(top: Int, height: Int) = WeTypeBackgroundLayout(top, height, true, true, false)
 }

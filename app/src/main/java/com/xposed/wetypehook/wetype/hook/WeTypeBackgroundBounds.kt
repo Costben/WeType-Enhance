@@ -10,6 +10,30 @@ internal data class WeTypeBackgroundLayout(
 
 internal data class WeTypeBackgroundBounds(val top: Int, val height: Int)
 
+/** 与 `InputMethodService.Insets.TOUCHABLE_INSETS_REGION` 同值；纯规则文件不引 Android 类。 */
+internal const val TOUCHABLE_INSETS_REGION = 3
+
+/**
+ * 宿主切进硬件键盘模式时（微信输入法只要收到字母键码就会切，ADB 注入的每个字母都算），
+ * 软键盘收成一条悬浮候选栏：它把可触区换成自定义矩形，而这块矩形明显高于「可见区域顶边」
+ * —— 按键区根本不在窗口底部。
+ *
+ * 正常键盘不会满足这两条：微信输入法正常键盘报 `touchableInsets=2`；Gboard 虽然也用
+ * 自定义矩形，但矩形顶边与可见顶边重合（实测 991 / 991，差值为 0）。
+ *
+ * 命中时窗口几何已经代表不了键盘区域，任何照它铺开的背板都会盖住整屏或大半屏。
+ */
+internal fun isCandidateOnlyInsets(
+    visibleTopInsets: Int,
+    touchableInsets: Int,
+    touchableRegionTop: Int,
+    minGapPx: Int
+): Boolean {
+    if (touchableInsets != TOUCHABLE_INSETS_REGION) return false
+    if (touchableRegionTop <= 0) return false
+    return visibleTopInsets - touchableRegionTop >= minGapPx
+}
+
 /**
  * Returns decor-local bounds only after all visible content has finished layout.
  *

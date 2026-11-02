@@ -103,6 +103,8 @@ object WeTypeSettings {
     const val KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB = "clipboard_image_max_size_mb"
     const val KEY_CLIPBOARD_WATERFALL_FLOW = "clipboard_waterfall_flow_enabled"
     const val KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP = "clipboard_waterfall_max_height_dp"
+    // 微信输入法收到字母键码就会切进硬件键盘模式，窗口几何不再代表键盘区域。
+    const val KEY_HIDE_BACKGROUND_IN_CANDIDATE_MODE = "hide_background_in_candidate_mode"
 
     // 剪贴板备份与恢复（独立读写，不进入 Snapshot）。
     const val KEY_BACKUP_LOCAL_FOLDER_URI = "clipboard_backup_local_folder_uri"
@@ -169,6 +171,9 @@ object WeTypeSettings {
 
     fun sanitizeClipboardWaterfallMaxHeightDp(value: Int): Int =
         value.coerceIn(CLIPBOARD_WATERFALL_MIN_HEIGHT_DP, CLIPBOARD_WATERFALL_MAX_HEIGHT_DP_LIMIT)
+
+    // 硬件键盘（悬浮候选条）模式下默认不画背板：那时任何几何都会盖住整屏或大半屏。
+    const val DEFAULT_HIDE_BACKGROUND_IN_CANDIDATE_MODE = true
 
     const val DEFAULT_QWERTY_GESTURE_ENABLED = true
     const val DEFAULT_T9_GESTURE_ENABLED = false
@@ -524,6 +529,7 @@ object WeTypeSettings {
         val clipboardImageMaxSizeMb: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
         val clipboardWaterfallFlowEnabled: Boolean = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
         val clipboardWaterfallMaxHeightDp: Int = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
+        val hideBackgroundInCandidateMode: Boolean = DEFAULT_HIDE_BACKGROUND_IN_CANDIDATE_MODE,
         val qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         val t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         val gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -579,6 +585,9 @@ object WeTypeSettings {
 
     fun getClipboardWaterfallMaxHeightDp(context: Context): Int =
         readSnapshot(context).clipboardWaterfallMaxHeightDp
+
+    fun isHideBackgroundInCandidateMode(context: Context): Boolean =
+        readSnapshot(context).hideBackgroundInCandidateMode
 
     /**
      * 语音端点判定参数。识别服务跑在模块进程，读的就是模块自己那份偏好（由桥接写入），
@@ -721,6 +730,9 @@ object WeTypeSettings {
 
     fun getClipboardWaterfallMaxHeightDpXposed(): Int =
         readSnapshotXposed().clipboardWaterfallMaxHeightDp
+
+    fun isHideBackgroundInCandidateModeXposed(): Boolean =
+        readSnapshotXposed().hideBackgroundInCandidateMode
 
     fun isQwertyGestureEnabledXposed(): Boolean = readSnapshotXposed().qwertyGestureEnabled
     fun isT9GestureEnabledXposed(): Boolean = readSnapshotXposed().t9GestureEnabled
@@ -1238,6 +1250,7 @@ object WeTypeSettings {
         clipboardImageMaxSizeMb: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
         clipboardWaterfallFlowEnabled: Boolean = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
         clipboardWaterfallMaxHeightDp: Int = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
+        hideBackgroundInCandidateMode: Boolean = DEFAULT_HIDE_BACKGROUND_IN_CANDIDATE_MODE,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -1322,6 +1335,7 @@ object WeTypeSettings {
             clipboardImageMaxSizeMb = clipboardImageMaxSizeMb,
             clipboardWaterfallFlowEnabled = clipboardWaterfallFlowEnabled,
             clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(clipboardWaterfallMaxHeightDp),
+            hideBackgroundInCandidateMode = hideBackgroundInCandidateMode,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold,
@@ -1422,6 +1436,7 @@ object WeTypeSettings {
             clipboardImageMaxSizeMb = current.clipboardImageMaxSizeMb,
             clipboardWaterfallFlowEnabled = current.clipboardWaterfallFlowEnabled,
             clipboardWaterfallMaxHeightDp = current.clipboardWaterfallMaxHeightDp,
+            hideBackgroundInCandidateMode = current.hideBackgroundInCandidateMode,
             qwertyGestureEnabled = current.qwertyGestureEnabled,
             t9GestureEnabled = current.t9GestureEnabled,
             gestureThreshold = current.gestureThreshold,
@@ -1697,6 +1712,7 @@ object WeTypeSettings {
         clipboardImageMaxSizeMb: Int = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
         clipboardWaterfallFlowEnabled: Boolean = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
         clipboardWaterfallMaxHeightDp: Int = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
+        hideBackgroundInCandidateMode: Boolean = DEFAULT_HIDE_BACKGROUND_IN_CANDIDATE_MODE,
         qwertyGestureEnabled: Boolean = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled: Boolean = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold: Int = DEFAULT_GESTURE_THRESHOLD,
@@ -1784,6 +1800,7 @@ object WeTypeSettings {
             clipboardImageMaxSizeMb = sanitizeClipboardImageMaxSizeMb(clipboardImageMaxSizeMb),
             clipboardWaterfallFlowEnabled = clipboardWaterfallFlowEnabled,
             clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(clipboardWaterfallMaxHeightDp),
+            hideBackgroundInCandidateMode = hideBackgroundInCandidateMode,
             qwertyGestureEnabled = qwertyGestureEnabled,
             t9GestureEnabled = t9GestureEnabled,
             gestureThreshold = gestureThreshold.coerceIn(10, 48),
@@ -1946,6 +1963,7 @@ object WeTypeSettings {
             .putInt(KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB, snapshot.clipboardImageMaxSizeMb)
             .putBoolean(KEY_CLIPBOARD_WATERFALL_FLOW, snapshot.clipboardWaterfallFlowEnabled)
             .putInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, snapshot.clipboardWaterfallMaxHeightDp)
+            .putBoolean(KEY_HIDE_BACKGROUND_IN_CANDIDATE_MODE, snapshot.hideBackgroundInCandidateMode)
             .putBoolean(KEY_QWERTY_GESTURE_ENABLED, snapshot.qwertyGestureEnabled)
             .putBoolean(KEY_T9_GESTURE_ENABLED, snapshot.t9GestureEnabled)
             .putInt(KEY_GESTURE_THRESHOLD, snapshot.gestureThreshold)
@@ -2142,6 +2160,7 @@ object WeTypeSettings {
         putInt(KEY_CLIPBOARD_IMAGE_MAX_SIZE_MB, clipboardImageMaxSizeMb)
         putBoolean(KEY_CLIPBOARD_WATERFALL_FLOW, clipboardWaterfallFlowEnabled)
         putInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, clipboardWaterfallMaxHeightDp)
+        putBoolean(KEY_HIDE_BACKGROUND_IN_CANDIDATE_MODE, hideBackgroundInCandidateMode)
         putBoolean(KEY_QWERTY_GESTURE_ENABLED, qwertyGestureEnabled)
         putBoolean(KEY_T9_GESTURE_ENABLED, t9GestureEnabled)
         putInt(KEY_GESTURE_THRESHOLD, gestureThreshold)
@@ -2315,6 +2334,10 @@ object WeTypeSettings {
             ),
             clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(
                 getInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, defaults.clipboardWaterfallMaxHeightDp)
+            ),
+            hideBackgroundInCandidateMode = getBoolean(
+                KEY_HIDE_BACKGROUND_IN_CANDIDATE_MODE,
+                defaults.hideBackgroundInCandidateMode
             ),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, defaults.qwertyGestureEnabled),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, defaults.t9GestureEnabled),
@@ -2605,6 +2628,10 @@ object WeTypeSettings {
             clipboardWaterfallMaxHeightDp = sanitizeClipboardWaterfallMaxHeightDp(
                 getInt(KEY_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP, DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP)
             ),
+            hideBackgroundInCandidateMode = getBoolean(
+                KEY_HIDE_BACKGROUND_IN_CANDIDATE_MODE,
+                DEFAULT_HIDE_BACKGROUND_IN_CANDIDATE_MODE
+            ),
             qwertyGestureEnabled = getBoolean(KEY_QWERTY_GESTURE_ENABLED, DEFAULT_QWERTY_GESTURE_ENABLED),
             t9GestureEnabled = getBoolean(KEY_T9_GESTURE_ENABLED, DEFAULT_T9_GESTURE_ENABLED),
             gestureThreshold = getInt(KEY_GESTURE_THRESHOLD, DEFAULT_GESTURE_THRESHOLD).coerceIn(10, 48),
@@ -2719,6 +2746,7 @@ object WeTypeSettings {
         clipboardImageMaxSizeMb = DEFAULT_CLIPBOARD_IMAGE_MAX_SIZE_MB,
         clipboardWaterfallFlowEnabled = DEFAULT_CLIPBOARD_WATERFALL_FLOW_ENABLED,
         clipboardWaterfallMaxHeightDp = DEFAULT_CLIPBOARD_WATERFALL_MAX_HEIGHT_DP,
+        hideBackgroundInCandidateMode = DEFAULT_HIDE_BACKGROUND_IN_CANDIDATE_MODE,
         qwertyGestureEnabled = DEFAULT_QWERTY_GESTURE_ENABLED,
         t9GestureEnabled = DEFAULT_T9_GESTURE_ENABLED,
         gestureThreshold = DEFAULT_GESTURE_THRESHOLD,
