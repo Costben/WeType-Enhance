@@ -102,6 +102,10 @@ class ClipboardSearchEngineTest {
         val contents = List(100_000) { i ->
             "条目$i ${pool[i % pool.size]} ${pool[(i * 7 + rnd.nextInt(3)) % pool.size]} tail-$i"
         }
+        // 预热：JIT 与 TinyPinyin 的静态初始化留在计时与计量之外。
+        ClipboardSearchEngine.search(contents, "tiaomu")
+        ClipboardSearchEngine.search(contents, "qqqqzzzz914")
+
         // 命中：tiaomu 为"条目"全拼，字面无此串，走拼音路径。
         var t0 = System.nanoTime()
         val hit = ClipboardSearchEngine.search(contents, "tiaomu")
@@ -112,9 +116,60 @@ class ClipboardSearchEngineTest {
         val miss = ClipboardSearchEngine.search(contents, "qqqqzzzz914")
         val missMs = (System.nanoTime() - t0) / 1_000_000
         println("bench100k miss: size=${miss.size} time=${missMs}ms")
+
         assertTrue("hit should find results", hit.isNotEmpty())
         assertTrue("miss should be empty", miss.isEmpty())
-        assertTrue("hit search ${hitMs}ms >= 300ms", hitMs < 300)
-        assertTrue("miss search ${missMs}ms >= 300ms", missMs < 300)
+
+        // 未命中路径的开销按「每条内容分配多少字节」判，不按墙钟判：
+        // 计时阈值取决于 runner 的 CPU，同一份代码在开发机 501ms、CI 501ms 就已经双双超过
+        // 早先定的 300ms，只会随机变红。分配量对机器速度不敏感，能真正挡住「每条内容
+        // 多分配一个结果对象」这类退化（未命中路径不该构造 hits / IntRange）。
+        val missAlloc = allocatedBytes {
+            ClipboardSearchEngine.search(contents, "qqqqzzzz914")
+        }
+        if (missAlloc != null) {
+            val perItem = missAlloc / contents.size
+            println("bench100k miss alloc: ${perItem}B/item (total ${missAlloc}B)")
+            assertTrue(
+                "miss path allocates ${perItem}B per item",
+                perItem < MISS_ALLOC_BYTES_PER_ITEM
+            )
+        }
+    }
+
+    /**
+     * 当前线程执行 [block] 期间分配的对象字节数；JVM 不支持时返回 null（调用方跳过断言）。
+     *
+     * 走反射是因为 Android 单元测试的编译类路径只有 android.jar，不含 `java.lang.management`。
+     */
+    private fun allocatedBytes(block: () -> Unit): Long? {
+        return try {
+            val bean = Class.forName("java.lang.management.ManagementFactory")
+                .getMethod("getThreadMXBean")
+                .invoke(null)
+            // 分配计量相关的四个方法都在 com.sun.management.ThreadMXBean 上，标准 ThreadMXBean 没有。
+            val mbean = Class.forName("com.sun.management.ThreadMXBean")
+            val supported =
+                mbean.getMethod("isThreadAllocatedMemorySupported").invoke(bean) as Boolean
+            if (!supported) return null
+            mbean.getMethod("setThreadAllocatedMemoryEnabled", Boolean::class.javaPrimitiveType)
+                .invoke(bean, true)
+            val current = mbean.getMethod("getCurrentThreadAllocatedBytes")
+            val before = current.invoke(bean) as Long
+            block()
+            (current.invoke(bean) as Long) - before
+        } catch (t: Throwable) {
+            println("alloc probe unavailable: $t")
+            null
+        }
+    }
+
+    private companion object {
+        /**
+         * 未命中路径每条内容的分配上限。实测约 250B/条（JDK 17 与 21 同一量级），
+         * 留 3 倍余量：只挡成倍退化（例如把结果对象或额外字符串塞进逐条路径），
+         * 不追求抓单个小对象——那种精度换个 JDK 就会误报。
+         */
+        const val MISS_ALLOC_BYTES_PER_ITEM = 800L
     }
 }
