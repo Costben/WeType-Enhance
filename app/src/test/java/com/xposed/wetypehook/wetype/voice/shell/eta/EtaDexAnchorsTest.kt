@@ -6,35 +6,54 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 
+/**
+ * 用真 dex 验证「按方法体里的字符串常量反查混淆方法」这条链路。
+ *
+ * 断言只钉**形状**，不钉混淆名：R8 每次发版都会重排类名与方法名，写死就等于把测试绑在
+ * 某一个版本上（曾经绑 3.2.0 的 `Lk04;.B` / `Lbb5;.B`，换 3.4.0 的 dex 直接变红，而功能
+ * 本身是好的）。已核对过的两版：
+ *
+ * - Eta 3.2.0：`speechBaseUrl` = `Lk04;.B`，okhttp 校验 = `Lbb5;.B` / `Lbb5;.C`
+ * - Eta 3.4.0：`speechBaseUrl` = `Lzo4;.b0`，okhttp 校验 = `Lq35;.q`（另有 `(String)V` 的 checkName）
+ */
 class EtaDexAnchorsTest {
 
-    /**
-     * 锚点表。前两条是 Eta 3.2.0 反编译核对过的真实目标：源码里的 `speechBaseUrl`
-     * 与 OkHttp `Headers.checkValue` / `checkName`，混淆后分别落在 `Lk04;` 与 `Lbb5;`。
-     */
     private val anchors = listOf(SPEECH_BASE_URL, HEADER_CHAR)
 
     private val hits: Map<String, List<DexMethodRef>> by lazy {
         EtaDexAnchors.scan(dexBytes(), anchors)
     }
 
+    /**
+     * 锚点串在整个 dex 的字符串池里只出现一次，所以只能命中一个方法 —— 命中多个就说明
+     * R8 把 `speechBaseUrl` 内联进了调用方，那时 hook 会挂到错误的方法上，必须重新设计。
+     */
     @Test
-    fun `speech base url anchor resolves to the only obfuscated method`() {
+    fun `speech base url anchor resolves to exactly one string to string method`() {
         val matched = hits.getValue(SPEECH_BASE_URL)
         println("$SPEECH_BASE_URL -> $matched")
         assertEquals(1, matched.size)
-        assertEquals(
-            DexMethodRef("Lk04;", "B", listOf("Ljava/lang/String;"), "Ljava/lang/String;"),
-            matched.single(),
-        )
+        val ref = matched.single()
+        assertEquals(listOf("Ljava/lang/String;"), ref.parameterTypes)
+        assertEquals("Ljava/lang/String;", ref.returnType)
     }
 
+    /** okhttp 的 `checkName` 与 `checkValue` 共用同一条报错前缀，两个都得命中。 */
     @Test
     fun `okhttp header char anchor resolves to check name and check value`() {
         val matched = hits.getValue(HEADER_CHAR)
         println("$HEADER_CHAR -> $matched")
-        assertTrue(DexMethodRef("Lbb5;", "B", listOf("Ljava/lang/String;"), "V") in matched)
-        assertTrue(DexMethodRef("Lbb5;", "C", listOf("Ljava/lang/String;", "Ljava/lang/String;"), "V") in matched)
+        assertTrue(
+            "checkName(String): void 没命中",
+            matched.any { it.parameterTypes == listOf("Ljava/lang/String;") && it.returnType == "V" },
+        )
+        assertTrue(
+            "checkValue(String, String): void 没命中",
+            matched.any {
+                it.parameterTypes == listOf("Ljava/lang/String;", "Ljava/lang/String;") &&
+                    it.returnType == "V"
+            },
+        )
     }
 
     private fun dexBytes(): ByteArray {

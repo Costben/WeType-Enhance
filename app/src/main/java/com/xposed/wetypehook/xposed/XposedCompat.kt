@@ -204,12 +204,37 @@ object Log {
         log("I", message)
     }
 
+    fun w(message: Any?) {
+        log("W", message)
+    }
+
     fun e(message: Any?) {
         log("E", message)
     }
 
+    /**
+     * 与 `android.util.Log` 同形的两参调用。语音壳那一层原本直接用平台 Log，
+     * 结果只写 logcat、**不进 LSPosed 模块日志** —— 排查「壳为什么没起来 / 没连上」
+     * 时在管理器里一行都看不到。补上这组重载后，改一处 import 即可统一到模块日志。
+     */
+    fun i(tag: String, message: Any?) {
+        log("I", "$tag: $message")
+    }
+
+    fun w(tag: String, message: Any?) {
+        log("W", "$tag: $message")
+    }
+
+    fun e(tag: String, message: Any?) {
+        log("E", "$tag: $message")
+    }
+
     private fun log(level: String, message: Any?) {
-        val priority = if (level == "E") AndroidLog.ERROR else AndroidLog.INFO
+        val priority = when (level) {
+            "E" -> AndroidLog.ERROR
+            "W" -> AndroidLog.WARN
+            else -> AndroidLog.INFO
+        }
         val tag = HookEnvironment.logTag()
         val module = HookEnvironment.moduleOrNull()
         // 同时写 logcat 与 LSPosed 日志：前者便于 adb 直接诊断，后者便于在管理器里回看。

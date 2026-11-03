@@ -1,7 +1,7 @@
 package com.xposed.wetypehook.wetype.voice.shell
 
 import android.content.Context
-import android.util.Log
+import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.wetype.hook.WeTypeProcessIdentity
 import com.xposed.wetypehook.wetype.settings.WeTypeSettings
 import com.xposed.wetypehook.wetype.voice.WeTypeVoiceProtocol

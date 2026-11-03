@@ -47,6 +47,13 @@ internal object EtaSpeechHooks {
     /** 非 ASCII header 放行只记一次日志，免得每个 header 都刷屏。 */
     private val nonAsciiHeaderSeen = AtomicBoolean(false)
 
+    /**
+     * 明文地址**真正放行**过一次。安装时那条日志只证明 hook 挂上了，证明不了它会被调到 ——
+     * Eta 换版本后如果 `speechBaseUrl` 被内联，方法体还在、调用点没了，安装日志照样打，
+     * 运行时却一次都不触发。这条日志是「装了但没生效」与「生效了但下游有别的问题」的分界。
+     */
+    private val plaintextAddressSeen = AtomicBoolean(false)
+
     fun install(classLoader: ClassLoader, sourceDir: String?) {
         runCatching {
             val anchors = setOf(ANCHOR_SPEECH_BASE_URL, ANCHOR_OKHTTP_HEADER_CHECK)
@@ -72,7 +79,13 @@ internal object EtaSpeechHooks {
         }
         method.hookBefore { param ->
             val value = param.args.getOrNull(0) as? String ?: return@hookBefore
-            plaintextBaseUrl(value)?.let { param.result = it }
+            plaintextBaseUrl(value)?.let { resolved ->
+                if (plaintextAddressSeen.compareAndSet(false, true)) {
+                    // 只记「放行过一次」，地址本身不落日志（用户可能把服务地址指到内网机器）。
+                    Log.i("Eta speech hooks: allowed a plaintext service address through speechBaseUrl")
+                }
+                param.result = resolved
+            }
         }
         Log.i("Eta speech hooks: plaintext service address accepted by $ref")
     }

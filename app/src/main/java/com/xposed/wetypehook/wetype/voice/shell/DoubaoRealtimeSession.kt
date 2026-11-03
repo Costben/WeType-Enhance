@@ -1,6 +1,6 @@
 package com.xposed.wetypehook.wetype.voice.shell
 
-import android.util.Log
+import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.wetype.settings.VoiceTuning
 import com.xposed.wetypehook.wetype.voice.WeTypeVoiceProtocol
 import org.json.JSONObject
