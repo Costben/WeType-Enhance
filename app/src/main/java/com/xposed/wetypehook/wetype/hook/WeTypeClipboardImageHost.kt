@@ -176,12 +176,13 @@ internal object WeTypeClipboardImageHost {
         }
         val baseClass = resolvePreviewHost(classLoader)
             ?: throw ClassNotFoundException(PREVIEW_HOST_CLASS)
-        val backMethod = pickHostMethod(baseClass, "B0") {
-            it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
-        } ?: run {
-            AndroidLog.e(TAG, "image preview back method missing (keyboard.l#B0)")
-            return
-        }
+        val backMethod = runCatching { WeTypeHostContracts.methodOf(HostContractId.CLIPBOARD_PREVIEW_BACK) }.getOrNull()
+            ?: pickHostMethod(baseClass, "A0", "B0") {
+                it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
+            } ?: run {
+                AndroidLog.e(TAG, "image preview back method missing (keyboard.l#A0/B0)")
+                return
+            }
         backMethod.isAccessible = true
         backMethod.hookBefore { param ->
             val self = param.thisObject ?: return@hookBefore
@@ -191,7 +192,7 @@ internal object WeTypeClipboardImageHost {
                 param.result = null
             }
         }
-        AndroidLog.i(TAG, "hooked image preview back (keyboard.l#B0)")
+        AndroidLog.i(TAG, "hooked image preview back (keyboard.l#${backMethod.name})")
     }
 
     /**

@@ -56,6 +56,7 @@ internal object HostContractId {
     const val CLIPBOARD_SCROLLVIEW = "clipboard.scrollview"
     const val CLIPBOARD_IMAGE_CARD = "clipboard.image.card"
     const val CLIPBOARD_PREVIEW_HOST = "clipboard.preview.host"
+    const val CLIPBOARD_PREVIEW_BACK = "clipboard.preview.back"
     const val CLIPBOARD_SCALE_INSTANCE = "clipboard.scale.instance"
     const val CLIPBOARD_SCALE_STATIC = "clipboard.scale.static"
     const val BITMAP_UTIL = "bitmap.util"
@@ -892,6 +893,46 @@ internal val HOST_CONTRACTS: List<HostContract> = listOf(
             CLIPBOARD_PREVIEW_HOST_ANCHORS
         ) { View::class.java.isAssignableFrom(it) }?.let { return@contract HostHandle(owner = it) }
         ctx.classByNames(CLIPBOARD_PREVIEW_HOST_CLASS)?.let { HostHandle(owner = it) }
+    },
+
+    contract(
+        HostContractId.CLIPBOARD_PREVIEW_BACK,
+        "图片预览宿主视图返回方法。keyboard.l 上调用面板管理 N 的无参 void 方法，候选名 A0 / B0 兜底"
+    ) { ctx ->
+        val hostClass = ctx.classOf(HostContractId.CLIPBOARD_PREVIEW_HOST) ?: return@contract null
+        val panelManagerClass = ctx.classOf(HostContractId.PANEL_MANAGER)
+        if (panelManagerClass != null) {
+            val hits = hostClass.declaredMethods.filter {
+                it.parameterTypes.isEmpty() && it.returnType == Void.TYPE
+            }
+            if (hits.isNotEmpty()) {
+                val matched = hits.filter { candidate ->
+                    val invokedClasses = runCatching {
+                        ctx.bridge?.findMethod {
+                            searchPackages(HOST_PACKAGE)
+                            matcher {
+                                declaredClass = hostClass.name
+                                name = candidate.name
+                                paramCount = 0
+                                returnType = "void"
+                            }
+                        }?.firstOrNull()?.invokes?.mapNotNull {
+                            runCatching { it.getMethodInstance(ctx.classLoader).declaringClass.name }.getOrNull()
+                                ?: it.className
+                        }?.toSet()
+                    }.getOrNull().orEmpty()
+                    panelManagerClass.name in invokedClasses
+                }
+                if (matched.size == 1) {
+                    matched[0].isAccessible = true
+                    ctx.winner = "dexInvokes:${hostClass.simpleName}#${matched[0].name}"
+                    return@contract HostHandle(owner = hostClass, method = matched[0])
+                }
+            }
+        }
+        ctx.methodByNames(hostClass, listOf("A0", "B0")) {
+            parameterTypes.isEmpty() && returnType == Void.TYPE
+        }?.let { HostHandle(owner = hostClass, method = it) }
     },
 
     contract(
