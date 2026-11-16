@@ -24,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import com.xposed.wetypehook.oplus.OplusAiWriterHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeClipboardHooks
+import com.xposed.wetypehook.wetype.hook.WeTypeClipboardImagePreviewHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeGestureHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeKeyLabelHooks
 import com.xposed.wetypehook.wetype.hook.WeTypeResourceHooks
@@ -1466,6 +1467,7 @@ class MainHook : XposedModule() {
             view.isClickable = state.isClickable
             view.setTag(WETYPE_ABOUT_LOGO_TAG_KEY, null)
         }
+        WeTypeClipboardImagePreviewHooks.prepareForHotReload()
 
         imeInputFramesByDecor.clear()
         originalImeContentBottomPaddings.clear()

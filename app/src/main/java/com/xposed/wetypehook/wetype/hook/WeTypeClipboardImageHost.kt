@@ -154,6 +154,8 @@ internal object WeTypeClipboardImageHost {
                 .onFailure { AndroidLog.e(TAG, "image preview back hook failed: ${it.message}") }
             runCatching { hookImagePreviewSaveAction(classLoader) }
                 .onFailure { AndroidLog.e(TAG, "image preview save hook failed: ${it.message}") }
+            runCatching { hookImagePreviewBackground(classLoader) }
+                .onFailure { AndroidLog.e(TAG, "image preview background hook failed: ${it.message}") }
             installed = true
             AndroidLog.i(TAG, "image host handles installed (line1=$line1HeightRes line2=$line2HeightRes)")
             true
@@ -234,6 +236,18 @@ internal object WeTypeClipboardImageHost {
                 .onFailure { AndroidLog.e(TAG, "restore image save action failed: ${it.message}") }
         }
         AndroidLog.i(TAG, "hooked image preview save action (keyboard.k#e)")
+    }
+
+    /**
+     * 预览页显示期间隐藏它下面的键盘层（候选栏 + 键盘页），让模块背板透出来。
+     * 页面自身没有背景，不藏下层的话会直接透出键帽与候选词。
+     */
+    private fun hookImagePreviewBackground(classLoader: ClassLoader) {
+        val previewClass = resolvePreviewKeyboard(classLoader) ?: run {
+            AndroidLog.e(TAG, "image preview keyboard class missing (background)")
+            return
+        }
+        WeTypeClipboardImagePreviewHooks.install(previewClass)
     }
 
     fun isReady(): Boolean = installed
