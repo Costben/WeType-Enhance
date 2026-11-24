@@ -3,7 +3,7 @@ package com.xposed.wetypehook.wetype.hook
 import kotlin.math.roundToInt
 
 internal enum class WeTypeLayerRole {
-    Keyboard, Candidate, CandidateContent, SettingsChrome, OverlayKeyboard, SettingsTools, SettingsPage
+    Keyboard, Candidate, CandidateContent, SettingsChrome, CustomToolbar, OverlayKeyboard, SettingsTools, SettingsPage
 }
 
 /** One frame's host-owned state. No previous visibility is saved or restored. */
@@ -13,7 +13,8 @@ internal data class WeTypeLayerSnapshot(
     val ancestors: List<Int>,
     val rendered: Boolean,
     val settingsOwner: Int? = null,
-    val opacity: Float = 1f
+    val opacity: Float = 1f,
+    val enablesCustomToolbarChrome: Boolean = false
 )
 
 /** IDs follow the host tree's paint order, including sibling Z order. */
@@ -29,19 +30,26 @@ internal fun resolveWeTypeDrawAlphas(
 ): Map<Int, Int> {
     val alphas = mutableMapOf<Int, Int>()
     val overlays = layers.filter { it.role == WeTypeLayerRole.OverlayKeyboard && it.rendered }
-    val chrome = layers.filter { it.role == WeTypeLayerRole.SettingsChrome && it.rendered }
+    val customToolbarChromeEnabled = layers.any { it.rendered && it.enablesCustomToolbarChrome }
+    val chrome = layers.filter {
+        it.rendered && (
+            it.role == WeTypeLayerRole.SettingsChrome ||
+                (customToolbarChromeEnabled && it.role == WeTypeLayerRole.CustomToolbar)
+            )
+    }
     for (layer in layers) {
         if (!layer.rendered) continue
-        if (layer.role == WeTypeLayerRole.Keyboard || layer.role == WeTypeLayerRole.Candidate ||
-            layer.role == WeTypeLayerRole.CandidateContent || layer.role == WeTypeLayerRole.OverlayKeyboard) {
+        val isCandidateBranch = layer.role == WeTypeLayerRole.Candidate ||
+            layer.role == WeTypeLayerRole.CandidateContent ||
+            (layer.role == WeTypeLayerRole.CustomToolbar && !customToolbarChromeEnabled)
+        if (layer.role == WeTypeLayerRole.Keyboard || isCandidateBranch ||
+            layer.role == WeTypeLayerRole.OverlayKeyboard) {
             // Settings chrome is shared with the candidate bar, but lives in
             // multiple branches. Preserve each branch and its ancestors, never
             // the ordinary candidate siblings. Other overlays still cover it.
-            val sharedChrome =
-                (layer.role == WeTypeLayerRole.Candidate ||
-                    layer.role == WeTypeLayerRole.CandidateContent) && chrome.any {
-                        layer.id in it.ancestors || it.id in layer.ancestors
-                    }
+            val sharedChrome = isCandidateBranch && chrome.any {
+                layer.id in it.ancestors || it.id in layer.ancestors
+            }
             val coveringOverlays = overlays.filter { overlay ->
                 overlay.id > layer.id && layer.id !in overlay.ancestors &&
                     overlay.id !in layer.ancestors &&

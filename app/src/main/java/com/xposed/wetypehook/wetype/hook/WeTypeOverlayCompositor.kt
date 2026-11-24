@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.inputmethod.EditorInfo
 import android.widget.LinearLayout
+import com.xposed.wetypehook.wetype.host.HostResources
 import com.xposed.wetypehook.xposed.HookEnvironment
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.hookAfter
@@ -20,6 +21,8 @@ import java.util.WeakHashMap
 private const val SETTINGS_KEYBOARD = "com.tencent.wetype.plugin.hld.keyboard.S10SettingsKeyboard"
 private const val CANDIDATE_VIEW = "com.tencent.wetype.plugin.hld.candidate.ImeCandidateView"
 private const val SETTINGS_RECYCLER = "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingRecyclerView"
+private const val SETTINGS_CUSTOM_TOOLBAR_PAGE =
+    "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingCustomToolbarView"
 private val OVERLAY_KEYBOARDS = setOf(
     SETTINGS_KEYBOARD,
     "com.tencent.wetype.plugin.hld.keyboard.selfdraw.S11EmojiKeyboard",
@@ -30,7 +33,7 @@ private val OVERLAY_KEYBOARDS = setOf(
 )
 private val SETTINGS_PAGES = setOf(
     "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingKeyboardTypeView",
-    "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingCustomToolbarView",
+    SETTINGS_CUSTOM_TOOLBAR_PAGE,
     "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingPlusModeOpenView",
     "com.tencent.wetype.plugin.hld.view.settingkeyboard.S10SettingOfflineVoiceGuideView"
 )
@@ -53,6 +56,8 @@ internal object WeTypeOverlayCompositor {
     private var settingsManager: Any? = null
     private var toolsRequestedGetter: Method? = null
     private var settingsChromeIds: Set<Int> = emptySet()
+    private var customToolbarCompleteIds: Set<Int> = emptySet()
+    private var customToolbarChromeIds: Set<Int> = emptySet()
     private var hostStateResolved = false
 
     fun install() {
@@ -156,6 +161,8 @@ internal object WeTypeOverlayCompositor {
                 name == CANDIDATE_VIEW -> WeTypeLayerRole.Candidate
                 candidateOwner != null && view.id in settingsChromeIds ->
                     WeTypeLayerRole.SettingsChrome
+                candidateOwner != null && view.id in customToolbarChromeIds ->
+                    WeTypeLayerRole.CustomToolbar
                 name in SETTINGS_PAGES -> WeTypeLayerRole.SettingsPage
                 owner != null && view is LinearLayout && containsSettingsRecycler(view) ->
                     WeTypeLayerRole.SettingsTools
@@ -173,7 +180,12 @@ internal object WeTypeOverlayCompositor {
                     val content = runCatching { getter?.invoke(view) as? View }.getOrNull()
                     view.alpha * (content?.alpha ?: 1f)
                 } else effectiveOpacity
-                layers += WeTypeLayerSnapshot(id, role, ancestors, rendered, owner, opacity)
+                val enablesCustomToolbarChrome =
+                    (role == WeTypeLayerRole.SettingsPage && name == SETTINGS_CUSTOM_TOOLBAR_PAGE) ||
+                        (role == WeTypeLayerRole.SettingsChrome && view.id in customToolbarCompleteIds)
+                layers += WeTypeLayerSnapshot(
+                    id, role, ancestors, rendered, owner, opacity, enablesCustomToolbarChrome
+                )
                 views[id] = view
             }
             if (view is ViewGroup) {
@@ -228,13 +240,22 @@ internal object WeTypeOverlayCompositor {
         if (hostStateResolved) return
         hostStateResolved = true
         resolveSettingsStateReader()
-        val resourceClass = loadClassOrNull("com.tencent.wetype.plugin.hld.s")
-        // Host-owned chrome has two sibling branches: back/title and the lazily
-        // added settings toolbar (settings / file transfer). Neither is candidates.
-        settingsChromeIds = listOf("setting_container_rl", "setting_toolbar_recyclerview")
-            .mapNotNull { name ->
-                runCatching { resourceClass?.getDeclaredField(name)?.getInt(null) }.getOrNull()
-            }.toSet()
+        val resourceClass = HostResources.rClass("com.tencent.wetype.plugin.hld.s")
+        fun resolveIds(vararg names: String): Set<Int> =
+            names.mapNotNull { HostResources.intField(resourceClass, it) }.toSet()
+        customToolbarCompleteIds = resolveIds("custom_toolbar_edit_mode_complete_view")
+        // Host-owned chrome has three sibling branches: back/title, the lazily
+        // added settings toolbar (settings / file transfer), and the custom toolbar
+        // edit-mode complete button. None of them is ordinary candidate content.
+        settingsChromeIds = resolveIds("setting_container_rl", "setting_toolbar_recyclerview") +
+            customToolbarCompleteIds
+        // The top custom toolbar itself is reused by S10SettingCustomToolbarView
+        // for drag-to-reorder and removal, while remaining ordinary candidate bar
+        // content on other settings pages and during open/close crossfades.
+        customToolbarChromeIds = resolveIds(
+            "custom_toolbar_recyclerview",
+            "custom_toolbar_hide_keyboard_fixed_view"
+        )
     }
 
     private fun resolveSettingsStateReader() {
@@ -303,6 +324,8 @@ internal object WeTypeOverlayCompositor {
         settingsManager = null
         toolsRequestedGetter = null
         settingsChromeIds = emptySet()
+        customToolbarCompleteIds = emptySet()
+        customToolbarChromeIds = emptySet()
         hostStateResolved = false
     }
 }

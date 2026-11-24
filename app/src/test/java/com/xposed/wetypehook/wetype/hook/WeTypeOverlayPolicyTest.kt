@@ -20,6 +20,89 @@ class WeTypeOverlayPolicyTest {
         layer(8, WeTypeLayerRole.OverlayKeyboard, owner = 8)
     )
 
+    private fun settingsWithCustomToolbarEdit(
+        completeRendered: Boolean = true,
+        customToolbarPageRendered: Boolean = true
+    ) = listOf(
+        layer(1, WeTypeLayerRole.Candidate),
+        layer(2, WeTypeLayerRole.SettingsChrome, ancestors = listOf(1)),
+        layer(3, WeTypeLayerRole.CandidateContent, ancestors = listOf(1, 2)),
+        WeTypeLayerSnapshot(
+            4,
+            WeTypeLayerRole.SettingsChrome,
+            ancestors = listOf(1),
+            rendered = completeRendered,
+            enablesCustomToolbarChrome = true
+        ),
+        layer(5, WeTypeLayerRole.CandidateContent, shown = completeRendered, ancestors = listOf(1, 4)),
+        layer(6, WeTypeLayerRole.CustomToolbar, ancestors = listOf(1)),
+        layer(7, WeTypeLayerRole.CandidateContent, ancestors = listOf(1, 6)),
+        layer(8, WeTypeLayerRole.CandidateContent, ancestors = listOf(1)),
+        layer(9, WeTypeLayerRole.OverlayKeyboard, owner = 9),
+        WeTypeLayerSnapshot(
+            10,
+            WeTypeLayerRole.SettingsPage,
+            ancestors = listOf(9),
+            rendered = customToolbarPageRendered,
+            settingsOwner = 9,
+            enablesCustomToolbarChrome = true
+        )
+    )
+
+    @Test
+    fun customToolbarEditPreservesTopToolbarAndCompleteButtonWhileHidingOrdinaryCandidates() {
+        assertEquals(
+            mapOf(8 to 0),
+            resolveWeTypeDrawAlphas(settingsWithCustomToolbarEdit(), false)
+        )
+        // Even before the settings page finishes revealing on frame 0, the rendered complete button preserves the bar.
+        assertEquals(
+            mapOf(8 to 0),
+            resolveWeTypeDrawAlphas(
+                settingsWithCustomToolbarEdit(completeRendered = true, customToolbarPageRendered = false),
+                false
+            )
+        )
+        // Even if the host hides the complete button, the rendered custom toolbar page still preserves the bar.
+        assertEquals(
+            mapOf(8 to 0),
+            resolveWeTypeDrawAlphas(
+                settingsWithCustomToolbarEdit(completeRendered = false, customToolbarPageRendered = true),
+                false
+            )
+        )
+    }
+
+    @Test
+    fun ordinarySettingsPagesStillOccludeCustomToolbarAndPreserveCrossfade() {
+        val normalSettings = settingsWithCustomToolbarEdit(
+            completeRendered = false,
+            customToolbarPageRendered = false
+        )
+        assertEquals(mapOf(6 to 0, 8 to 0), resolveWeTypeDrawAlphas(normalSettings, true))
+        assertEquals(
+            mapOf(6 to 128, 8 to 128),
+            resolveWeTypeDrawAlphas(
+                normalSettings.map { if (it.id == 9) it.copy(opacity = 0.5f) else it },
+                true
+            )
+        )
+    }
+
+    @Test
+    fun nonSettingsOverlayStillCoversCustomToolbarDuringEditMode() {
+        val layers = settingsWithCustomToolbarEdit() +
+            layer(11, WeTypeLayerRole.OverlayKeyboard).copy(opacity = 0.5f)
+        assertEquals(mapOf(1 to 128, 8 to 0, 9 to 128), resolveWeTypeDrawAlphas(layers, false))
+        assertEquals(
+            mapOf(1 to 0, 9 to 0),
+            resolveWeTypeDrawAlphas(
+                layers.map { if (it.id == 11) it.copy(opacity = 1f) else it },
+                false
+            )
+        )
+    }
+
     @Test
     fun expandedToolsKeepBothSiblingChromeBranchesAndHideOnlyCandidates() {
         assertEquals(mapOf(7 to 0), resolveWeTypeDrawAlphas(settingsWithSiblingChrome(), true))
